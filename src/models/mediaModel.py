@@ -1,6 +1,8 @@
+import hashlib
 import sys
 from enum import IntEnum
 from pathlib import Path
+
 from PySide6.QtCore import (
     QAbstractListModel,
     QFileSystemWatcher,
@@ -14,6 +16,8 @@ from PySide6.QtCore import (
     QUrl,
 )
 from PySide6.QtQml import QmlElement
+
+from models.database import Database
 
 # Sets the QML import module configuration so QML files can write "import Gallery 1.0"
 QML_IMPORT_NAME = "Gallery"
@@ -36,11 +40,14 @@ EBOOK_EXTENSIONS = {".epub", ".pdf", ".mobi", ".azw", ".azw3", ".fb2", ".djvu"}
 class MediaModel(QAbstractListModel):
     # Defines unique integer identifiers for custom data properties exposed to QML
     class Roles(IntEnum):
-        UniformResourceIdentifierRole = Qt.UserRole + 1
-        FileNameRole = Qt.UserRole + 2
-        IsVideoRole = Qt.UserRole + 3
-        IsComicRole = Qt.UserRole + 4
-        IsBookRole = Qt.UserRole + 5
+        MediaIdRole = Qt.UserRole + 1
+        UniformResourceIdentifierRole = Qt.UserRole + 2
+        FileNameRole = Qt.UserRole + 3
+        IsVideoRole = Qt.UserRole + 4
+        IsComicRole = Qt.UserRole + 5
+        IsBookRole = Qt.UserRole + 6
+        IsFavoriteRole = Qt.UserRole + 7
+        RatingRole = Qt.UserRole + 8
 
     # Defines the available view filtering modes
     class FilterMode(IntEnum):
@@ -72,6 +79,9 @@ class MediaModel(QAbstractListModel):
         self._current_folder_path: str = ""
         self._filter_mode: MediaModel.FilterMode = MediaModel.FilterMode.All
 
+        # Database connection for persistent media identity
+        self._db = Database()
+
         # Initializes Qt file system watcher to monitor loaded directories for real-time changes
         self._file_system_watcher = QFileSystemWatcher(self)
 
@@ -93,6 +103,10 @@ class MediaModel(QAbstractListModel):
             return None
 
         current_item = self._visible_items[item_index.row()]
+
+        # Returns the media database ID
+        if data_role == MediaModel.Roles.MediaIdRole:
+            return current_item.get("media_id")
 
         # Returns the URI string if QML requests the URI role or default display role
         if (
@@ -117,17 +131,58 @@ class MediaModel(QAbstractListModel):
         elif data_role == MediaModel.Roles.IsBookRole:
             return current_item["is_book"]
 
+        # Returns favorite status (0 or 1)
+        elif data_role == MediaModel.Roles.IsFavoriteRole:
+            return current_item.get("is_favorite", 0)
+
+        # Returns rating (-1 means NULL/unrated in QML)
+        elif data_role == MediaModel.Roles.RatingRole:
+            rating = current_item.get("rating")
+            return rating if rating is not None else -1
+
         return None
 
     # Maps Python integer role IDs to variable names that QML delegates can read directly
     def roleNames(self) -> dict[int, bytes]:
         return {
+            MediaModel.Roles.MediaIdRole: b"mediaId",
             MediaModel.Roles.UniformResourceIdentifierRole: b"fileUri",
             MediaModel.Roles.FileNameRole: b"fileName",
             MediaModel.Roles.IsVideoRole: b"isVideo",
             MediaModel.Roles.IsComicRole: b"isComic",
             MediaModel.Roles.IsBookRole: b"isBook",
+            MediaModel.Roles.IsFavoriteRole: b"isFavorite",
+            MediaModel.Roles.RatingRole: b"rating",
         }
+
+    # --- Hashing ---
+
+    def _compute_content_hash(self, file_path: str) -> str:
+        """Compute a cheap partial hash: SHA-1 over size + first 1MB + last 1MB."""
+        p = Path(file_path)
+        try:
+            file_size = p.stat().st_size
+        except OSError:
+            return ""
+
+        if file_size == 0:
+            return hashlib.sha1(b"empty").hexdigest()
+
+        to_hash = str(file_size).encode()
+
+        try:
+            with open(p, "rb") as f:
+                # First 1 MB
+                to_hash += f.read(1024 * 1024)
+
+                # Last 1 MB
+                if file_size > 1024 * 1024:
+                    f.seek(-1024 * 1024, 2)
+                    to_hash += f.read(1024 * 1024)
+        except OSError:
+            return ""
+
+        return hashlib.sha1(to_hash).hexdigest()
 
     # --- Slots & Public Methods ---
 
@@ -163,6 +218,8 @@ class MediaModel(QAbstractListModel):
         temporary_comics_list = []
         temporary_books_list = []
 
+        scanned_paths = set()
+
         # Iterates over every file in the target directory and collects media metadata
         for directory_item in folder_directory.iterdir():
             # Checks if the current item is an actual file (not a subfolder)
@@ -178,12 +235,45 @@ class MediaModel(QAbstractListModel):
                 if not (is_image or is_video or is_comic or is_book):
                     continue
 
+                abs_path = str(directory_item.resolve())
+                scanned_paths.add(abs_path)
+                file_size = directory_item.stat().st_size
+                file_mtime = int(directory_item.stat().st_mtime)
+                content_hash = self._compute_content_hash(abs_path)
+
+                # Check if this hash matches a missing row (move/rename reconciliation)
+                move_info = self._db.find_missing_by_hash(content_hash)
+                if move_info:
+                    self._db.upsert_media(
+                        abs_path, directory_item.name,
+                        self._kind_from_ext(file_extension),
+                        file_size, file_mtime, content_hash
+                    )
+                    media_id = move_info["id"]
+                else:
+                    self._db.upsert_media(
+                        abs_path, directory_item.name,
+                        self._kind_from_ext(file_extension),
+                        file_size, file_mtime, content_hash
+                    )
+                    # Retrieve the media_id we just upserted
+                    cursor = self._db.conn.cursor()
+                    cursor.execute("SELECT id FROM media WHERE path = ?", (abs_path,))
+                    row = cursor.fetchone()
+                    media_id = row[0] if row else 0
+
+                favorite = self._db.get_media_favorite(media_id)
+                rating = self._db.get_media_rating(media_id)
+
                 item_metadata = {
+                    "media_id": media_id,
                     "uniform_resource_identifier": directory_item.as_uri(),
                     "file_name": directory_item.name,
                     "is_video": is_video,
                     "is_comic": is_comic,
                     "is_book": is_book,
+                    "is_favorite": favorite,
+                    "rating": rating,
                 }
 
                 # Sorts item into whichever list matches its extension
@@ -196,6 +286,9 @@ class MediaModel(QAbstractListModel):
                 elif is_book:
                     temporary_books_list.append(item_metadata)
 
+        # Mark files that existed before but are no longer scanned as missing
+        self._db.mark_missing(scanned_paths)
+
         self._all_images = temporary_images_list
         self._all_videos = temporary_videos_list
         self._all_comics = temporary_comics_list
@@ -204,6 +297,17 @@ class MediaModel(QAbstractListModel):
         # Refreshes the active grid display list and notifies QML of path changes
         self._update_visible_items()
         self.folderPathChanged.emit()
+
+    def _kind_from_ext(self, ext: str) -> str:
+        if ext in IMAGE_EXTENSIONS:
+            return "image"
+        elif ext in VIDEO_EXTENSIONS:
+            return "video"
+        elif ext in COMIC_EXTENSIONS:
+            return "comic"
+        elif ext in EBOOK_EXTENSIONS:
+            return "ebook"
+        return "image"
 
     # Automatically reloads directory contents whenever the file watcher detects on-disk changes
     def _on_directory_changed(self, modified_directory_path: str):
@@ -243,6 +347,36 @@ class MediaModel(QAbstractListModel):
         # Unfreezes Qt UI updates and tells QML to redraw the grid view
         self.endResetModel()
 
+    # --- Favorite and Rating operations (keyed by media_id, emit dataChanged for single row) ---
+
+    def _visible_row_for_media_id(self, media_id: int):
+        """Find the visible row index for a given media_id. Returns -1 if not found."""
+        for i, item in enumerate(self._visible_items):
+            if item.get("media_id") == media_id:
+                return i
+        return -1
+
+    @Slot(int, bool)
+    def setFavorite(self, media_id: int, favorite: bool):
+        """Toggle favorite status for a media item. Emits dataChanged for the affected row only."""
+        self._db.set_media_favorite(media_id, favorite)
+        row = self._visible_row_for_media_id(media_id)
+        if row >= 0:
+            idx = self.index(row)
+            self._visible_items[row]["is_favorite"] = 1 if favorite else 0
+            self.dataChanged.emit(idx, idx, [MediaModel.Roles.IsFavoriteRole])
+
+    @Slot(int, int)
+    def setRating(self, media_id: int, rating: int):
+        """Set rating for a media item. rating=-1 clears to NULL. Emits dataChanged for the affected row only."""
+        db_rating = None if rating == -1 else rating
+        self._db.set_media_rating(media_id, db_rating)
+        row = self._visible_row_for_media_id(media_id)
+        if row >= 0:
+            idx = self.index(row)
+            self._visible_items[row]["rating"] = db_rating
+            self.dataChanged.emit(idx, idx, [MediaModel.Roles.RatingRole])
+
     # --- Properties exposed to QML ---
 
     # Exposes the current filter mode value to QML as a readable property
@@ -263,3 +397,12 @@ class MediaModel(QAbstractListModel):
     @Property(str, notify=folderPathChanged)
     def folderPath(self) -> str:
         return self._current_folder_path
+
+    # Looks up a single item's file URI by its row in the currently visible
+    # (filtered) list. Used by QML to open videos/comics/ebooks externally
+    # since those don't have dedicated in-app viewers yet.
+    @Slot(int, result=str)
+    def getFileUri(self, row: int) -> str:
+        if 0 <= row < len(self._visible_items):
+            return self._visible_items[row]["uniform_resource_identifier"]
+        return ""

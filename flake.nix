@@ -81,6 +81,10 @@
 
             # Qt needs these paths to find plugins and QML modules outside FHS.
             # Without them, your app will look generic or fail to find Kirigami.
+            #
+            # Override (not append) QT_PLUGIN_PATH to exclude system desktop
+            # environments (Union, KDE, etc.) whose platform plugins are built
+            # against a different Qt version and will crash Nix Qt.
             export QT_PLUGIN_PATH="${pkgs.qt6.qtbase}/lib/qt-6/plugins:${pkgs.kdePackages.qqc2-desktop-style}/lib/qt-6/plugins"
             export QML2_IMPORT_PATH="${pkgs.kdePackages.kirigami}/lib/qt-6/qml:${pkgs.kdePackages.kirigami-addons}/lib/qt-6/qml:${pkgs.kdePackages.qqc2-desktop-style}/lib/qt-6/qml"
             export QT_QUICK_CONTROLS_STYLE="org.kde.desktop"
