@@ -1,7 +1,9 @@
 import hashlib
+import logging
 import sys
 from enum import IntEnum
 from pathlib import Path
+import sqlite3
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -22,6 +24,8 @@ from models.database import Database
 # Sets the QML import module configuration so QML files can write "import Gallery 1.0"
 QML_IMPORT_NAME = "Gallery"
 QML_IMPORT_MAJOR_VERSION = 1
+
+logger = logging.getLogger(__name__)
 
 # Defines sets of allowed file extensions for images and videos
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -386,7 +390,11 @@ class MediaModel(QAbstractListModel):
     @Slot(int, bool)
     def setFavorite(self, media_id: int, favorite: bool):
         """Toggle favorite status for a media item. Emits dataChanged for the affected row only."""
-        self._db.set_media_favorite(media_id, favorite)
+        try:
+            self._db.set_media_favorite(media_id, favorite)
+        except sqlite3.Error as e:
+            logger.error("Failed to set favorite for media_id=%d: %s", media_id, e)
+            return
         row = self._visible_row_for_media_id(media_id)
         if row >= 0:
             idx = self.index(row)
@@ -395,13 +403,21 @@ class MediaModel(QAbstractListModel):
 
     @Slot(int, result=bool)
     def getFavorite(self, media_id: int) -> bool:
-        return bool(self._db.get_media_favorite(media_id))
+        try:
+            return bool(self._db.get_media_favorite(media_id))
+        except sqlite3.Error as e:
+            logger.error("Failed to get favorite for media_id=%d: %s", media_id, e)
+            return False
 
     @Slot(int, int)
     def setRating(self, media_id: int, rating: int):
         """Set rating for a media item. rating=-1 clears to NULL. Emits dataChanged for the affected row only."""
         db_rating = None if rating == -1 else rating
-        self._db.set_media_rating(media_id, db_rating)
+        try:
+            self._db.set_media_rating(media_id, db_rating)
+        except sqlite3.Error as e:
+            logger.error("Failed to set rating for media_id=%d: %s", media_id, e)
+            return
         row = self._visible_row_for_media_id(media_id)
         if row >= 0:
             idx = self.index(row)

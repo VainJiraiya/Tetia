@@ -302,29 +302,32 @@ class Database:
 
     def insert_tag(self, tag_name: str, category_id: int) -> int:
         """Insert a new tag and return its id. Raises if tag already exists."""
+        in_txn = self.conn.in_transaction
         cursor = self.conn.execute(
             "INSERT INTO tag (name, category_id) VALUES (?, ?) RETURNING id",
             (tag_name, category_id)
         )
         row = cursor.fetchone()[0]
-        if not self.conn.in_transaction:
+        if not in_txn:
             self.conn.commit()
         return row
 
     def insert_media_tag(self, media_id: int, tag_id: int, source: str = "manual"):
         """Link a tag to media. No-op if already linked (INSERT OR IGNORE)."""
+        in_txn = self.conn.in_transaction
         self.conn.execute(
             "INSERT OR IGNORE INTO media_tag (media_id, tag_id, source) VALUES (?, ?, ?)",
             (media_id, tag_id, source)
         )
-        if not self.conn.in_transaction:
+        if not in_txn:
             self.conn.commit()
 
     def remove_media_tag(self, media_id: int, tag_id: int):
         """Remove a tag link from media."""
+        in_txn = self.conn.in_transaction
         self.conn.execute(
             "DELETE FROM media_tag WHERE media_id = ? AND tag_id = ?",
             (media_id, tag_id)
         )
-        if not self.conn.in_transaction:
+        if not in_txn:
             self.conn.commit()

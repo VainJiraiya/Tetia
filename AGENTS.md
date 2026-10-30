@@ -49,3 +49,6 @@ TAGGING_SPEC.md        phased spec for tagging, favorites, rating, and search sy
 - **No tests, no linter, no pyproject.toml.** The flake is the only tooling.
 - **`QAbstractListModel`** uses `beginResetModel()`/`endResetModel()` for bulk updates, not row-by-row insert/remove.
 - **Page stack cleanup:** When popping pages or switching tabs, always call `poppedPage.destroy()` after `pageStack.pop()` to prevent orphaned QML components (a known issue when the window is at minimum size and transition animations don't fire).
+
+
+Never give a QML property the same name as an id in main.qml (e.g. property mediaModel vs id: mediaModel). It silently resolves to null and blanks views with no error.

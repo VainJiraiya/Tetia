@@ -1,9 +1,13 @@
+import logging
 import re
 
+import sqlite3
 from PySide6.QtCore import QObject, Slot
 from PySide6.QtQml import QmlElement
 
 from models.database import Database
+
+logger = logging.getLogger(__name__)
 
 
 QML_IMPORT_NAME = "Gallery"
@@ -51,16 +55,20 @@ class TagModel(QObject):
 
         Returns: [{"id": 1, "name": "isekai", "category": "genre"}, ...]
         """
-        cursor = self._db.conn.cursor()
-        cursor.execute("""
-            SELECT t.id, t.name, tc.name AS category
-            FROM media_tag mt
-            JOIN tag t ON t.id = mt.tag_id
-            JOIN tag_category tc ON tc.id = t.category_id
-            WHERE mt.media_id = ?
-        """, (media_id,))
-        return [{"id": row["id"], "name": row["name"], "category": row["category"]}
-                for row in cursor.fetchall()]
+        try:
+            cursor = self._db.conn.cursor()
+            cursor.execute("""
+                SELECT t.id, t.name, tc.name AS category
+                FROM media_tag mt
+                JOIN tag t ON t.id = mt.tag_id
+                JOIN tag_category tc ON tc.id = t.category_id
+                WHERE mt.media_id = ?
+            """, (media_id,))
+            return [{"id": row["id"], "name": row["name"], "category": row["category"]}
+                    for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error("Failed to get tags for media_id=%d: %s", media_id, e)
+            return []
 
     @Slot(int, str, str)
     def addTag(self, media_id: int, raw_name: str, category_name: str) -> bool:
@@ -92,7 +100,7 @@ class TagModel(QObject):
         if tag_id is None:
             try:
                 tag_id = self._db.insert_tag(normalized, cat_id)
-            except Exception:
+            except sqlite3.Error:
                 # Tag might already exist (race condition or UNIQUE violation)
                 tag_id = self._db.get_tag_id(normalized)
                 if tag_id is None:
@@ -103,7 +111,8 @@ class TagModel(QObject):
             self._db.conn.execute("PRAGMA foreign_keys = ON")
             self._db.insert_media_tag(media_id, tag_id)
             return True
-        except Exception:
+        except sqlite3.Error as e:
+            logger.error("Failed to add tag to media_id=%d: %s", media_id, e)
             return False
 
     @Slot(list, str, str)
@@ -132,7 +141,7 @@ class TagModel(QObject):
         if tag_id is None:
             try:
                 tag_id = self._db.insert_tag(normalized, cat_id)
-            except Exception:
+            except sqlite3.Error:
                 tag_id = self._db.get_tag_id(normalized)
                 if tag_id is None:
                     return
@@ -145,14 +154,18 @@ class TagModel(QObject):
                 self._db.insert_media_tag(media_id, tag_id)
             if not in_txn:
                 self._db.conn.commit()
-        except Exception:
+        except sqlite3.Error as e:
+            logger.error("Failed to bulk-add tag: %s", e)
             if not in_txn:
                 self._db.conn.rollback()
 
     @Slot(int, int)
     def removeTag(self, media_id: int, tag_id: int):
         """Remove a tag link from a media item. The tag itself is preserved."""
-        self._db.remove_media_tag(media_id, tag_id)
+        try:
+            self._db.remove_media_tag(media_id, tag_id)
+        except sqlite3.Error as e:
+            logger.error("Failed to remove tag from media_id=%d: %s", media_id, e)
 
     @Slot(list, int)
     def removeTagsFromMedia(self, media_ids: list, tag_id: int):
@@ -163,7 +176,8 @@ class TagModel(QObject):
                 self._db.remove_media_tag(media_id, tag_id)
             if not in_txn:
                 self._db.conn.commit()
-        except Exception:
+        except sqlite3.Error as e:
+            logger.error("Failed to bulk-remove tag: %s", e)
             if not in_txn:
                 self._db.conn.rollback()
 
@@ -173,14 +187,18 @@ class TagModel(QObject):
 
         Returns: [{"id": 1, "name": "isekai", "category": "genre"}, ...]
         """
-        cursor = self._db.conn.cursor()
-        cursor.execute("""
-            SELECT t.id, t.name, tc.name AS category
-            FROM tag t
-            JOIN tag_category tc ON tc.id = t.category_id
-            WHERE t.name LIKE ?
-            ORDER BY t.name
-            LIMIT 10
-        """, (prefix + "%",))
-        return [{"id": row["id"], "name": row["name"], "category": row["category"]}
-                for row in cursor.fetchall()]
+        try:
+            cursor = self._db.conn.cursor()
+            cursor.execute("""
+                SELECT t.id, t.name, tc.name AS category
+                FROM tag t
+                JOIN tag_category tc ON tc.id = t.category_id
+                WHERE t.name LIKE ?
+                ORDER BY t.name
+                LIMIT 10
+            """, (prefix + "%",))
+            return [{"id": row["id"], "name": row["name"], "category": row["category"]}
+                    for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error("Failed to suggest tags: %s", e)
+            return []

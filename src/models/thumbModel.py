@@ -175,11 +175,11 @@ class ThumbnailProvider(QQuickImageProvider):
         # 1. Try all cache directories
         for cache_dir in self.cache_dirs:
             thumb_file = cache_dir / cached_thumb_name
-            print(f"CHECKING {thumb_file}")
+            # print(f"CHECKING {thumb_file}")
             if thumb_file.exists():
                 img = QImage(str(thumb_file))
                 if not img.isNull():
-                    print(f"[CACHE HIT] {cache_dir, id_string}")
+                    # print(f"[CACHE HIT] {cache_dir, id_string}")
                     size.setWidth(img.width())
                     size.setHeight(img.height())
                     return img
@@ -202,12 +202,12 @@ class ThumbnailProvider(QQuickImageProvider):
             img = reader.read()
 
         if not img.isNull():
-            print(f"[CACHE MISS]{id_string, local_path}")
+            # print(f"[CACHE MISS]{id_string, local_path}")
             size.setWidth(img.width())
             size.setHeight(img.height())
             _save_thumbnail(self.thumbnails_base, uri, uri_md5, img, local_path)
         else:
-            print(f"[ERROR READING] {local_path}")
+            # print(f"[ERROR READING] {local_path}")
             size.setWidth(target_size.width())
             size.setHeight(target_size.height())
 
