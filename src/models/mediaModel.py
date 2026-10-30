@@ -203,7 +203,12 @@ class MediaModel(QAbstractListModel):
         if not folder_directory.is_dir():
             return
 
+        # Kept exactly as chosen, since QML reads it back through folderPath
         self._current_folder_path = str(folder_directory)
+
+        # Stored media paths are resolved (symlinks followed), so database
+        # comparisons for this folder must use the resolved form as well
+        scan_directory = folder_directory.resolve()
 
         # Unsubscribes watcher from previously monitored folders if any exist
         existing_watched_directories = self._file_system_watcher.directories()
@@ -219,75 +224,93 @@ class MediaModel(QAbstractListModel):
         temporary_books_list = []
 
         scanned_paths = set()
+        claimed_ids = set()
 
-        # Iterates over every file in the target directory and collects media metadata
-        for directory_item in folder_directory.iterdir():
-            # Checks if the current item is an actual file (not a subfolder)
-            if directory_item.is_file():
-                file_extension = directory_item.suffix.lower()
+        # One transaction for the whole scan; database helpers used here never commit
+        self._db.conn.execute("BEGIN")
+        try:
+            # Iterates over every file in the target directory and collects media metadata
+            for directory_item in folder_directory.iterdir():
+                # Checks if the current item is an actual file (not a subfolder)
+                if directory_item.is_file():
+                    file_extension = directory_item.suffix.lower()
 
-                is_image = file_extension in IMAGE_EXTENSIONS
-                is_video = file_extension in VIDEO_EXTENSIONS
-                is_comic = file_extension in COMIC_EXTENSIONS
-                is_book = file_extension in EBOOK_EXTENSIONS
+                    is_image = file_extension in IMAGE_EXTENSIONS
+                    is_video = file_extension in VIDEO_EXTENSIONS
+                    is_comic = file_extension in COMIC_EXTENSIONS
+                    is_book = file_extension in EBOOK_EXTENSIONS
 
-                # Skips anything that doesn't match a supported extension
-                if not (is_image or is_video or is_comic or is_book):
-                    continue
+                    # Skips anything that doesn't match a supported extension
+                    if not (is_image or is_video or is_comic or is_book):
+                        continue
 
-                abs_path = str(directory_item.resolve())
-                scanned_paths.add(abs_path)
-                file_size = directory_item.stat().st_size
-                file_mtime = int(directory_item.stat().st_mtime)
-                content_hash = self._compute_content_hash(abs_path)
+                    abs_path = str(directory_item.resolve())
+                    scanned_paths.add(abs_path)
+                    stat_result = directory_item.stat()
+                    file_size = stat_result.st_size
+                    file_mtime = int(stat_result.st_mtime)
+                    kind = self._kind_from_ext(file_extension)
 
-                # Check if this hash matches a missing row (move/rename reconciliation)
-                move_info = self._db.find_missing_by_hash(content_hash)
-                if move_info:
-                    self._db.upsert_media(
-                        abs_path, directory_item.name,
-                        self._kind_from_ext(file_extension),
-                        file_size, file_mtime, content_hash
-                    )
-                    media_id = move_info["id"]
-                else:
-                    self._db.upsert_media(
-                        abs_path, directory_item.name,
-                        self._kind_from_ext(file_extension),
-                        file_size, file_mtime, content_hash
-                    )
-                    # Retrieve the media_id we just upserted
-                    cursor = self._db.conn.cursor()
-                    cursor.execute("SELECT id FROM media WHERE path = ?", (abs_path,))
-                    row = cursor.fetchone()
-                    media_id = row[0] if row else 0
+                    # Don't rehash files whose size and mtime are unchanged
+                    content_hash = self._db.get_stored_hash(
+                        abs_path, file_size, file_mtime
+                    ) or self._compute_content_hash(abs_path)
 
-                favorite = self._db.get_media_favorite(media_id)
-                rating = self._db.get_media_rating(media_id)
+                    # A path with no row yet may be a renamed file: look for a row with
+                    # the same hash whose file is gone, and take over its id/favorite/rating.
+                    # Only same-folder renames are reconciled (moves between folders are
+                    # treated as new files).
+                    moved = None
+                    if self._db.get_media_by_path(abs_path) is None:
+                        candidate = self._db.find_missing_by_hash(
+                            content_hash, scanned_paths, claimed_ids
+                        )
+                        if candidate and Path(candidate["path"]).parent == scan_directory:
+                            moved = self._db.claim_move(
+                                candidate["id"], abs_path, directory_item.name,
+                                kind, file_size, file_mtime, content_hash
+                            )
+                            if moved is not None:
+                                claimed_ids.add(candidate["id"])
 
-                item_metadata = {
-                    "media_id": media_id,
-                    "uniform_resource_identifier": directory_item.as_uri(),
-                    "file_name": directory_item.name,
-                    "is_video": is_video,
-                    "is_comic": is_comic,
-                    "is_book": is_book,
-                    "is_favorite": favorite,
-                    "rating": rating,
-                }
+                    if moved is not None:
+                        media_id, favorite, rating = moved
+                    else:
+                        # Inserts a new row, or updates the existing row in place
+                        media_id, favorite, rating = self._db.upsert_media(
+                            abs_path, directory_item.name,
+                            kind, file_size, file_mtime, content_hash
+                        )
 
-                # Sorts item into whichever list matches its extension
-                if is_image:
-                    temporary_images_list.append(item_metadata)
-                elif is_video:
-                    temporary_videos_list.append(item_metadata)
-                elif is_comic:
-                    temporary_comics_list.append(item_metadata)
-                elif is_book:
-                    temporary_books_list.append(item_metadata)
+                    item_metadata = {
+                        "media_id": media_id,
+                        "uniform_resource_identifier": directory_item.as_uri(),
+                        "file_name": directory_item.name,
+                        "is_video": is_video,
+                        "is_comic": is_comic,
+                        "is_book": is_book,
+                        "is_favorite": favorite,
+                        "rating": rating,
+                    }
 
-        # Mark files that existed before but are no longer scanned as missing
-        self._db.mark_missing(scanned_paths)
+                    # Sorts item into whichever list matches its extension
+                    if is_image:
+                        temporary_images_list.append(item_metadata)
+                    elif is_video:
+                        temporary_videos_list.append(item_metadata)
+                    elif is_comic:
+                        temporary_comics_list.append(item_metadata)
+                    elif is_book:
+                        temporary_books_list.append(item_metadata)
+
+            # Mark rows in this folder whose files were not seen as missing
+            self._db.mark_missing(str(scan_directory), scanned_paths)
+
+            self._db.conn.commit()
+
+        except Exception:
+            self._db.conn.rollback()
+            raise
 
         self._all_images = temporary_images_list
         self._all_videos = temporary_videos_list

@@ -30,8 +30,8 @@ src/qml/
   main.qml             app window, header, page stack, model instances, navigation
   views/
     FolderGridView.qml     folder collection grid (cards with hero images)
-    MediaGridView.qml      media item grid (thumbnails + filenames + favorite ribbon)
-    ImageViewer.qml        fullscreen image viewer (pinch-zoom, arrow keys, favorite + rating)
+    MediaGridView.qml      media item grid (thumbnails + filenames)
+    ImageViewer.qml        fullscreen image viewer (pinch-zoom, arrow keys)
 mediaModel.py          legacy copy at repo root — DO NOT use; src/models/mediaModel.py is the active one
 guide.md               reference docs (not agent-facing)
 TAGGING_SPEC.md        phased spec for tagging, favorites, rating, and search system
@@ -45,7 +45,7 @@ TAGGING_SPEC.md        phased spec for tagging, favorites, rating, and search sy
 - **Kirigami version:** `import org.kde.kirigami 2.20 as Kirigami` in QML files.
 - **Database:** SQLite at `~/.local/share/GalleryApp/gallery.db`. Auto-created on first run. Migration system via `PRAGMA user_version` (Phase 1: `media` table).
 - **Media persistence:** Each scanned file is upserted into `media` by `path`. `content_hash` (SHA-1: size + first 1MB + last 1MB) enables move/rename reconciliation. Missing files get `missing=1` instead of row deletion.
-- **Favorites & Rating:** `favorite` (boolean) and `rating` (0-3 or NULL) stored per `media_id`. UI toggles in MediaGridView (favorite ribbon) and ImageViewer (star selector). Operations emit `dataChanged` for single-row updates.
+- **Favorites & Rating:** `favorite` (boolean) and `rating` (0-3 or NULL) stored per `media_id`. Operations emit `dataChanged` for single-row updates. UI integration pending.
 - **No tests, no linter, no pyproject.toml.** The flake is the only tooling.
 - **`QAbstractListModel`** uses `beginResetModel()`/`endResetModel()` for bulk updates, not row-by-row insert/remove.
 - **Page stack cleanup:** When popping pages or switching tabs, always call `poppedPage.destroy()` after `pageStack.pop()` to prevent orphaned QML components (a known issue when the window is at minimum size and transition animations don't fire).

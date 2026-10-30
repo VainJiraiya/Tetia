@@ -113,13 +113,24 @@ Enable `PRAGMA foreign_keys = ON` on every connection.
 4. Reconcile moves: if a scanned path has no row but its hash matches a row whose file no longer exists, update that row's `path`/`name` instead of inserting. This preserves tags across moves and renames.
 5. Never delete rows for files that vanished. Set `missing = 1` (so an unmounted drive doesn't wipe tags); clear it when the file reappears.
 6. Extend `mediaModel.py` roles: `mediaId`, `isFavorite`, `rating`. Add `@Slot(int, bool) setFavorite(media_id, value)` and `@Slot(int, int) setRating(media_id, value)` (value -1 clears to NULL). Both emit `dataChanged` for the affected row only.
-7. UI: favourite toggle on the grid delegate and the viewers, and a rating selector in a details panel.
+7. UI, in three separate steps. Finish and let me verify each in the running app before starting the next:
+   - **7a. Favourite toggle in the image viewer only.** A `Controls.ToolButton` in the viewer's existing header/toolbar actions, using a heart icon (`emblem-favorite`, if it exists on this system). Show it at full opacity when favourited and at about 0.4 opacity when not, so no second icon name is needed. Do not touch the file-number chip or any other existing viewer element.
+   - **7b. Favourite indicator on grid tiles.** A small `Kirigami.Icon` (the same heart as 7a), inset from the top-right corner by `Kirigami.Units.smallSpacing`, visible **only** when the item is a favourite. A tile with no favourite must look exactly as it does today.
+   - **7c. Age rating.** A rating menu: a `Kirigami.Action` with exclusive, checkable child actions in the viewer's toolbar overflow menu, with the same entries in the grid tile's context menu. Text labels only: General, Teen (13+), Mature (17+), Adult (18+), Unrated. Choosing one calls `setRating(media_id, 0..3)`; Unrated calls `setRating(media_id, -1)`. This is an age rating, not a quality score: no stars, hearts or icon-based rating anywhere, and the current rating is shown as text only.
+
+   UI rules for every step:
+   - Do not modify any tile's existing clipping, rounding, shadow, `layer` or `ShadowedTexture` code.
+   - Overlays must not use `layer.enabled`, `OpacityMask`, or a full-size `Rectangle`.
+   - Only use icon names that exist on this system. Check inside `nix develop` first, e.g. `find $(echo $XDG_DATA_DIRS | tr ':' ' ') -name 'emblem-favorite*' 2>/dev/null | head`. If an icon is missing, say so rather than substituting an image file.
+   - Use `Kirigami.Icon` or `icon.name`, not `Image`, for icons.
 
 **Acceptance**
 
 - Rescanning a folder twice produces no duplicate rows.
 - Renaming or moving a file within scanned folders keeps its `media_id`, favourite and rating.
 - Toggling favourite does not reset the grid's scroll position.
+- Tiles with no favourite look pixel-identical to before this phase (no new corners, boxes or overlays).
+- Every icon shown actually renders (no broken-image placeholders).
 
 ---
 
