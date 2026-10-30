@@ -36,14 +36,20 @@ Rectangle {
         }
     }
 
+    onMediaIdsChanged: _loadTags()
+    onCurrentMediaIdChanged: _loadTags()
+
     function _loadTags() {
         if (!root.tagModel) return
-        if (!isSingleItem()) return
+        if (!isSingleItem()) {
+            _tagList.clear()
+            return
+        }
         var tags = root.tagModel.tagsFor(root.getFirstMediaId())
         _tagList.clear()
         for (var i = 0; i < tags.length; i++) {
             _tagList.append({
-                id: tags[i].id,
+                tagId: tags[i].id,
                 name: tags[i].name,
                 mediaId: tags[i].mediaId || root.getFirstMediaId()
             })
@@ -62,8 +68,8 @@ Rectangle {
                     root.tagModel.addTagsToMedia(root.mediaIds, name, "content")
                 }
                 inputField.text = ""
-                _suggestions.model = []
-                suggestionsPopup.visible = false
+                _suggestions.clear()
+                _loadTags()
     }
 
     function _removeTag(mediaId, tagId) {
@@ -72,6 +78,7 @@ Rectangle {
         } else {
             root.tagModel.removeTag(mediaId, tagId)
         }
+        _loadTags()
     }
 
     ListModel {
@@ -86,7 +93,6 @@ Rectangle {
         if (!root.tagModel) return
             var text = inputField.text.trim()
             if (text.length === 0) {
-                suggestionsPopup.visible = false
                 return
             }
             var suggestions = root.tagModel.suggest(text)
@@ -98,11 +104,7 @@ Rectangle {
                     category: suggestions[i].category
                 })
             }
-            if (_suggestions.count > 0) {
-                suggestionsPopup.open()
-            } else {
-                suggestionsPopup.visible = false
-            }
+            console.log("suggestions:", _suggestions.count)
     }
 
     ColumnLayout {
@@ -148,40 +150,9 @@ Rectangle {
                 Repeater {
                     model: _tagList
                     delegate: Kirigami.Chip {
-                        width: contentWidth + 12
-                        height: 28
-                        checked: true
-                        hoverEnabled: true
-
-                        Label {
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: 12
-                            text: model.name
-                            font.pixelSize: 12
-                        }
-
-                        Button {
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.rightMargin: 4
-                            width: 20
-                            height: 20
-                            display: AbstractButton.IconOnly
-                            icon.name: "window-close-symbolic"
-                            icon.color: Kirigami.Theme.textColor
-                            flat: true
-                            hoverEnabled: true
-                            opacity: root.hovered ? 0.8 : 0.5
-
-                            onClicked: {
-                                _removeTag(model.mediaId || root.getFirstMediaId(), model.id)
-                            }
-                        }
-
-                        onCheckedChanged: {
-                            checked = true
-                        }
+                        text: model.name
+                        closable: true
+                        onRemoved: _removeTag(model.mediaId || root.getFirstMediaId(), model.tagId)
                     }
                 }
             }
@@ -191,10 +162,11 @@ Rectangle {
         Column {
             Layout.fillWidth: true
             spacing: 4
+            z: 1
 
             TextField {
                 id: inputField
-                Layout.fillWidth: true
+                width: parent.width
                 placeholderText: "Add tag..."
                 placeholderTextColor: Kirigami.Theme.textColor
                 color: Kirigami.Theme.textColor
@@ -203,51 +175,47 @@ Rectangle {
                 onAccepted: _addTag()
 
                 Keys.onDownPressed: {
-                    suggestionList.positionViewAtIndex(0, ListView.Beginning)
-                    suggestionList.currentIndex = 0
-                }
-                Keys.onEnterPressed: {
-                    if (suggestionList.currentIndex >= 0 && suggestionList.currentIndex < _suggestions.count) {
-                        inputField.text = suggestionList.currentItem.name
-                        _addTag()
-                    } else {
-                        _addTag()
+                    if (_suggestions.count > 0) {
+                        suggestionList.positionViewAtIndex(0, ListView.Beginning)
+                        suggestionList.currentIndex = 0
                     }
                 }
-            }
 
-            Popup {
-                id: suggestionsPopup
-                y: inputField.bottom
-                width: inputField.width
-                padding: 4
+                Item {
+                    y: inputField.height
+                    width: inputField.width
+                    z: 100
+                    visible: _suggestions.count > 0
+                    height: _suggestions.count > 0 ? Math.min(suggestionList.contentHeight, 5 * 28) + 8 : 0
 
-                contentItem: ListView {
-                    id: suggestionList
-                    model: _suggestions
-                    currentIndex: -1
-                    clip: true
-                    implicitHeight: contentHeight
+                    Rectangle {
+                        anchors.fill: parent
+                        color: Kirigami.Theme.backgroundColor
+                        border.color: Kirigami.Theme.highlightColor
+                        radius: 4
+                    }
 
-                    delegate: ItemDelegate {
-                        width: suggestionList.width
-                        text: model.name
-                        highlighted: suggestionList.currentIndex === index
+                    ListView {
+                        id: suggestionList
+                        anchors.fill: parent
+                        model: _suggestions
+                        currentIndex: -1
+                        clip: true
 
-                        onClicked: {
-                            inputField.text = model.name
-                            _addTag()
+                        delegate: ItemDelegate {
+                            width: suggestionList.width
+                            text: model.name
+                            highlighted: suggestionList.currentIndex === index
+
+                            onClicked: {
+                                inputField.text = model.name
+                                _addTag()
+                            }
+
+                            Keys.onDownPressed: suggestionList.currentIndex = Math.min(suggestionList.currentIndex + 1, _suggestions.count - 1)
+                            Keys.onUpPressed: suggestionList.currentIndex = Math.max(suggestionList.currentIndex - 1, 0)
                         }
-
-                        Keys.onDownPressed: suggestionList.currentIndex = Math.min(suggestionList.currentIndex + 1, _suggestions.count - 1)
-                        Keys.onUpPressed: suggestionList.currentIndex = Math.max(suggestionList.currentIndex - 1, 0)
                     }
-                }
-
-                background: Rectangle {
-                    color: Kirigami.Theme.backgroundColor
-                    border.color: Kirigami.Theme.highlightColor
-                    radius: 4
                 }
             }
         }
