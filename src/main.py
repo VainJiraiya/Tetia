@@ -13,6 +13,9 @@ from models.file_picker import FilePicker
 # NEW: Import the FolderModel so its @QmlElement decorator registers it with QML
 from models.folderModel import FolderModel
 
+# NEW: Import TagModel for QML registration
+from models.tagModel import TagModel
+
 if __name__ == "__main__":
     # 2. Initialize the full widget application here
     app = QApplication(sys.argv)

@@ -189,8 +189,10 @@ class MediaModel(QAbstractListModel):
     # Receives a file URL string from QML or Python, parses the folder, and extracts file data
     @Slot(str)
     def load_from_qurl(self, qurl_string: str):
+        print(f"[MEDIA] load_from_qurl called with: {qurl_string}")
         # Stops execution early if an empty path string was passed in
         if not qurl_string:
+            print("[MEDIA] Empty path, returning")
             return
 
         # Converts QUrl string (file://) into a standard system path string
@@ -198,9 +200,11 @@ class MediaModel(QAbstractListModel):
             QUrl(qurl_string).toLocalFile() or qurl_string
         )
         folder_directory = Path(clean_path_string)
+        print(f"[MEDIA] Resolved path: {folder_directory}, is_dir: {folder_directory.is_dir()}")
 
         # Stops execution if the target path is not a valid directory on disk
         if not folder_directory.is_dir():
+            print("[MEDIA] Path is not a directory, returning")
             return
 
         # Kept exactly as chosen, since QML reads it back through folderPath
@@ -388,6 +392,10 @@ class MediaModel(QAbstractListModel):
             idx = self.index(row)
             self._visible_items[row]["is_favorite"] = 1 if favorite else 0
             self.dataChanged.emit(idx, idx, [MediaModel.Roles.IsFavoriteRole])
+
+    @Slot(int, result=bool)
+    def getFavorite(self, media_id: int) -> bool:
+        return bool(self._db.get_media_favorite(media_id))
 
     @Slot(int, int)
     def setRating(self, media_id: int, rating: int):

@@ -22,6 +22,9 @@ ListView {
     // TWEAK 2: Read the file name from the currently active delegate so 
     // the global header can display it.
     property string title: currentItem ? currentItem.fileName : ""
+    property bool showTagPanel: false
+    property var tagBackend: null
+    property int currentMediaId: -1
 
     orientation: ListView.Horizontal
     snapMode: ListView.SnapOneItem
@@ -46,6 +49,12 @@ ListView {
     focus: true
     Keys.onLeftPressed: goPrevious()
     Keys.onRightPressed: goNext()
+    Keys.onPressed: {
+        if (event.key === Qt.Key_T) {
+            root.showTagPanel = !root.showTagPanel
+            event.accepted = true
+        }
+    }
 
     function goNext() {
         if (root.currentIndex < root.count - 1) {
@@ -71,6 +80,9 @@ ListView {
     onCurrentIndexChanged: {
         root.chipVisible = true
         hideChipTimer.restart()
+        if (currentItem) {
+            root.currentMediaId = currentItem.mediaId
+        }
     }
 
     delegate: Item {
@@ -83,7 +95,8 @@ ListView {
         property bool zoomed: photo.scale > 1.02
         
         // Expose the model's fileName so the ListView can read it as currentItem.fileName
-        property string fileName: model.fileName 
+        property string fileName: model.fileName
+        property int mediaId: model.mediaId
 
         Flickable {
             id: flick
@@ -316,5 +329,31 @@ ListView {
             font.pixelSize: 13
             font.weight: Font.DemiBold
         }
+    }
+
+    ToolButton {
+        anchors.top: parent.top
+        anchors.right: root.showTagPanel ? listView.right : parent.right
+        anchors.margins: 8
+        icon.name: "tag"
+        display: AbstractButton.IconOnly
+        hoverEnabled: true
+        opacity: root.controlsVisible ? 0.85 : 0.3
+        enabled: opacity > 0.05
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+
+        onClicked: root.showTagPanel = !root.showTagPanel
+    }
+
+    TagPanel {
+        id: tagPanel
+        visible: root.showTagPanel
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        mediaIds: [root.currentMediaId]
+        currentMediaId: root.currentMediaId
+        tagModel: root.tagBackend
+        mediaModel: root.model
     }
 }

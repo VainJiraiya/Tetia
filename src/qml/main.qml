@@ -18,6 +18,7 @@ Kirigami.ApplicationWindow {
     }
 
     property bool isRemoveMode: false
+    property bool isTagMode: false
 
     // Persistent header defined at the ApplicationWindow level
     header: ToolBar {
@@ -98,7 +99,7 @@ Kirigami.ApplicationWindow {
             Label {
                 text: pageStack.currentItem && pageStack.currentItem.title ? pageStack.currentItem.title : "Collections"
                 font.pixelSize: 18
-                font.weight: Font.normal
+                font.weight: Font.Normal
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
@@ -149,6 +150,43 @@ Kirigami.ApplicationWindow {
                         onClicked: root.isRemoveMode = false
                     }
                 }
+
+                Rectangle {
+                    id: tagDoneButtonBg
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    radius: 4
+                    color: Kirigami.Theme.highlightColor
+                    opacity: tagDoneMouseArea.containsMouse ? 1.0 : 0.85
+                    visible: root.isTagMode
+
+                    RowLayout {
+                        id: tagDoneButtonContent
+                        anchors.centerIn: parent
+                        spacing: 4
+
+                        Kirigami.Icon {
+                            source: "tag"
+                            color: "white"
+                            Layout.preferredWidth: 16
+                            Layout.preferredHeight: 16
+                        }
+
+                        Label {
+                            text: "Done"
+                            color: "white"
+                            font.weight: Font.Medium
+                        }
+                    }
+
+                    MouseArea {
+                        id: tagDoneMouseArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        enabled: root.isTagMode
+                        onClicked: root.isTagMode = false
+                    }
+                }
             }
         }
     }
@@ -161,6 +199,10 @@ Kirigami.ApplicationWindow {
     FolderModel {
         id: folderModel
         currentCategory: "photos" 
+    }
+
+    TagModel {
+        id: tagModel
     }
 
     FilePicker {
@@ -276,8 +318,11 @@ Kirigami.ApplicationWindow {
             // The title property is dynamically injected by pageStack.push()
             
             MediaGridView {
-                model: mediaModel 
+                model: mediaModel
+                mediaBackend: mediaModel
+                tagBackend: tagModel
                 anchors.fill: parent
+                tagMode: root.isTagMode
 
                 onImageClicked: function(index) {
                     pageStack.push(imageViewerComponent, { initialIndex: index })
@@ -322,6 +367,7 @@ Kirigami.ApplicationWindow {
                 anchors.fill: parent
                 model: mediaModel
                 initialIndex: viewerPage.initialIndex
+                tagBackend: tagModel
             }
         }
     }
