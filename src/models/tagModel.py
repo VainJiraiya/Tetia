@@ -5,7 +5,7 @@ import sqlite3
 from PySide6.QtCore import QObject, Slot
 from PySide6.QtQml import QmlElement
 
-from models.database import Database
+from models.database import get_database
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class TagModel(QObject):
 
     def __init__(self, parent: QObject = None):
         super().__init__(parent)
-        self._db = Database()
+        self._db = get_database()
 
     @Slot(int, result=list)
     def tagsFor(self, media_id: int) -> list[dict]:

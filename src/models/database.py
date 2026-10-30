@@ -1,6 +1,27 @@
 import sqlite3
 from pathlib import Path
 
+_instance = None
+
+
+def get_database():
+    """Return the shared Database singleton. Created on first call."""
+    global _instance
+    if _instance is None:
+        _instance = Database()
+    return _instance
+
+
+def reset_singleton():
+    """Close and reset the singleton. For tests only."""
+    global _instance
+    if _instance is not None:
+        try:
+            _instance.close()
+        except Exception:
+            pass
+        _instance = None
+
 
 class Database:
     def __init__(self, db_path=None):
@@ -14,6 +35,22 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self._init_tables()
         self._migrate()
+
+    def _write(self, fn, *args):
+        """Execute a write statement. Commits only if we started the transaction.
+        Rolls back on sqlite3.Error only if we started the transaction, then re-raises.
+        Returns the result of fn()."""
+        started = not self.conn.in_transaction
+        try:
+            result = fn(*args)
+        except sqlite3.Error:
+            if started:
+                self.conn.rollback()
+            raise
+        else:
+            if started:
+                self.conn.commit()
+            return result
 
     def _init_tables(self):
         with self.conn:
@@ -253,10 +290,11 @@ class Database:
         return row[0] if row else 0
 
     def set_media_favorite(self, media_id: int, favorite: bool):
-        in_txn = self.conn.in_transaction
-        self.conn.execute("UPDATE media SET favorite = ? WHERE id = ?", (1 if favorite else 0, media_id))
-        if not in_txn:
-            self.conn.commit()
+        self._write(
+            self.conn.execute,
+            "UPDATE media SET favorite = ? WHERE id = ?",
+            (1 if favorite else 0, media_id)
+        )
 
     def get_media_rating(self, media_id: int):
         cursor = self.conn.cursor()
@@ -265,10 +303,11 @@ class Database:
         return row[0] if row else None
 
     def set_media_rating(self, media_id: int, rating):
-        in_txn = self.conn.in_transaction
-        self.conn.execute("UPDATE media SET rating = ? WHERE id = ?", (rating, media_id))
-        if not in_txn:
-            self.conn.commit()
+        self._write(
+            self.conn.execute,
+            "UPDATE media SET rating = ? WHERE id = ?",
+            (rating, media_id)
+        )
 
     # --- Tag helpers ---
 
@@ -302,32 +341,26 @@ class Database:
 
     def insert_tag(self, tag_name: str, category_id: int) -> int:
         """Insert a new tag and return its id. Raises if tag already exists."""
-        in_txn = self.conn.in_transaction
-        cursor = self.conn.execute(
-            "INSERT INTO tag (name, category_id) VALUES (?, ?) RETURNING id",
-            (tag_name, category_id)
-        )
-        row = cursor.fetchone()[0]
-        if not in_txn:
-            self.conn.commit()
-        return row
+        def _do():
+            cursor = self.conn.execute(
+                "INSERT INTO tag (name, category_id) VALUES (?, ?) RETURNING id",
+                (tag_name, category_id)
+            )
+            return cursor.fetchone()[0]
+        return self._write(_do)
 
     def insert_media_tag(self, media_id: int, tag_id: int, source: str = "manual"):
         """Link a tag to media. No-op if already linked (INSERT OR IGNORE)."""
-        in_txn = self.conn.in_transaction
-        self.conn.execute(
+        self._write(
+            self.conn.execute,
             "INSERT OR IGNORE INTO media_tag (media_id, tag_id, source) VALUES (?, ?, ?)",
             (media_id, tag_id, source)
         )
-        if not in_txn:
-            self.conn.commit()
 
     def remove_media_tag(self, media_id: int, tag_id: int):
         """Remove a tag link from media."""
-        in_txn = self.conn.in_transaction
-        self.conn.execute(
+        self._write(
+            self.conn.execute,
             "DELETE FROM media_tag WHERE media_id = ? AND tag_id = ?",
             (media_id, tag_id)
         )
-        if not in_txn:
-            self.conn.commit()

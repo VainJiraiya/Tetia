@@ -19,7 +19,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtQml import QmlElement
 
-from models.database import Database
+from models.database import get_database
 
 # Sets the QML import module configuration so QML files can write "import Gallery 1.0"
 QML_IMPORT_NAME = "Gallery"
@@ -84,7 +84,7 @@ class MediaModel(QAbstractListModel):
         self._filter_mode: MediaModel.FilterMode = MediaModel.FilterMode.All
 
         # Database connection for persistent media identity
-        self._db = Database()
+        self._db = get_database()
 
         # Initializes Qt file system watcher to monitor loaded directories for real-time changes
         self._file_system_watcher = QFileSystemWatcher(self)

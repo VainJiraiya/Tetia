@@ -11,7 +11,7 @@ from PySide6.QtCore import QCoreApplication
 app = QCoreApplication([])
 
 from models.mediaModel import MediaModel
-from models.database import Database
+from models.database import Database, get_database, reset_singleton
 
 ROOT = Path(tempfile.mkdtemp(prefix="media")).resolve()
 results = []
@@ -30,6 +30,7 @@ def fresh():
             Path(str(dbfile) + suffix).unlink()
         except FileNotFoundError:
             pass
+    reset_singleton()
     return MediaModel()
 
 
@@ -171,7 +172,8 @@ check("two identical renamed files claim distinct rows",
 
 # 13. add_folder persists across connections, and a scan doesn't leave a lock
 dbfile = Path(HOME) / ".local" / "share" / "GalleryApp" / "gallery.db"
-c1, c2 = Database(), Database()
+c1 = get_database()
+c2 = Database()
 c1.add_folder("/some/folder", "photos")
 check("add_folder visible from another connection", c2.get_folders_by_category("photos") == [{"path": "/some/folder", "category": "photos"}])
 c2.conn.execute("PRAGMA busy_timeout = 300")
@@ -182,7 +184,7 @@ except sqlite3.OperationalError as e:
 check("other connection can write after folder add + scan", ok)
 
 # 14. migration version
-check("user_version is 2", Database().conn.execute("PRAGMA user_version").fetchone()[0] == 2)
+check("user_version is 3", get_database().conn.execute("PRAGMA user_version").fetchone()[0] == 3)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 shutil.rmtree(ROOT, ignore_errors=True)

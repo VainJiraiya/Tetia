@@ -12,7 +12,7 @@ app = QCoreApplication([])
 
 from models.mediaModel import MediaModel
 from models.tagModel import TagModel, normalize_tag
-from models.database import Database
+from models.database import Database, get_database, reset_singleton
 
 ROOT = Path(tempfile.mkdtemp(prefix="media")).resolve()
 results = []
@@ -28,6 +28,7 @@ def fresh_pair():
     global HOME
     HOME = tempfile.mkdtemp(prefix="home")
     os.environ["HOME"] = HOME
+    reset_singleton()
 
     m = MediaModel()
     tm = TagModel()
@@ -231,7 +232,7 @@ tags8 = tm.tagsFor(media_id8)
 check("MediaModel and TagModel coexist", len(tags8) == 1 and visible(m)["c.jpg"]["is_favorite"] == 1)
 
 # 20. Migration version
-check("user_version is 3", Database().conn.execute("PRAGMA user_version").fetchone()[0] == 3)
+check("user_version is 3", get_database().conn.execute("PRAGMA user_version").fetchone()[0] == 3)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 shutil.rmtree(ROOT, ignore_errors=True)
