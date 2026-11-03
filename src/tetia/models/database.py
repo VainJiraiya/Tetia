@@ -18,7 +18,7 @@ def get_database():
 
 def app_data_dir() -> Path:
     """The active profile's data folder (database, covers). Created on first use.
-    General's is ~/.local/share/GalleryApp; a private profile has its own."""
+    General's is $XDG_DATA_HOME/tetia (~/.local/share/tetia); a private profile has its own."""
     return profiles.profile_dir()
 
 

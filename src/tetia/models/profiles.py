@@ -1,18 +1,18 @@
 """Profiles: the built-in General profile plus any number of private ones.
 
-General uses the app's normal locations (the database in ~/.local/share/GalleryApp
-and the shared freedesktop thumbnail cache), so nothing about it changes.
+General uses the app's normal locations (the database in the XDG data folder,
+$XDG_DATA_HOME/tetia, and the shared freedesktop thumbnail cache), so nothing about it changes.
 
 A private profile keeps EVERYTHING it creates in one place of its own (database
 with folders, tags, favorites and ratings; covers; thumbnail cache), never reads
-or writes General's data and never touches ~/.cache/thumbnails, which file
+or writes General's data and never touches the shared thumbnail cache ($XDG_CACHE_HOME/thumbnails), which file
 managers can see. It comes in two kinds:
 
   vault  the data lives in <mount>/.tetia inside a KDE Plasma Vault, so it is
          encrypted at rest and only exists while the vault is unlocked. Tetia
          only remembers which vault; Plasma Vault does the encryption and asks
          for the password (see vaults.py).
-  local  the data lives in ~/.local/share/GalleryApp/profiles/<id>/. Separate
+  local  the data lives in <data folder>/profiles/<id>/. Separate
          from General but NOT encrypted. Offered for people without Plasma Vault.
 
 The active profile is fixed for the life of the process: it is chosen once at
@@ -28,6 +28,7 @@ import sys
 import uuid
 from pathlib import Path
 
+from tetia import paths
 from tetia.models import vaults
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ _active_mount = ""      # the vault's mount point, for an active vault profile
 
 def base_dir() -> Path:
     """The app's data folder: General's data and the profile registry live here."""
-    path = Path.home() / ".local" / "share" / "GalleryApp"
+    path = paths.data_dir()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -80,7 +81,7 @@ def thumbnail_base() -> Path:
     """Where the active profile keeps thumbnails (freedesktop layout).
     General shares the system cache; a private profile has its own."""
     if _active == GENERAL_ID:
-        return Path.home() / ".cache" / "thumbnails"
+        return paths.thumbnails_dir()
     return profile_dir() / "thumbnails"
 
 

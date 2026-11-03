@@ -27,6 +27,18 @@ def _register_qml_types():
 def main(argv=None) -> int:
     argv = list(sys.argv if argv is None else argv)
 
+    # Bring data over from the old (GalleryApp) folder, once, before anything
+    # creates the new one. The old folder is only ever copied from.
+    from tetia import migration
+    try:
+        if migration.migrate_legacy_data():
+            print(f"Tetia: copied your data from {migration.paths.legacy_data_dir()} "
+                  f"to {migration.paths.data_dir()} (the old folder is left as a backup).")
+    except migration.MigrationError as e:
+        # Starting with an empty library would look like data loss; stop instead.
+        print(f"Tetia could not migrate your data: {e}\nYour old data is untouched.", file=sys.stderr)
+        return 1
+
     # The profile must be chosen BEFORE any model opens the database or a cache
     # folder. A normal launch is always General; only a relaunch started by the
     # profile switcher passes --profile.

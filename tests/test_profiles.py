@@ -117,7 +117,7 @@ print(app_data_dir())
         private_dir = Path(first.stdout.strip())
         self.assertIn("profiles", private_dir.parts)
         self.assertTrue((private_dir / "gallery.db").exists())
-        general_db = Path(home) / ".local/share/GalleryApp/gallery.db"
+        general_db = Path(home) / ".local/share/tetia/gallery.db"
         self.assertFalse(general_db.exists(), "private launch must not create General's database")
         # general, same HOME: its own database, with none of the private folders
         second = self.run_py('''
@@ -139,6 +139,29 @@ profiles.activate(profiles.pop_profile_argument(["main.py"]))
 print(profiles.active_id())
 ''', home)
         self.assertEqual(out.stdout.strip(), "general", out.stderr)
+
+
+
+
+class XdgTests(unittest.TestCase):
+    def test_profile_data_follows_xdg_data_home(self):
+        old = os.environ.get("XDG_DATA_HOME")
+        os.environ["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="xdg")
+        try:
+            self.assertEqual(p.base_dir(), Path(os.environ["XDG_DATA_HOME"]) / "tetia")
+            prof, _ = p.create("Where am I")
+            self.assertTrue((Path(os.environ["XDG_DATA_HOME"]) / "tetia" / "profiles" / prof["id"]).is_dir())
+        finally:
+            os.environ.pop("XDG_DATA_HOME", None)
+            if old is not None:
+                os.environ["XDG_DATA_HOME"] = old
+
+    def test_general_thumbnails_follow_xdg_cache_home(self):
+        os.environ["XDG_CACHE_HOME"] = tempfile.mkdtemp(prefix="xdgc")
+        try:
+            self.assertEqual(p.thumbnail_base(), Path(os.environ["XDG_CACHE_HOME"]) / "thumbnails")
+        finally:
+            os.environ.pop("XDG_CACHE_HOME", None)
 
 
 if __name__ == "__main__":

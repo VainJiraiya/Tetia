@@ -24,7 +24,7 @@ def check(name, cond, detail=""):
 
 def fresh():
     """New model + fresh database file for each test."""
-    dbfile = Path(HOME) / ".local" / "share" / "GalleryApp" / "gallery.db"
+    dbfile = Path(HOME) / ".local" / "share" / "tetia" / "gallery.db"
     for suffix in ("", "-journal", "-wal", "-shm"):
         try:
             Path(str(dbfile) + suffix).unlink()
@@ -171,7 +171,7 @@ check("two identical renamed files claim distinct rows",
       {v["e1.jpg"]["media_id"], v["e2.jpg"]["media_id"]} == {i1, i2} and len(rows(m)) == 2, str(v))
 
 # 13. add_folder persists across connections, and a scan doesn't leave a lock
-dbfile = Path(HOME) / ".local" / "share" / "GalleryApp" / "gallery.db"
+dbfile = Path(HOME) / ".local" / "share" / "tetia" / "gallery.db"
 c1 = get_database()
 c2 = Database()
 c1.add_folder("/some/folder", "photos")
