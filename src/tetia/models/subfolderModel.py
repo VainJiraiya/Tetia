@@ -19,7 +19,8 @@ from PySide6.QtQml import QmlElement
 from tetia.models import covers
 from tetia.models.database import get_database
 from tetia.models.mediaModel import (
-    COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, MediaModel,
+    COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
+    VIDEO_EXTENSIONS, MediaModel,
 )
 
 QML_IMPORT_NAME = "Tetia"
@@ -35,7 +36,7 @@ _MODE_EXTENSIONS = {
     MediaModel.FilterMode.All: _ALL,
     MediaModel.FilterMode.ImagesOnly: IMAGE_EXTENSIONS,
     MediaModel.FilterMode.VideosOnly: VIDEO_EXTENSIONS,
-    MediaModel.FilterMode.MangaOnly: COMIC_EXTENSIONS,
+    MediaModel.FilterMode.MangaOnly: MANGA_TAB_EXTENSIONS,
     MediaModel.FilterMode.BooksOnly: EBOOK_EXTENSIONS,
 }
 # Files the thumbnail provider can draw, for tile pictures

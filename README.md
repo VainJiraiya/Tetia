@@ -18,8 +18,9 @@ It is built with Python, Qt Quick and Kirigami.
   something inside it matches the current tab.
 - **Browsing** - a thumbnail grid in natural order ("Chapter 2" before "Chapter 10").
   Thumbnails use the shared freedesktop cache, so Dolphin and Gwenview reuse them.
-  Images open in a full-screen viewer; videos, manga archives (CBZ and friends) and
+  Images open in a full-screen viewer; videos, manga archives (CBZ and friends), PDFs and
   books open in your default application (there is no built-in player or reader yet).
+  PDFs show up in both the Manga and the Books tab, since both are common for manga.
 - **Tags** - five categories (creator, series, character, genre, content), a tag
   panel with suggestions, and bulk tagging. Select items by clicking, with Ctrl or
   Shift, or by dragging a rectangle.

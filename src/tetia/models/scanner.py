@@ -15,9 +15,14 @@ VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".flv", ".w
 # Comic/manga archive formats
 COMIC_EXTENSIONS = {".cbz", ".cbr", ".cb7", ".cbt"}
 
-# Ebook formats. PDF is included here rather than under comics, since PDF
-# manga is comparatively rare and PDF ebooks/documents are the common case.
+# Ebook formats. A PDF is indexed as an ebook (so `type:ebook`, the Books tab and
+# the Favorites grouping treat it as one), because PDF documents are the common case.
 EBOOK_EXTENSIONS = {".epub", ".pdf", ".mobi", ".azw", ".azw3", ".fb2", ".djvu"}
+
+# What the Manga tab lists: comic archives, plus PDFs (a lot of manga is distributed
+# as PDF). A PDF therefore shows in the Manga tab of a folder the user filed under
+# Manga, and in the Books tab of a folder filed under Books.
+MANGA_TAB_EXTENSIONS = COMIC_EXTENSIONS | {".pdf"}
 ALL_MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | COMIC_EXTENSIONS | EBOOK_EXTENSIONS
 
 

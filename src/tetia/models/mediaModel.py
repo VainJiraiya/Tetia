@@ -25,8 +25,8 @@ from PySide6.QtQml import QmlElement
 from tetia.models import covers, profiles
 from tetia.models.database import get_database
 from tetia.models.scanner import (
-    COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS,
-    kind_from_ext, scan_folder,
+    COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
+    VIDEO_EXTENSIONS, kind_from_ext, scan_folder,
 )
 
 # Sets the QML import module configuration so QML files can write "import Tetia 1.0"
@@ -270,9 +270,16 @@ class MediaModel(QAbstractListModel):
         elif self._filter_mode == MediaModel.FilterMode.VideosOnly:
             self._visible_items = self._all_videos
 
-        # Displays only comic/manga archives if filter mode is set to MangaOnly
+        # Displays comic/manga archives and PDFs if filter mode is set to MangaOnly.
+        # PDFs are ebooks by kind, so they are picked out of the books list.
         elif self._filter_mode == MediaModel.FilterMode.MangaOnly:
-            self._visible_items = self._all_comics
+            self._visible_items = sorted(
+                self._all_comics + [
+                    item for item in self._all_books
+                    if Path(item["file_name"]).suffix.lower() in MANGA_TAB_EXTENSIONS
+                ],
+                key=lambda item: covers.natural_key(item["file_name"]),
+            )
 
         # Displays only ebooks if filter mode is set to BooksOnly
         elif self._filter_mode == MediaModel.FilterMode.BooksOnly:

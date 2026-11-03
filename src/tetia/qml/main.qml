@@ -465,7 +465,9 @@ Kirigami.ApplicationWindow {
         visible: !(pageStack.currentItem && pageStack.currentItem.isViewer === true)
         actions: [
             Kirigami.Action {
-                icon.name: "image-x-generic-symbolic"
+                // Not image-x-generic(-symbolic): in Breeze that falls back to a coloured
+                // (green) file-type icon, unlike the single-colour icons of the other tabs
+                icon.name: "viewimage"
                 text: "Photos"
                 checked: folderModel.currentCategory === "photos"
                 onTriggered: switchTab("photos")

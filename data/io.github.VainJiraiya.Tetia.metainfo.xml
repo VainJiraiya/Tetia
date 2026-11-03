@@ -6,7 +6,7 @@
   <project_license>GPL-3.0-or-later</project_license>
 
   <name>Tetia</name>
-  <summary>A media library for manga, images and video</summary>
+  <summary>Library for manga, images and video</summary>
   <developer id="io.github.vainjiraiya">
     <name>Tetia contributors</name>
   </developer>
@@ -46,18 +46,34 @@
     <keyword>media library</keyword>
   </keywords>
 
-  <!-- Tetia ships no content of its own, has no network access and no social or
-       purchase features, so every OARS category is "none". CONFIRM before release. -->
   <content_rating type="oars-1.1"/>
 
-  <!-- TODO: add screenshots once there are public URLs, e.g.
   <screenshots>
     <screenshot type="default">
-      <image>https://TODO.example/tetia-folders.png</image>
-      <caption>TODO</caption>
+      <image>https://raw.githubusercontent.com/VainJiraiya/Tetia/main/data/screenshots/1.png</image>
+      <caption>Search tags and file names across every collection</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/VainJiraiya/Tetia/main/data/screenshots/2.png</image>
+      <caption>Tag your files by category and set a content rating</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/VainJiraiya/Tetia/main/data/screenshots/3.png</image>
+      <caption>Browse a folder of images as a thumbnail grid</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/VainJiraiya/Tetia/main/data/screenshots/4.png</image>
+      <caption>Read manga and PDF volumes with cover thumbnails</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/VainJiraiya/Tetia/main/data/screenshots/5.png</image>
+      <caption>Keep your favorite collections and books in one place</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/VainJiraiya/Tetia/main/data/screenshots/6.png</image>
+      <caption>View images full screen with arrow-key navigation</caption>
     </screenshot>
   </screenshots>
-  -->
 
   <releases>
     <release version="0.1.0" date="2026-11-03">
