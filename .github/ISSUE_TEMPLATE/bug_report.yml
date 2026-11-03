@@ -1,0 +1,72 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Please do not attach private pictures**, and remove personal file paths from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a folder under Manga
+        2. Open it
+        3. ...
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Tetia version
+      description: "`pip show tetia`, or the release you installed"
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - From source (pip)
+        - Flatpak
+        - Nix
+        - Distribution package
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Distribution, desktop and versions
+      description: Distribution, KDE Plasma version, Qt and PySide6 versions
+      placeholder: "Fedora 41, Plasma 6.2, Qt 6.8, PySide6 6.8"
+    validations:
+      required: false
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Which profile were you using?
+      options:
+        - General
+        - Private (Plasma Vault)
+        - Private (local)
+        - Not sure
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Terminal output
+      description: Start Tetia from a terminal (`tetia`) and paste anything it prints. Remove personal paths first.
+      render: shell
+    validations:
+      required: false

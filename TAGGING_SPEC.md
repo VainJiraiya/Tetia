@@ -9,8 +9,8 @@ Add a booru-style tagging system covering images, videos, comics/manga and ebook
 ## Hard constraints
 
 - **No new dependencies.** Everything below uses the Python stdlib, PySide6/QtCore/QtNetwork and the KDE packages already in `flake.nix`. Do not touch `flake.nix` unless a phase says so (none do).
-- All Python models stay `@QmlElement` with `QML_IMPORT_NAME = "Gallery"`, `QML_IMPORT_MAJOR_VERSION = 1`. Use `import org.kde.kirigami 2.20 as Kirigami` in QML.
-- `src/models/mediaModel.py` is the active model. Never use the legacy copy at the repo root.
+- All Python models stay `@QmlElement` with `QML_IMPORT_NAME = "Tetia"`, `QML_IMPORT_MAJOR_VERSION = 1`. Use `import org.kde.kirigami 2.20 as Kirigami` in QML.
+- `src/tetia/models/mediaModel.py` is the active model.
 - Use `beginResetModel()`/`endResetModel()` only for bulk changes (rescans, filter changes). A single-item edit (toggle favourite, add or remove a tag, set rating) must emit `dataChanged` for that row so the grid keeps scroll position and selection.
 - Tag, favourite and rating operations are keyed by `media_id`, never by visible row. `getFileUri(row)` stays as is for opening files.
 - When popping pages or switching tabs, call `.destroy()` on the popped page (see AGENTS.md).
@@ -139,7 +139,7 @@ Enable `PRAGMA foreign_keys = ON` on every connection.
 **Tasks**
 
 1. Migration 2: create `tag_category` (seeded), `tag`, `tag_alias`, `tag_implication`, `media_tag`.
-2. New `src/models/tagModel.py`:
+2. New `src/tetia/models/tagModel.py`:
    - A `QmlElement` service exposing `@Slot` methods: `tagsFor(media_id)`, `addTag(media_id, name, category)`, `removeTag(media_id, tag_id)`, `createTag(name, category)`, `suggest(prefix, limit)`.
    - A `QAbstractListModel` for the tag list/autocomplete (roles: `tagId`, `name`, `category`, `usageCount`).
 3. **Normalization** (single function used everywhere): strip, lowercase, collapse whitespace to `_`, reject empty names and names containing `,`, `:`, `*`, `~` or a leading `-`.
@@ -158,7 +158,7 @@ Enable `PRAGMA foreign_keys = ON` on every connection.
 
 ## Phase 3: Search
 
-Put the parser in a pure-Python module `src/models/tag_query.py` with no Qt imports so it can be exercised with stdlib `unittest` (`tests/test_tag_query.py`). This is the only place tests are required.
+Put the parser in a pure-Python module `src/tetia/models/tag_query.py` with no Qt imports so it can be exercised with stdlib `unittest` (`tests/test_tag_query.py`). This is the only place tests are required.
 
 **Grammar** (tokens separated by whitespace; double quotes group a token):
 

@@ -1,4 +1,4 @@
-# Tetia — KDE Plasma 6 Media Gallery (PySide6 + Kirigami)
+# Tetia — a media library for manga, images and video (PySide6 + Kirigami, KDE Plasma 6)
 
 ## Run
 
@@ -47,7 +47,6 @@ src/tetia/qml/
     SearchBar.qml          search strip under the header (field, suggestions, term chips)
     ProfilesDialog.qml     list/create/rename/delete/switch profiles (encrypted vault or local)
     VaultBusyDialog.qml    progress and recovery while a vault unlocks or locks
-mediaModel.py          legacy copy at repo root — DO NOT use; src/tetia/models/mediaModel.py is the active one
 TAGGING_SPEC.md        phased spec for tagging, favorites, rating, and search system
 ```
 
