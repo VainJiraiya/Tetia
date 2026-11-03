@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """One list for the media grid: subfolder tiles first, then the files.
 
 It only stitches a SubfolderModel and a MediaModel together so a single

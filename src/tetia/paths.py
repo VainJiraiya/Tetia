@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Where Tetia keeps its files, following the XDG Base Directory spec.
 
 $XDG_DATA_HOME and $XDG_CACHE_HOME are honoured (a relative value is invalid

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]      # 77 understands the SPDX `license` expression
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -21,7 +21,8 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
     "Topic :: Multimedia :: Graphics :: Viewers",
 ]
-# license: added once the project's license has been chosen
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -30,9 +31,9 @@ dev = ["pytest>=8"]
 tetia = "tetia.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/VainJiraiya/project-tetia"
-Source = "https://github.com/VainJiraiya/project-tetia"
-Issues = "https://github.com/VainJiraiya/project-tetia/issues"
+Homepage = "https://github.com/VainJiraiya/Tetia"
+Source = "https://github.com/VainJiraiya/Tetia"
+Issues = "https://github.com/VainJiraiya/Tetia/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

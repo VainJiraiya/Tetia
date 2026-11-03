@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Tetia contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import QtQuick
 import QtQuick.Controls
 import org.kde.kirigami 2.20 as Kirigami

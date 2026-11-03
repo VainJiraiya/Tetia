@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Search query parser and SQL builder. Pure Python, no Qt, so it can be tested
 with plain unittest (see test_phase3_query.py).
 

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Reads one folder into the database: the part of a scan that both the media
 grid (MediaModel) and the background indexer share, so a file is recognised the
 same way (including renames) whichever one sees it first."""

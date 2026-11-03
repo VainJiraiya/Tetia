@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Plasma Vault support without a real vault, D-Bus or password: the service is
 # replaced by a fake and "is it mounted?" by a dict. HOME is a throwaway (see conftest.py).
 import os, sys, tempfile, time, unittest

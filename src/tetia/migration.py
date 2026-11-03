@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """One-time migration of the data folder from the old name (GalleryApp) to Tetia's.
 
 If the new data folder does not exist yet and the old one does, the old one is

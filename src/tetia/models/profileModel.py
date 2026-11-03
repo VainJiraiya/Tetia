@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """QML face of profiles.py: lists, creates, renames, deletes and switches
 profiles. Switching relaunches the app into the chosen profile.
 

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Search: runs queries (see tag_query), suggests terms, and keeps the library
 indexed in the background so a search sees every file, not just the folders
 that have been opened."""

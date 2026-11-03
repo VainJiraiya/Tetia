@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Run by tests/test_scripts.py (pytest), or directly:  TETIA_SRC=src python tests/scripts/db_lock.py
 # Uses a throwaway HOME, so it never touches your real data.
 # Tests that TagModel and MediaModel can interleave DB writes without

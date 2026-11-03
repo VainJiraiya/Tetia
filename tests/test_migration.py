@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """The one-time copy of the old GalleryApp data folder to Tetia's XDG folder."""
 import os
 import sqlite3

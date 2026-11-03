@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Pure-Python tests of the search grammar and its SQL (no Qt, no real database).
 import sqlite3, unittest
 

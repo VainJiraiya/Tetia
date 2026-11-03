@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Profiles: the built-in General profile plus any number of private ones.
 
 General uses the app's normal locations (the database in the XDG data folder,

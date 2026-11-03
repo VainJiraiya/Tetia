@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Plasma Vault helpers that need no Qt, so they can be tested on their own.
 
 Tetia never encrypts anything and never sees a password: the Plasma Vault

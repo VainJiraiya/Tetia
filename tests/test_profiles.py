@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Profile registry, paths and isolation. HOME is a throwaway (see conftest.py).
 import json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path

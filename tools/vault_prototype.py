@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Throwaway prototype: can Tetia drive a KDE Plasma Vault over D-Bus?
 
 Uses only PySide6.QtDBus + the standard library. It never asks for, sees, logs

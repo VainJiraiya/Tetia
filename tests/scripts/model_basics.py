@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Run by tests/test_scripts.py (pytest), or directly:  TETIA_SRC=src python tests/scripts/model_basics.py
 # Uses a throwaway HOME, so it never touches your real data.
 import os, sys, tempfile, shutil, sqlite3

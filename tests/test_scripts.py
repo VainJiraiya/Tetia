@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Runs the script-style tests in tests/scripts/ one by one, each in its own
 process with a throwaway HOME. They check scanning, tagging, locking and search
 end to end against a real SQLite database and exit non-zero on any failure."""

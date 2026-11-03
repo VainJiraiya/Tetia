@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Tetia contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Talks to the Plasma Vault service (a KDED module) over D-Bus.
 
 Tetia never encrypts and never sees a password: openVault makes KDE show its
