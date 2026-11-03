@@ -35,7 +35,8 @@ class Database:
         if db_path is None:
             db_path = app_data_dir() / "gallery.db"
 
-        self.conn = sqlite3.connect(str(db_path))
+        # Generous busy timeout: the indexer thread and the UI both write
+        self.conn = sqlite3.connect(str(db_path), timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         # WAL keeps UI reads (thumbnail/tag lookups) from blocking behind a scan's
@@ -404,7 +405,7 @@ class Database:
         return row[0] if row else None
 
     def set_media_rating(self, media_id: int, rating):
-        """Set a rating: 0 General, 1 SFW, 2 Explicit, 3 NSFW.
+        """Set a rating: 0 General, 1 Suggestive, 2 Mature, 3 Explicit.
         None or any negative value means Unrated and is stored as NULL
         (the UI sends -1; the column's CHECK only allows 0..3 or NULL)."""
         self._write(
@@ -593,6 +594,55 @@ class Database:
         )
 
     # --- Deleting media ---
+
+    # --- Search support ---
+
+    def expand_tag(self, tag_id: int) -> set[int]:
+        """The tag plus every tag that implies it (recursively): the set of tags
+        that satisfy a search for `tag_id`. Computed at query time, never stored."""
+        cursor = self.conn.execute("""
+            WITH RECURSIVE satisfying(id) AS (
+                SELECT ?
+                UNION
+                SELECT i.antecedent_id
+                FROM tag_implication i JOIN satisfying s ON i.consequent_id = s.id
+            )
+            SELECT id FROM satisfying
+        """, (tag_id,))
+        return {row[0] for row in cursor.fetchall()}
+
+    def tag_ids_matching(self, pattern: str, category: str | None = None) -> set[int]:
+        """Ids of tags whose name or alias matches a pattern where `*` is a
+        wildcard (every other character is literal)."""
+        like = "".join("%" if ch == "*" else
+                       ("\\" + ch if ch in "\\%_" else ch) for ch in pattern)
+        sql = """
+            SELECT t.id FROM tag t JOIN tag_category tc ON tc.id = t.category_id
+            WHERE (t.name LIKE ? ESCAPE '\\'
+                   OR EXISTS (SELECT 1 FROM tag_alias a WHERE a.tag_id = t.id AND a.alias LIKE ? ESCAPE '\\'))
+        """
+        params = [like, like]
+        if category:
+            sql += " AND tc.name = ?"
+            params.append(category)
+        return {row[0] for row in self.conn.execute(sql, params).fetchall()}
+
+    def run_media_query(self, sql: str, params) -> list[tuple[int, str]]:
+        """Run a SELECT id, path query built by tag_query: [(id, path), ...]."""
+        return [(row[0], row[1]) for row in self.conn.execute(sql, params).fetchall()]
+
+    def get_media_rows(self, media_ids) -> dict[int, dict]:
+        """{id: {path, name, kind, favorite, rating}} for the given ids."""
+        ids = [int(i) for i in media_ids]
+        rows = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            cursor = self.conn.execute(
+                f"SELECT id, path, name, kind, favorite, rating FROM media WHERE id IN ({marks})",
+                chunk)
+            rows.update({row["id"]: dict(row) for row in cursor.fetchall()})
+        return rows
 
     def get_media_paths(self, media_ids) -> dict[int, str]:
         """{id: path} for the given ids (unknown ids are left out)."""

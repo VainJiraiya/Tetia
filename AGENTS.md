@@ -21,6 +21,11 @@ src/models/
                         persistent media identity via SQLite upsert + content_hash reconciliation
   folderModel.py       QAbstractListModel — persisted folder collection (SQLite)
   thumbModel.py        QQuickImageProvider — thumbnail cache at ~/.cache/thumbnails (freedesktop spec)
+  subfolderModel.py    subfolders of the open folder (nested collections), filtered like the grid
+  gridModel.py         stitches subfolders + media into the one list the media grid shows
+  scanner.py           shared folder-scan/upsert logic (MediaModel and the indexer)
+  searchModel.py       search: runs tag_query, suggestions, background library indexer
+  tag_query.py         search grammar -> SQL (pure Python; tests in test_phase3_query.py)
   file_picker.py       QmlElement wrapper around QFileDialog for folder selection
   database.py          thin sqlite3 wrapper — migration system (PRAGMA user_version)
                         tables: folders, item_metadata (legacy), media (Phase 1)
@@ -32,6 +37,7 @@ src/qml/
     FolderGridView.qml     folder collection grid (cards with hero images)
     MediaGridView.qml      media item grid (thumbnails + filenames)
     ImageViewer.qml        fullscreen image viewer (pinch-zoom, arrow keys)
+    SearchBar.qml          search strip under the header (field, suggestions, term chips)
 mediaModel.py          legacy copy at repo root — DO NOT use; src/models/mediaModel.py is the active one
 guide.md               reference docs (not agent-facing)
 TAGGING_SPEC.md        phased spec for tagging, favorites, rating, and search system

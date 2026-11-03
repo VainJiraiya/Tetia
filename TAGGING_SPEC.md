@@ -33,11 +33,11 @@ The category is only a column on the tag. It controls colour, grouping and which
 
 | Value | Label | Roughly |
 |---|---|---|
-| 0 | general | all ages |
-| 1 | teen | 13+ |
-| 2 | mature | 17+ |
-| 3 | adult | 18+ |
-| NULL | unrated | not set |
+| 0 | general | all audiences |
+| 1 | suggestive | mildly suggestive |
+| 2 | mature | mature themes |
+| 3 | explicit | explicit content |
+| NULL | unrated | not yet rated by the user |
 
 **Favourite** is a boolean column on `media`.
 
@@ -171,7 +171,7 @@ Put the parser in a pure-Python module `src/models/tag_query.py` with no Qt impo
 | `creator:foo`, `series:foo`, `character:foo` | tag restricted to that category |
 | `type:video` | `image`, `video`, `comic`, `ebook` (aliases: `photo`, `manga`, `book`) |
 | `is:favorite` | favourites only |
-| `rating:adult` / `rating:>=mature` / `rating:<teen` / `rating:unrated` | rating filter |
+| `rating:explicit` / `rating:>=mature` / `rating:<suggestive` / `rating:unrated` | rating filter |
 | `name:overlord` or `"overlord"` | case-insensitive substring on filename |
 
 All terms are ANDed. A bare unknown tag matches nothing (booru behaviour); the UI shows a small "unknown tag" hint rather than silently ignoring it.
@@ -202,8 +202,8 @@ WHERE m.missing = 0
   AND m.rating >= 2;
 ```
 
-- **Rating NULL-safety:** comparisons like `rating:>=mature` require a non-NULL rating. `-rating:adult` compiles to `(m.rating IS NULL OR m.rating <> 3)`.
-- **"Hide adult" toggle** in the UI appends an implicit `-rating:adult`. Unrated items stay visible by design.
+- **Rating NULL-safety:** comparisons like `rating:>=mature` require a non-NULL rating. `-rating:explicit` compiles to `(m.rating IS NULL OR m.rating <> 3)`.
+- **"Hide explicit" toggle** in the UI appends an implicit `-rating:explicit`. Unrated items stay visible by design.
 
 **Autocomplete:** the search field suggests tags by prefix over `tag.name` and `tag_alias.alias`, ordered by usage count, and also suggests metatag prefixes (`creator:`, `type:`, `rating:`, `is:`, `name:`). If `PRAGMA compile_options` shows FTS5, it may be used; plain indexed `LIKE 'prefix%'` is acceptable.
 
@@ -281,7 +281,7 @@ For each item, write with `os.setxattr`:
 
 - `user.xdg.tags`: comma-separated tag names (all five categories). When the value would exceed about 3.5 KB (ext4 limit), drop tags in this order: content, genre, character, series, creator last.
 - `user.baloo.rating`: `10` if favourite, otherwise remove the attribute.
-- Age rating: add a `rating_<label>` entry (e.g. `rating_adult`) to `user.xdg.tags`. Baloo's own rating attribute is a star rating and is not used for the age rating.
+- Age rating: add a `rating_<label>` entry (e.g. `rating_explicit`) to `user.xdg.tags`. Baloo's own rating attribute is a star rating and is not used for the age rating.
 
 Rules:
 

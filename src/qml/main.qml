@@ -20,6 +20,10 @@ Kirigami.ApplicationWindow {
     property bool isRemoveMode: false
     property bool isTagMode: false
 
+    // The search strip, and what the search page on the stack (if any) is showing
+    property bool searchOpen: false
+    property var searchState: null
+
     // The folder whose contents mediaModel currently holds; reloaded after a
     // delete so removed items disappear from the grid and the viewer.
     property var currentFolder: null
@@ -38,7 +42,11 @@ Kirigami.ApplicationWindow {
     }
 
     // Persistent header defined at the ApplicationWindow level
-    header: ToolBar {
+    header: Column {
+        id: headerColumn
+
+        ToolBar {
+            width: headerColumn.width
         RowLayout {
             id: headerRow
             anchors.fill: parent
@@ -88,6 +96,12 @@ Kirigami.ApplicationWindow {
                             // regardless of what the transition does.
                             var poppedPage = pageStack.pop()
                             if (poppedPage) {
+                                // Backing out of the results, or out of a folder with
+                                // nothing typed in the search strip, closes the strip
+                                if (poppedPage.isSearch === true || searchBar.isEmpty) {
+                                    root.searchOpen = false
+                                    searchBar.clearAll()
+                                }
                                 poppedPage.destroy()
                             }
                         } else {
@@ -123,20 +137,74 @@ Kirigami.ApplicationWindow {
             }
 
             // Dynamic Title (Reads from the active page)
-            Label {
-                text: pageStack.currentItem && pageStack.currentItem.title ? pageStack.currentItem.title : "Collections"
-                font.pixelSize: 18
-                font.weight: Font.Normal
-                elide: Text.ElideMiddle
+            // On a folder page the title is a breadcrumb trail ("Marvel > Spider-Man");
+            // every segment but the last pops back to that folder.
+            Item {
+                id: titleSlot
                 Layout.fillWidth: true
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
+                Layout.preferredHeight: leftButton.height
+
+                readonly property var crumbs: pageStack.currentItem && pageStack.currentItem.crumbs
+                                              ? pageStack.currentItem.crumbs : []
+
+                Label {
+                    anchors.fill: parent
+                    visible: titleSlot.crumbs.length < 2
+                    text: pageStack.currentItem && pageStack.currentItem.title ? pageStack.currentItem.title : "Collections"
+                    font.pixelSize: 18
+                    font.weight: Font.Normal
+                    elide: Text.ElideMiddle
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                RowLayout {
+                    anchors.centerIn: parent
+                    width: Math.min(implicitWidth, titleSlot.width)
+                    visible: titleSlot.crumbs.length >= 2
+                    spacing: 6
+
+                    Repeater {
+                        model: titleSlot.crumbs
+
+                        RowLayout {
+                            id: crumb
+                            readonly property bool isLast: index === titleSlot.crumbs.length - 1
+                            spacing: 6
+
+                            Label {
+                                visible: index > 0
+                                text: "\u203A"
+                                font.pixelSize: 18
+                                opacity: 0.6
+                            }
+                            Label {
+                                text: modelData
+                                font.pixelSize: 18
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: Math.max(80, titleSlot.width / titleSlot.crumbs.length)
+                                opacity: crumb.isLast ? 1.0 : 0.7
+                                font.underline: !crumb.isLast && crumbArea.containsMouse
+
+                                MouseArea {
+                                    id: crumbArea
+                                    anchors.fill: parent
+                                    enabled: !crumb.isLast
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.popToCrumb(index)
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Dynamic Right Button. One pill that changes with the mode:
             //   remove mode          -> "Done" (red), leaves remove mode
             //   tag mode             -> "Done" (accent), leaves tag mode
-            //   folder contents page -> "Tag", enters tag mode (multi-select tagging)
+            //   anywhere but the viewer -> "Search", opens the search strip
+            // (tag mode is entered from a tile's right-click menu)
             // Built from plain primitives (Rectangle/Icon/Label/MouseArea)
             // rather than a QQC2 Button, since that avoids relying on
             // this style's Button implicit-size/background computation.
@@ -145,11 +213,10 @@ Kirigami.ApplicationWindow {
                 Layout.preferredWidth: headerRow.sideSlotWidth
                 Layout.preferredHeight: leftButton.height
 
-                // Folder contents page, outside the Favorites tab
-                readonly property bool canStartTagging: pageStack.depth === 2 && !root.onFavoritesTab
+                readonly property bool canSearch: !(pageStack.currentItem && pageStack.currentItem.isViewer === true)
                 readonly property string mode: root.isRemoveMode ? "remove"
                                              : (root.isTagMode ? "tag"
-                                             : (canStartTagging ? "idle" : ""))
+                                             : (canSearch ? "idle" : ""))
                 readonly property color fg: mode === "remove" ? Kirigami.Theme.negativeTextColor
                                           : (mode === "tag" ? Kirigami.Theme.highlightedTextColor
                                                             : Kirigami.Theme.textColor)
@@ -170,7 +237,7 @@ Kirigami.ApplicationWindow {
                         spacing: 4
 
                         Kirigami.Icon {
-                            source: modeButtonSlot.mode === "idle" ? "tag" : "checkmark"
+                            source: modeButtonSlot.mode === "idle" ? "system-search" : "checkmark"
                             isMask: true
                             color: modeButtonSlot.fg
                             Layout.preferredWidth: 16
@@ -178,7 +245,7 @@ Kirigami.ApplicationWindow {
                         }
 
                         Label {
-                            text: modeButtonSlot.mode === "idle" ? "Tag" : "Done"
+                            text: modeButtonSlot.mode === "idle" ? "Search" : "Done"
                             color: modeButtonSlot.fg
                             font.weight: Font.Medium
                         }
@@ -198,18 +265,50 @@ Kirigami.ApplicationWindow {
                                 // by itself; the viewer page watches isTagMode too.
                                 root.isTagMode = false
                             } else {
-                                root.isTagMode = true
+                                root.toggleSearch()
                             }
                         }
                     }
                 }
             }
         }
+        }
+
+        SearchBar {
+            id: searchBar
+            width: headerColumn.width
+            visible: root.searchOpen
+            backend: searchModel
+            indexing: searchModel.indexing
+            scopeText: root.scopeName(root.currentSearchScope())
+            onSearchRequested: function(query) { root.runSearch(query) }
+            onCloseRequested: root.closeSearch()
+        }
     }
 
     MediaModel {
         id: mediaModel
         filterMode: MediaModel.All
+    }
+
+    // Subfolders of whatever folder mediaModel holds, filtered the same way.
+    SubfolderModel {
+        id: subfolderModel
+        filterMode: mediaModel.filterMode
+    }
+
+    // What the media grid shows: subfolder tiles first, then the files
+    GridModel {
+        id: gridModel
+        media: mediaModel
+        subfolders: subfolderModel
+    }
+
+    Connections {
+        target: mediaModel
+        function onFolderPathChanged() {
+            subfolderModel.load(mediaModel.folderPath)
+        }
     }
 
     FolderModel {
@@ -219,6 +318,19 @@ Kirigami.ApplicationWindow {
 
     TagModel {
         id: tagModel
+    }
+
+    SearchModel {
+        id: searchModel
+        // Searches opened before indexing finished fill in once it has
+        onIndexFinished: root.refreshSearch()
+    }
+
+    Component.onCompleted: searchModel.indexLibrary()
+
+    Shortcut {
+        sequence: StandardKey.Find
+        onActivated: if (!(pageStack.currentItem && pageStack.currentItem.isViewer === true)) root.openSearch()
     }
 
     MediaActions {
@@ -255,6 +367,7 @@ Kirigami.ApplicationWindow {
             // Favorites is a virtual tab, not a folder category
             if (root.onFavoritesTab) return
             folderModel.addFolder(selectedFolder, folderModel.currentCategory)
+            searchModel.indexLibrary()
         }
     }
 
@@ -312,6 +425,8 @@ Kirigami.ApplicationWindow {
         // the Favorites lists when deleting from the viewer opened there
         if (root.currentFolder) {
             mediaModel.load_from_qurl(root.currentFolder)
+        } else if (root.searchState) {
+            root.refreshSearch()
         }
         if (root.onFavoritesTab) {
             favoritesView.refresh()
@@ -339,6 +454,87 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // ---- Search ----------------------------------------------------------
+    // Inside a folder page the search covers that folder and everything below
+    // it; anywhere else it covers the whole library.
+
+    function searchPage() {
+        var page = pageStack.currentItem
+        return (page && page.isSearch === true) ? page : null
+    }
+
+    function currentSearchScope() {
+        var page = pageStack.currentItem
+        if (page && page.isSearch === true) return page.searchScope
+        if (page && page.isGridPage === true && page.folderPath) return String(page.folderPath)
+        return ""
+    }
+
+    function scopeName(scope) {
+        return scope === "" ? "all collections" : "\u201C" + folderTitle(scope) + "\u201D and its subfolders"
+    }
+
+    function openSearch() {
+        root.searchOpen = true
+        searchBar.focusField()
+    }
+
+    function toggleSearch() {
+        if (root.searchOpen) root.closeSearch()
+        else root.openSearch()
+    }
+
+    function searchTitle(query, count) {
+        return "Search: " + query + " (" + count + ")"
+    }
+
+    function runSearch(query) {
+        if (query.trim() === "") {
+            leaveSearch()
+            return
+        }
+        var scope = currentSearchScope()
+        var ids = searchModel.search(query, scope)
+        root.searchState = { query: query, scope: scope }
+        var page = searchPage()
+        if (page) {
+            mediaModel.load_media_ids(ids)
+            page.title = searchTitle(query, ids.length)
+        } else {
+            root.currentFolder = null
+            mediaModel.filterMode = MediaModel.All   // results are never narrowed by a folder tab's filter
+            mediaModel.load_media_ids(ids)
+            pageStack.push(mediaGridComponent, {
+                title: searchTitle(query, ids.length),
+                isSearch: true,
+                searchScope: scope
+            })
+        }
+    }
+
+    // Re-run the open search (after a delete, or when indexing finishes)
+    function refreshSearch() {
+        var page = searchPage()
+        if (!page || !root.searchState) return
+        var ids = searchModel.search(root.searchState.query, root.searchState.scope)
+        mediaModel.load_media_ids(ids)
+        page.title = searchTitle(root.searchState.query, ids.length)
+    }
+
+    function leaveSearch() {
+        var page = searchPage()
+        if (page) {
+            var popped = pageStack.pop()
+            if (popped) popped.destroy()
+        }
+    }
+
+    function closeSearch() {
+        leaveSearch()
+        root.searchOpen = false
+        searchBar.clearAll()
+    }
+
     // "file:///home/me/My%20Folder/" -> "My Folder"
     function folderTitle(folderPath) {
         var pathStr = folderPath.toString()
@@ -353,7 +549,18 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    function openMediaGrid(folderPath, category) {
+    // Pops back to the folder at position `index` of the breadcrumb trail.
+    function popToCrumb(index) {
+        var page = pageStack.currentItem
+        if (!page || !page.crumbs) return
+        for (var i = page.crumbs.length - 1; i > index; i--) {
+            var popped = pageStack.pop()
+            if (popped) popped.destroy()
+        }
+    }
+
+    // Makes mediaModel hold this folder, filtered for the category.
+    function loadFolder(folderPath, category) {
         root.currentFolder = folderPath
         mediaModel.load_from_qurl(folderPath)
 
@@ -368,9 +575,19 @@ Kirigami.ApplicationWindow {
         } else {
             mediaModel.filterMode = MediaModel.All
         }
+    }
+
+    // parentCrumbs: the breadcrumb names of the folder this one is nested in
+    function openMediaGrid(folderPath, category, parentCrumbs) {
+        loadFolder(folderPath, category)
 
         // Push the component and dynamically set its title property
-        pageStack.push(mediaGridComponent, { title: folderTitle(folderPath) })
+        pageStack.push(mediaGridComponent, {
+            title: folderTitle(folderPath),
+            folderPath: folderPath,
+            filterCategory: category,
+            crumbs: (parentCrumbs || []).concat([folderTitle(folderPath)])
+        })
     }
 
     pageStack.initialPage: Kirigami.ScrollablePage {
@@ -428,6 +645,30 @@ Kirigami.ApplicationWindow {
             // The title property is dynamically injected by pageStack.push()
             padding: 0
 
+            // Set by openMediaGrid: which folder this page shows, the category
+            // it was filtered for, and the breadcrumb names down to it.
+            readonly property bool isGridPage: true
+            property var folderPath: null
+            property string filterCategory: ""
+            property var crumbs: []
+
+            // A search results page: no folder, just the matches of root.searchState
+            property bool isSearch: false
+            property string searchScope: ""
+            Component.onDestruction: if (isSearch) root.searchState = null
+
+            // mediaModel is shared by every folder page. After popping back
+            // from a subfolder it still holds the subfolder, so reload ours.
+            Connections {
+                target: pageStack
+                function onCurrentItemChanged() {
+                    if (pageStack.currentItem === gridPage
+                            && String(root.currentFolder) !== String(gridPage.folderPath)) {
+                        root.loadFolder(gridPage.folderPath, gridPage.filterCategory)
+                    }
+                }
+            }
+
             RowLayout {
                 anchors.fill: parent
                 spacing: 0
@@ -436,12 +677,17 @@ Kirigami.ApplicationWindow {
                     id: gridView
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    model: mediaModel
+                    model: gridModel
                     mediaBackend: mediaModel
                     tagBackend: tagModel
                     // Only this page reacts: while the image viewer is open on
                     // top, the grid underneath stays out of tag mode.
-                    tagMode: root.isTagMode && pageStack.depth === 2
+                    tagMode: root.isTagMode && pageStack.currentItem === gridPage
+                    subfolderBackend: subfolderModel
+
+                    onSubfolderClicked: function(subfolderPath) {
+                        root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
+                    }
 
                     onEditTagsRequested: function(mediaId) {
                         root.isTagMode = true

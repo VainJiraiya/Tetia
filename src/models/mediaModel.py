@@ -21,24 +21,16 @@ from PySide6.QtQml import QmlElement
 
 from models import covers
 from models.database import get_database
+from models.scanner import (
+    COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS,
+    kind_from_ext, scan_folder,
+)
 
 # Sets the QML import module configuration so QML files can write "import Gallery 1.0"
 QML_IMPORT_NAME = "Gallery"
 QML_IMPORT_MAJOR_VERSION = 1
 
 logger = logging.getLogger(__name__)
-
-# Defines sets of allowed file extensions for images and videos
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".flv", ".wmv"}
-
-# Comic/manga archive formats
-COMIC_EXTENSIONS = {".cbz", ".cbr", ".cb7", ".cbt"}
-
-# Ebook formats. PDF is included here rather than under comics, since PDF
-# manga is comparatively rare and PDF ebooks/documents are the common case.
-EBOOK_EXTENSIONS = {".epub", ".pdf", ".mobi", ".azw", ".azw3", ".fb2", ".djvu"}
-
 
 # Registers this Python class as a usable QML element
 @QmlElement
@@ -227,99 +219,12 @@ class MediaModel(QAbstractListModel):
         # Subscribes watcher to start monitoring the newly selected directory path
         self._file_system_watcher.addPath(self._current_folder_path)
 
-        temporary_images_list = []
-        temporary_videos_list = []
-        temporary_comics_list = []
-        temporary_books_list = []
-
-        scanned_paths = set()
-        claimed_ids = set()
-
-        # One transaction for the whole scan; database helpers used here never commit
-        self._db.conn.execute("BEGIN")
-        try:
-            # Iterates over every file in the target directory and collects media metadata
-            for directory_item in folder_directory.iterdir():
-                # Checks if the current item is an actual file (not a subfolder)
-                if directory_item.is_file():
-                    file_extension = directory_item.suffix.lower()
-
-                    is_image = file_extension in IMAGE_EXTENSIONS
-                    is_video = file_extension in VIDEO_EXTENSIONS
-                    is_comic = file_extension in COMIC_EXTENSIONS
-                    is_book = file_extension in EBOOK_EXTENSIONS
-
-                    # Skips anything that doesn't match a supported extension
-                    if not (is_image or is_video or is_comic or is_book):
-                        continue
-
-                    abs_path = str(directory_item.resolve())
-                    scanned_paths.add(abs_path)
-                    stat_result = directory_item.stat()
-                    file_size = stat_result.st_size
-                    file_mtime = int(stat_result.st_mtime)
-                    kind = self._kind_from_ext(file_extension)
-
-                    # Don't rehash files whose size and mtime are unchanged
-                    content_hash = self._db.get_stored_hash(
-                        abs_path, file_size, file_mtime
-                    ) or self._compute_content_hash(abs_path)
-
-                    # A path with no row yet may be a renamed file: look for a row with
-                    # the same hash whose file is gone, and take over its id/favorite/rating.
-                    # Only same-folder renames are reconciled (moves between folders are
-                    # treated as new files).
-                    moved = None
-                    if self._db.get_media_by_path(abs_path) is None:
-                        candidate = self._db.find_missing_by_hash(
-                            content_hash, scanned_paths, claimed_ids
-                        )
-                        if candidate and Path(candidate["path"]).parent == scan_directory:
-                            moved = self._db.claim_move(
-                                candidate["id"], abs_path, directory_item.name,
-                                kind, file_size, file_mtime, content_hash
-                            )
-                            if moved is not None:
-                                claimed_ids.add(candidate["id"])
-
-                    if moved is not None:
-                        media_id, favorite, rating = moved
-                    else:
-                        # Inserts a new row, or updates the existing row in place
-                        media_id, favorite, rating = self._db.upsert_media(
-                            abs_path, directory_item.name,
-                            kind, file_size, file_mtime, content_hash
-                        )
-
-                    item_metadata = {
-                        "media_id": media_id,
-                        "uniform_resource_identifier": directory_item.as_uri(),
-                        "file_name": directory_item.name,
-                        "is_video": is_video,
-                        "is_comic": is_comic,
-                        "is_book": is_book,
-                        "is_favorite": favorite,
-                        "rating": rating,
-                    }
-
-                    # Sorts item into whichever list matches its extension
-                    if is_image:
-                        temporary_images_list.append(item_metadata)
-                    elif is_video:
-                        temporary_videos_list.append(item_metadata)
-                    elif is_comic:
-                        temporary_comics_list.append(item_metadata)
-                    elif is_book:
-                        temporary_books_list.append(item_metadata)
-
-            # Mark rows in this folder whose files were not seen as missing
-            self._db.mark_missing(str(scan_directory), scanned_paths)
-
-            self._db.conn.commit()
-
-        except Exception:
-            self._db.conn.rollback()
-            raise
+        (
+            temporary_images_list,
+            temporary_videos_list,
+            temporary_comics_list,
+            temporary_books_list,
+        ) = scan_folder(self._db, folder_directory, self._compute_content_hash)
 
         self._all_images = temporary_images_list
         self._all_videos = temporary_videos_list
@@ -331,15 +236,7 @@ class MediaModel(QAbstractListModel):
         self.folderPathChanged.emit()
 
     def _kind_from_ext(self, ext: str) -> str:
-        if ext in IMAGE_EXTENSIONS:
-            return "image"
-        elif ext in VIDEO_EXTENSIONS:
-            return "video"
-        elif ext in COMIC_EXTENSIONS:
-            return "comic"
-        elif ext in EBOOK_EXTENSIONS:
-            return "ebook"
-        return "image"
+        return kind_from_ext(ext)
 
     # Automatically reloads directory contents whenever the file watcher detects on-disk changes
     def _on_directory_changed(self, modified_directory_path: str):
@@ -387,6 +284,42 @@ class MediaModel(QAbstractListModel):
             if item.get("media_id") == media_id:
                 return i
         return -1
+
+    @Slot(list)
+    def load_media_ids(self, media_ids: list):
+        """Show these media rows (search results) instead of a folder's files,
+        in the order given. Leaves no folder open, so folder-only features
+        (watching, folder cover, subfolder tiles) switch themselves off."""
+        ids = [int(i) for i in media_ids or []]
+        rows = self._db.get_media_rows(ids)
+
+        existing_watched = self._file_system_watcher.directories()
+        if existing_watched:
+            self._file_system_watcher.removePaths(existing_watched)
+        self._current_folder_path = ""
+
+        images, videos, comics, books = [], [], [], []
+        for media_id in ids:
+            row = rows.get(media_id)
+            if row is None:
+                continue
+            kind = row["kind"]
+            item = {
+                "media_id": media_id,
+                "uniform_resource_identifier": Path(row["path"]).as_uri(),
+                "file_name": row["name"],
+                "is_video": kind == "video",
+                "is_comic": kind == "comic",
+                "is_book": kind == "ebook",
+                "is_favorite": row["favorite"],
+                "rating": row["rating"],
+            }
+            {"image": images, "video": videos, "comic": comics, "ebook": books}[kind].append(item)
+
+        self._all_images, self._all_videos = images, videos
+        self._all_comics, self._all_books = comics, books
+        self._update_visible_items()
+        self.folderPathChanged.emit()
 
     @Slot(int, bool)
     def setFavorite(self, media_id: int, favorite: bool):

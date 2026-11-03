@@ -22,6 +22,13 @@ from models.mediaActions import MediaActions
 # NEW: Import FavoritesModel (the Favorites tab) for QML registration
 from models.favoritesModel import FavoritesModel
 
+# Subfolders shown above the media grid (nested collections)
+from models.subfolderModel import SubfolderModel
+from models.gridModel import GridModel
+
+# Library search and background indexing
+from models.searchModel import SearchModel
+
 if __name__ == "__main__":
     # 2. Initialize the full widget application here
     app = QApplication(sys.argv)

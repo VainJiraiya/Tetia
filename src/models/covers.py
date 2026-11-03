@@ -12,6 +12,7 @@ Plain module, not a QML element, so main.py needs no changes.
 import hashlib
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -45,6 +46,12 @@ notifier = _CoverNotifier()
 
 
 # ---- Paths ---------------------------------------------------------------
+
+def natural_key(name: str):
+    """Sort key that orders digit runs by value ("Chapter 2" < "Chapter 10")."""
+    return [int(part) if part.isdigit() else part.casefold()
+            for part in re.split(r"(\d+)", name)]
+
 
 def folder_key(path_or_uri: str) -> str:
     """The one spelling of a folder's path used as its database key: a plain,
@@ -84,15 +91,33 @@ def _new_cover_path(key: str, suffix: str) -> str:
 
 # ---- What a folder tile shows ---------------------------------------------
 
-def first_media_file(local_dir: str) -> str:
-    """First image/video in the folder by name, or ''."""
+def first_media_file(local_dir: str, extensions=None, seen=None, depth: int = 0) -> str:
+    """The picture for a folder with no cover: the first matching file in
+    natural name order, else the first one found inside its subfolders (same
+    order), so a folder holding only subfolders borrows a child's picture.
+    `seen` (resolved paths) breaks symlink loops; the walk is depth-capped."""
+    extensions = extensions or MEDIA_EXTENSIONS
+    seen = set() if seen is None else seen
     try:
-        if not os.path.isdir(local_dir):
+        real = os.path.realpath(local_dir)
+        if real in seen or depth > 8 or not os.path.isdir(local_dir):
             return ""
-        for entry in sorted(os.listdir(local_dir)):
+        seen.add(real)
+        files, dirs = [], []
+        for entry in os.listdir(local_dir):
+            if entry.startswith("."):
+                continue
             full_path = os.path.join(local_dir, entry)
-            if os.path.isfile(full_path) and Path(entry).suffix.lower() in MEDIA_EXTENSIONS:
-                return full_path
+            if os.path.isdir(full_path):
+                dirs.append(entry)
+            elif os.path.isfile(full_path) and Path(entry).suffix.lower() in extensions:
+                files.append(entry)
+        if files:
+            return os.path.join(local_dir, min(files, key=natural_key))
+        for entry in sorted(dirs, key=natural_key):
+            found = first_media_file(os.path.join(local_dir, entry), extensions, seen, depth + 1)
+            if found:
+                return found
     except OSError:
         pass
     return ""

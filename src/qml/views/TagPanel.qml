@@ -70,9 +70,9 @@ Rectangle {
 
     readonly property var _ratingDefs: [
         { value: 0, label: "General" },
-        { value: 1, label: "SFW" },
-        { value: 2, label: "Explicit" },
-        { value: 3, label: "NSFW" }
+        { value: 1, label: "Suggestive" },
+        { value: 2, label: "Mature" },
+        { value: 3, label: "Explicit" }
     ]
 
     implicitWidth: 320
@@ -459,7 +459,7 @@ Rectangle {
         { title: "Several items selected",
           body: "The panel lists every tag found on any selected item. Faded tags with a count like 2/5 are on only some of them. Adding a tag adds it to all selected items. The x removes it from all of them." },
         { title: "Rating",
-          body: "General, SFW, Explicit or NSFW. Click the active one again to clear it. Rating is separate from tags." },
+          body: "General, Suggestive, Mature or Explicit. Click the active one again to clear it. Rating is separate from tags." },
         { title: "Favorite and Delete",
           body: "Favorite adds the item to your Favorites tab. Delete moves the file to the system trash." }
     ]

@@ -1,5 +1,7 @@
 import QtQuick
 import QtQuick.Controls
+import org.kde.kirigami 2.20 as Kirigami
+import Gallery 1.0
 
 // The grid of media tiles. It is only the grid: the tag panel lives next to it
 // in main.qml, so it never ends up inside this Flickable's scrolling content.
@@ -14,6 +16,9 @@ GridView {
     signal bookClicked(int index)
     signal selectionChanged()
 
+    // A subfolder tile was tapped; folderPath is a file:// URI.
+    signal subfolderClicked(string subfolderPath)
+
     // The context menu's "Edit tags" asks the host to enter tag mode with this
     // item selected (the host owns the tag-mode flag).
     signal editTagsRequested(int mediaId)
@@ -24,6 +29,9 @@ GridView {
     property bool tagMode: false
     property var tagBackend: null
     property var mediaBackend: null
+    // The SubfolderModel behind the folder tiles (favorites and covers). The
+    // tiles themselves arrive through this grid's own model, ahead of the files.
+    property var subfolderBackend: null
     property var selectedIds: []
 
     // Qt.UserRole + 1 in MediaModel: the `mediaId` role (also exposed to
@@ -132,6 +140,7 @@ GridView {
             id: coverItem
             icon.name: "image-x-generic"
             enabled: grid.mediaBackend !== null && typeof grid.mediaBackend.setFolderCover === "function"
+                     && grid.mediaBackend.folderPath !== ""   // not in search results
             onTriggered: {
                 var kind = grid.contextMenuData.kind
                 var ok = grid.mediaBackend.setFolderCover(grid.contextMenuData.mediaId)
@@ -155,6 +164,42 @@ GridView {
         coverItem.text = kind === "video" ? "Use a frame as folder cover"
                        : (kind === "image" ? "Set as folder cover" : "Use as folder cover")
         contextMenu.popup()
+    }
+
+    // Right-click menu for a subfolder tile
+    Menu {
+        id: subfolderMenu
+        property string folderPath: ""
+        property bool isFavorite: false
+        property bool hasCustomCover: false
+
+        MenuItem {
+            text: "Choose cover image\u2026"
+            icon.name: "image-x-generic"
+            enabled: grid.subfolderBackend !== null
+            onTriggered: coverPicker.openCoverImageDialog(subfolderMenu.folderPath)
+        }
+        MenuItem {
+            text: "Use default cover"
+            icon.name: "edit-undo"
+            enabled: subfolderMenu.hasCustomCover && grid.subfolderBackend !== null
+            onTriggered: grid.subfolderBackend.clearCover(subfolderMenu.folderPath)
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: subfolderMenu.isFavorite ? "Remove from favorites" : "Add to favorites"
+            icon.name: subfolderMenu.isFavorite ? "non-starred-symbolic" : "starred-symbolic"
+            enabled: grid.subfolderBackend !== null
+            onTriggered: grid.subfolderBackend.setFavorite(subfolderMenu.folderPath, !subfolderMenu.isFavorite)
+        }
+    }
+
+    // Opens the image dialog for a subfolder's "Choose cover image..."
+    FilePicker {
+        id: coverPicker
+        onCoverImageSelected: function(folderPath, imagePath) {
+            if (grid.subfolderBackend) grid.subfolderBackend.setCoverFromFile(folderPath, imagePath)
+        }
     }
 
     // ---- Toast -----------------------------------------------------------
@@ -212,6 +257,102 @@ GridView {
 
         readonly property bool selected: grid.tagMode && grid.selectedIds.indexOf(model.mediaId) >= 0
 
+        // Row in the media model: the grid's rows start with the folder tiles
+        readonly property int fileIndex: index - grid.model.folderCount
+
+
+        // A subfolder tile, drawn like a file tile; the count badge marks it as a folder
+        Component {
+            id: folderCard
+
+            Rectangle {
+                radius: 6
+                color: Qt.alpha(palette.text, folderHover.hovered ? 0.07 : 0.03)
+                border.width: 1
+                border.color: Qt.alpha(palette.text, 0.15)
+
+                HoverHandler {
+                    id: folderHover
+                    cursorShape: Qt.PointingHandCursor
+                }
+
+                Image {
+                    id: folderHero
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: folderNameText.top
+                    anchors.margins: 4
+                    anchors.bottomMargin: 6
+                    source: model.subfolderHero && model.subfolderHero.length > 0
+                            ? "image://thumbnail/" + model.subfolderHero : ""
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: true
+                }
+
+                Kirigami.Icon {
+                    anchors.centerIn: folderHero
+                    width: Math.min(folderHero.width, folderHero.height) * 0.5
+                    height: width
+                    source: "folder"
+                    opacity: 0.5
+                    visible: folderHero.status !== Image.Ready
+                }
+
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.margins: 6
+                    width: folderCountText.implicitWidth + 14
+                    height: folderCountText.implicitHeight + 8
+                    radius: height / 2
+                    color: Qt.rgba(0, 0, 0, 0.65)
+                    visible: model.subfolderCount > 0
+
+                    Text {
+                        id: folderCountText
+                        anchors.centerIn: parent
+                        text: model.subfolderCount
+                        color: "white"
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    id: folderNameText
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 4
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 4
+                    anchors.rightMargin: 4
+                    text: model.subfolderName
+                    color: palette.text
+                    font.bold: true
+                    font.pixelSize: 12
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideMiddle
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: function(mouse) {
+                        if (mouse.button === Qt.RightButton) {
+                            subfolderMenu.folderPath = model.subfolderPath
+                            subfolderMenu.isFavorite = model.subfolderFavorite
+                            subfolderMenu.hasCustomCover = grid.subfolderBackend
+                                ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
+                            subfolderMenu.popup()
+                        } else if (!grid.tagMode) {
+                            grid.subfolderClicked(model.subfolderPath)
+                        }
+                    }
+                }
+            }
+        }
+
         // Shift the visual contents to center the whole block of columns
         // (avoids dynamic margins breaking the scroll position).
         Item {
@@ -219,8 +360,17 @@ GridView {
             width: parent.width
             height: parent.height
 
+
+            Loader {
+                anchors.fill: parent
+                anchors.margins: 8
+                active: model.isFolder === true
+                sourceComponent: folderCard
+            }
+
             Rectangle {
                 id: card
+                visible: !model.isFolder
                 anchors.fill: parent
                 anchors.margins: 8
                 radius: 6
@@ -236,7 +386,7 @@ GridView {
 
                 ToolTip.visible: hover.hovered && fileNameText.truncated
                 ToolTip.delay: 700
-                ToolTip.text: model.fileName
+                ToolTip.text: model.fileName || ""
 
                 Image {
                     id: thumbnail
@@ -247,7 +397,7 @@ GridView {
                     anchors.margins: 4
                     anchors.bottomMargin: 6
 
-                    source: "image://thumbnail/" + model.fileUri
+                    source: model.isFolder ? "" : "image://thumbnail/" + model.fileUri
 
                     // Scale down so the entire picture fits without cropping
                     fillMode: Image.PreserveAspectFit
@@ -263,7 +413,7 @@ GridView {
                     anchors.leftMargin: 4
                     anchors.rightMargin: 4
 
-                    text: model.fileName
+                    text: model.fileName || ""
                     color: palette.text
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideMiddle
@@ -318,13 +468,13 @@ GridView {
                                 grid.setSelection([model.mediaId])
                             }
                         } else if (model.isVideo) {
-                            grid.videoClicked(index)
+                            grid.videoClicked(tile.fileIndex)
                         } else if (model.isComic) {
-                            grid.comicClicked(index)
+                            grid.comicClicked(tile.fileIndex)
                         } else if (model.isBook) {
-                            grid.bookClicked(index)
+                            grid.bookClicked(tile.fileIndex)
                         } else {
-                            grid.imageClicked(index)
+                            grid.imageClicked(tile.fileIndex)
                         }
                     }
                 }
