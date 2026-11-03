@@ -24,6 +24,9 @@ classifiers = [
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
 [project.scripts]
 tetia = "tetia.__main__:main"
 
@@ -42,3 +45,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 tetia = ["qml/*.qml", "qml/views/*.qml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

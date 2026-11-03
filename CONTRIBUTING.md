@@ -25,8 +25,16 @@ CI installs the package, imports every model, and lints the QML:
 pyside6-qmllint src/tetia/qml/main.qml src/tetia/qml/views/*.qml    # or qmllint
 ```
 
-There is no automated test suite in this repository yet, so please describe in your
-pull request how you tried your change (what you clicked, on which setup).
+Tests live in `tests/` and run without a display and without touching your real data
+(each test gets a throwaway `HOME`):
+
+```sh
+pip install -e '.[dev]'     # in a venv; on NixOS add --system-site-packages inside `nix develop`
+python -m pytest
+```
+
+Please add or update a test when you change behaviour, and describe in your pull request
+how you tried the change by hand (what you clicked, on which setup).
 
 ## Code
 

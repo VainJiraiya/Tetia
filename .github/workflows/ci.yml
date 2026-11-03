@@ -42,6 +42,22 @@ jobs:
           print("ok:", qml)
           PY
 
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: System libraries Qt needs to start headless
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1 ffmpeg
+      - run: python -m pip install -e '.[dev]'
+      - run: python -m pytest
+
   qml:
     runs-on: ubuntu-latest
     steps:
