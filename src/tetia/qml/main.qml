@@ -153,7 +153,7 @@ Kirigami.ApplicationWindow {
             }
 
             // Dynamic Title (Reads from the active page)
-            // On a folder page the title is a breadcrumb trail ("Marvel > Spider-Man");
+            // On a folder page the title is a breadcrumb trail ("Starfall > Prologue");
             // every segment but the last pops back to that folder.
             Item {
                 id: titleSlot

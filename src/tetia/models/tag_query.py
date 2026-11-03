@@ -5,7 +5,7 @@ Grammar (tokens split on whitespace; double quotes group one token):
 
     isekai            has this tag (or an alias, or any tag implying it);
                       if no such tag exists, matches the file name instead
-    -harem            does NOT have it
+    -chibi            does NOT have it
     ~a ~b             OR group: at least one of them
     fant*             wildcard over tag names/aliases
     creator:foo       tag restricted to a category (creator, series, character,
@@ -13,8 +13,8 @@ Grammar (tokens split on whitespace; double quotes group one token):
     type:video        image, video, comic, ebook (aliases: photo, manga, book)
     is:favorite       favourites only
     rating:explicit   general, suggestive, mature, explicit, unrated; also >=, <=, >, <, =
-    name:overlord     case-insensitive substring of the file name; a quoted
-                      "overlord" on its own means the same
+    name:starfall     case-insensitive substring of the file name; a quoted
+                      "starfall" on its own means the same
 
 All terms are ANDed (except the OR group). All user text goes in as bound
 parameters, never into the SQL string.

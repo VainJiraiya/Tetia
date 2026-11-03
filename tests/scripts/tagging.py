@@ -53,7 +53,7 @@ def mk(folder, name, content):
 # --- Normalization tests ---
 
 # 1. Basic normalization: strip, lowercase, collapse whitespace
-check("normalize_tag strips and lowercases", normalize_tag("  Monster Girl  ") == "monster_girl")
+check("normalize_tag strips and lowercases", normalize_tag("  Sea Horse  ") == "sea_horse")
 check("normalize_tag collapses multiple spaces", normalize_tag("some   weird   name") == "some_weird_name")
 check("normalize_tag mixed case", normalize_tag("iSeKai") == "isekai")
 
@@ -101,7 +101,7 @@ except ValueError:
 
 # 8. Valid: simple tag
 check("normalize_tag simple tag", normalize_tag("isekai") == "isekai")
-check("normalize_tag with underscores", normalize_tag("monster_girl") == "monster_girl")
+check("normalize_tag with underscores", normalize_tag("sea_horse") == "sea_horse")
 
 
 # --- Tag operations tests ---
@@ -113,14 +113,14 @@ mk(a, "p1.jpg", b"1" * 100)
 m.load_from_qurl(str(a))
 media_id = visible(m)["p1.jpg"]["media_id"]
 
-result = tm.addTag(media_id, "Monster Girl", "content")
+result = tm.addTag(media_id, "Sea Horse", "content")
 check("addTag returns True", result)
 
 tags = tm.tagsFor(media_id)
-check("addTag creates tag link", len(tags) == 1 and tags[0]["name"] == "monster_girl", str(tags))
+check("addTag creates tag link", len(tags) == 1 and tags[0]["name"] == "sea_horse", str(tags))
 
 # 10. Adding the same tag twice is a no-op
-tm.addTag(media_id, "monster_girl", "content")
+tm.addTag(media_id, "sea_horse", "content")
 tags2 = tm.tagsFor(media_id)
 check("addTag same tag twice is no-op", len(tags2) == 1, f"expected 1 tag, got {len(tags2)}")
 
@@ -140,10 +140,10 @@ mk(b, "b.jpg", b"b" * 50)
 m.load_from_qurl(str(b))
 ids = [visible(m)["a.jpg"]["media_id"], visible(m)["b.jpg"]["media_id"]]
 
-tm.addTagsToMedia(ids, "harem", "content")
+tm.addTagsToMedia(ids, "chibi", "content")
 for mid in ids:
     tags = tm.tagsFor(mid)
-    check(f"bulk add to media {mid}", len(tags) == 1 and tags[0]["name"] == "harem", str(tags))
+    check(f"bulk add to media {mid}", len(tags) == 1 and tags[0]["name"] == "chibi", str(tags))
 
 # 13. Removing a tag removes the link but keeps the tag in the DB
 m, tm = fresh_pair()

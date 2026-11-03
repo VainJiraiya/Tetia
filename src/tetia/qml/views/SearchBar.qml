@@ -15,7 +15,7 @@ ToolBar {
     property string scopeText: "all collections"
     property bool indexing: false
 
-    // Committed terms, e.g. ["series:marvel", "-harem"]
+    // Committed terms, e.g. ["series:starfall", "-chibi"]
     property var chips: []
     property var suggestions: []
     property int current: -1
@@ -74,23 +74,23 @@ ToolBar {
 
     readonly property var helpItems: [
         { title: "Searching",
-          body: "Type a tag or part of a file name and press Enter. Each term becomes a chip below the box; remove it with its \u00D7, or press Backspace in the empty box. An item must match every term. Example: <b>frieren fern</b>." },
+          body: "Type a tag or part of a file name and press Enter. Each term becomes a chip below the box; remove it with its \u00D7, or press Backspace in the empty box. An item must match every term. Example: <b>starfall mira</b>." },
         { title: "Where it looks",
           body: "From the top level it searches every collection, in every category. Inside a folder it searches that folder and its subfolders. The line under the box says which." },
         { title: "Categories",
-          body: "Limit a term to one tag category: creator, series, character, genre or content. Example: <b>series:frieren character:fern</b>." },
+          body: "Limit a term to one tag category: creator, series, character, genre or content. Example: <b>series:starfall character:mira</b>." },
         { title: "File type",
-          body: "<b>type:</b> takes photo, video, manga or ebook. Example: <b>series:frieren type:photo</b>." },
+          body: "<b>type:</b> takes photo, video, manga or ebook. Example: <b>series:starfall type:photo</b>." },
         { title: "Leaving something out",
-          body: "Put a minus in front. Example: <b>series:frieren -chibi</b> finds Frieren items that are not tagged chibi." },
+          body: "Put a minus in front. Example: <b>series:starfall -chibi</b> finds items from Starfall that are not tagged chibi." },
         { title: "Either / or",
-          body: "Put a tilde in front of two or more terms to match any of them. Example: <b>~fern ~stark</b>." },
+          body: "Put a tilde in front of two or more terms to match any of them. Example: <b>~mira ~orin</b>." },
         { title: "Wildcards",
-          body: "A star stands for any letters in a tag. Example: <b>fri*</b> finds frieren." },
+          body: "A star stands for any letters in a tag. Example: <b>star*</b> finds starfall." },
         { title: "File names",
           body: "A word that isn't a tag is matched against file names. For a phrase, use quotes, like <b>\"episode 1\"</b>, or <b>name:</b> to be explicit." },
         { title: "Favorites",
-          body: "<b>is:favorite</b> shows only your favorites. Example: <b>series:frieren is:favorite</b>." },
+          body: "<b>is:favorite</b> shows only your favorites. Example: <b>series:starfall is:favorite</b>." },
         { title: "Rating",
           body: "Levels are general, suggestive, mature and explicit; unrated means you haven't rated it yet. Example: <b>rating:general</b>. Use &gt;= or &lt; to compare, like <b>rating:&lt;=suggestive</b>. A minus works too: <b>-rating:explicit</b> keeps unrated items." },
         { title: "Suggestions",

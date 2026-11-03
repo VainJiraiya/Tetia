@@ -48,7 +48,6 @@ src/tetia/qml/
     ProfilesDialog.qml     list/create/rename/delete/switch profiles (encrypted vault or local)
     VaultBusyDialog.qml    progress and recovery while a vault unlocks or locks
 mediaModel.py          legacy copy at repo root — DO NOT use; src/tetia/models/mediaModel.py is the active one
-guide.md               reference docs (not agent-facing)
 TAGGING_SPEC.md        phased spec for tagging, favorites, rating, and search system
 ```
 

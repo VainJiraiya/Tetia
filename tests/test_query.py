@@ -30,8 +30,8 @@ def make_db():
         CREATE TABLE media (id INTEGER PRIMARY KEY, path TEXT, name TEXT, kind TEXT,
                             favorite INTEGER DEFAULT 0, rating INTEGER, missing INTEGER DEFAULT 0);
         CREATE TABLE media_tag (media_id INTEGER, tag_id INTEGER);
-        INSERT INTO media VALUES (1,'/lib/a/Overlord 01.mkv','Overlord 01.mkv','video',1,2,0);
-        INSERT INTO media VALUES (2,'/lib/a/Overlord 02.mkv','Overlord 02.mkv','video',0,NULL,0);
+        INSERT INTO media VALUES (1,'/lib/a/Starfall 01.mkv','Starfall 01.mkv','video',1,2,0);
+        INSERT INTO media VALUES (2,'/lib/a/Starfall 02.mkv','Starfall 02.mkv','video',0,NULL,0);
         INSERT INTO media VALUES (3,'/lib/b/100%_done.png','100%_done.png','image',0,3,0);
         INSERT INTO media VALUES (4,'/lib/b/Fantasy book.epub','Fantasy book.epub','ebook',0,0,0);
         INSERT INTO media VALUES (5,'/other/x.png','x.png','image',0,NULL,0);
@@ -41,9 +41,9 @@ def make_db():
     return db
 
 
-TAGS = {("isekai", "genre"): [10], ("harem", "content"): [11],
+TAGS = {("isekai", "genre"): [10], ("chibi", "content"): [11],
         ("fantasy", "genre"): [13], ("fantastic", "genre"): [14],
-        ("overlord", "series"): [12], ("sylphie", "character"): [12]}
+        ("starfall", "series"): [12], ("mira", "character"): [12]}
 RANGES = [q.scope_range("/lib")]
 
 
@@ -64,7 +64,7 @@ class ParseTests(unittest.TestCase):
         self.assertEqual((terms[0].kind, terms[0].value), ("name", "over lord"))
 
     def test_prefixes(self):
-        t = q.parse("-harem ~a creator:foo")
+        t = q.parse("-chibi ~a creator:foo")
         self.assertTrue(t[0].negated and t[1].ored)
         self.assertEqual((t[2].kind, t[2].category), ("category", "creator"))
 
@@ -77,25 +77,25 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(run("isekai"), [1, 2, 4])
 
     def test_negative_tag(self):
-        self.assertEqual(run("isekai -harem"), [2, 4])
+        self.assertEqual(run("isekai -chibi"), [2, 4])
 
     def test_negative_unknown_tag_falls_to_name(self):
         # "-zzz" is not a tag, so it excludes names containing zzz: nothing here
         self.assertEqual(run("-zzz"), [1, 2, 3, 4])
 
     def test_unknown_word_matches_filename(self):
-        self.assertEqual(run("overlord"), [3])          # a tag here, so by tag
-        self.assertEqual(run("overlord", tags={}), [1, 2])   # no such tag: by name
+        self.assertEqual(run("starfall"), [3])          # a tag here, so by tag
+        self.assertEqual(run("starfall", tags={}), [1, 2])   # no such tag: by name
 
     def test_or_group(self):
-        self.assertEqual(run("~harem ~fantasy"), [1, 4])
+        self.assertEqual(run("~chibi ~fantasy"), [1, 4])
 
     def test_wildcard(self):
         self.assertEqual(run("fant*"), [4])
 
     def test_category(self):
-        self.assertEqual(run("series:overlord"), [3])
-        self.assertEqual(run("genre:overlord"), [])     # right name, wrong category
+        self.assertEqual(run("series:starfall"), [3])
+        self.assertEqual(run("genre:starfall"), [])     # right name, wrong category
 
     def test_type_and_aliases(self):
         self.assertEqual(run("type:video"), [1, 2])
@@ -118,7 +118,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(run("name:100%_"), [3])
         self.assertEqual(run("name:100_"), [])            # _ is literal, not "any char"
         self.assertEqual(run('"%"'), [3])
-        self.assertEqual(run("name:OVERLORD", tags={}), [1, 2])   # case-insensitive
+        self.assertEqual(run("name:STARFALL", tags={}), [1, 2])   # case-insensitive
 
     def test_scope(self):
         self.assertEqual(run("type:image", ranges=[q.scope_range("/other")]), [5])

@@ -3,7 +3,7 @@
 A folder on disk is a collection, so nesting just mirrors the directory tree.
 Only the immediate children are listed (scans stay lazy, one level per page),
 and a child appears only if something inside it, at any depth, matches the
-grid's current filter -- so the Manga tab never offers a "Thor movies" folder.
+grid's current filter -- so the Manga tab never offers a "Finale movies" folder.
 """
 import logging
 import os

@@ -25,7 +25,7 @@ Add a booru-style tagging system covering images, videos, comics/manga and ebook
 - `series` is the IP or franchise.
 - `character` is optional per item. Hide the field in the editor for ebooks; search treats it the same everywhere.
 - `genre` includes demographic (seinen, shounen) and themes such as isekai.
-- `content` is "what's in it" (harem, monster_girl, genderswap, supernatural).
+- `content` is "what's in it" (chibi, sea_horse, scifi, supernatural).
 
 The category is only a column on the tag. It controls colour, grouping and which importer field feeds it, never whether search works.
 
@@ -149,7 +149,7 @@ Enable `PRAGMA foreign_keys = ON` on every connection.
 
 **Acceptance**
 
-- Adding `Monster Girl` stores `monster_girl`; adding it again to the same item is a no-op.
+- Adding `Sea Horse` stores `sea_horse`; adding it again to the same item is a no-op.
 - Removing a chip updates only that item's row (`dataChanged`).
 - Bulk add across 100 selected items runs in one transaction.
 - Tags persist across restarts and file moves (Phase 1).
@@ -165,14 +165,14 @@ Put the parser in a pure-Python module `src/models/tag_query.py` with no Qt impo
 | Token | Meaning |
 |---|---|
 | `isekai` | media has this tag (or an alias, or any tag implying it) |
-| `-harem` | media does NOT have it |
+| `-chibi` | media does NOT have it |
 | `~a ~b` | OR group: media has at least one of them |
 | `fant*` | wildcard on tag name (treated as an OR group over matches) |
 | `creator:foo`, `series:foo`, `character:foo` | tag restricted to that category |
 | `type:video` | `image`, `video`, `comic`, `ebook` (aliases: `photo`, `manga`, `book`) |
 | `is:favorite` | favourites only |
 | `rating:explicit` / `rating:>=mature` / `rating:<suggestive` / `rating:unrated` | rating filter |
-| `name:overlord` or `"overlord"` | case-insensitive substring on filename |
+| `name:starfall` or `"starfall"` | case-insensitive substring on filename |
 
 All terms are ANDed. A bare unknown tag matches nothing (booru behaviour); the UI shows a small "unknown tag" hint rather than silently ignoring it.
 
@@ -192,7 +192,7 @@ WITH RECURSIVE satisfying(id) AS (
 SELECT id FROM satisfying;
 ```
 
-- Example shape for `isekai -harem rating:>=mature`:
+- Example shape for `isekai -chibi rating:>=mature`:
 
 ```sql
 SELECT m.id FROM media m
@@ -222,11 +222,11 @@ WHERE m.missing = 0
 
 1. A small management page (Kirigami list + add/remove) for aliases and implications, plus a rename and recategorize action for tags.
 2. Constraints: an alias cannot equal an existing tag name or point at another alias; an implication cannot create a cycle (reject on insert by walking the chain). Deleting a tag cascades via the foreign keys.
-3. Typical use, e.g. `gender_bender` is an alias of `genderswap`; `naruto_uzumaki` implies `naruto`.
+3. Typical use, e.g. `sci_fi` is an alias of `scifi`; `starfall_mira` implies `starfall`.
 
 **Acceptance**
 
-- Searching `naruto` returns items tagged only `naruto_uzumaki`.
+- Searching `starfall` returns items tagged only `starfall_mira`.
 - Typing an alias in the editor stores the canonical tag.
 - Cycle creation is refused with a user-visible message.
 
