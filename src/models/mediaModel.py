@@ -19,7 +19,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtQml import QmlElement
 
-from models import covers
+from models import covers, profiles
 from models.database import get_database
 from models.scanner import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS,
@@ -84,6 +84,8 @@ class MediaModel(QAbstractListModel):
 
         # Connects the file watcher's directory modification signal to our internal callback method
         self._file_system_watcher.directoryChanged.connect(self._on_directory_changed)
+        self._released = False
+        profiles.add_release_hook(self._release_watchers, order=0)
 
     # --- QAbstractListModel Overrides ---
 
@@ -239,7 +241,16 @@ class MediaModel(QAbstractListModel):
         return kind_from_ext(ext)
 
     # Automatically reloads directory contents whenever the file watcher detects on-disk changes
+    def _release_watchers(self):
+        """Stop watching folders and stop reacting to changes (before a vault is locked)."""
+        self._released = True
+        watched = self._file_system_watcher.directories()
+        if watched:
+            self._file_system_watcher.removePaths(watched)
+
     def _on_directory_changed(self, modified_directory_path: str):
+        if self._released:
+            return
         # Re-runs folder parsing using the modified directory path
         self.load_from_qurl(modified_directory_path)
 

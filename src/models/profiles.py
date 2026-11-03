@@ -3,17 +3,24 @@
 General uses the app's normal locations (the database in ~/.local/share/GalleryApp
 and the shared freedesktop thumbnail cache), so nothing about it changes.
 
-A private profile keeps EVERYTHING it creates inside its own folder,
-~/.local/share/GalleryApp/profiles/<id>/ (database with folders, tags, favorites
-and ratings; covers; thumbnail cache). It never reads or writes General's data
-and never touches ~/.cache/thumbnails, which file managers can see. Deleting the
-profile deletes that folder.
+A private profile keeps EVERYTHING it creates in one place of its own (database
+with folders, tags, favorites and ratings; covers; thumbnail cache), never reads
+or writes General's data and never touches ~/.cache/thumbnails, which file
+managers can see. It comes in two kinds:
+
+  vault  the data lives in <mount>/.tetia inside a KDE Plasma Vault, so it is
+         encrypted at rest and only exists while the vault is unlocked. Tetia
+         only remembers which vault; Plasma Vault does the encryption and asks
+         for the password (see vaults.py).
+  local  the data lives in ~/.local/share/GalleryApp/profiles/<id>/. Separate
+         from General but NOT encrypted. Offered for people without Plasma Vault.
 
 The active profile is fixed for the life of the process: it is chosen once at
 startup (activate), before any model opens the database. Switching profiles
 relaunches the app. Plain module, no Qt, so it can be tested on its own.
 """
 import json
+import logging
 import os
 import re
 import shutil
@@ -21,11 +28,23 @@ import sys
 import uuid
 from pathlib import Path
 
+try:
+    from models import vaults          # as part of the app
+except ImportError:                    # when this folder is on sys.path directly (tests)
+    import vaults
+
+logger = logging.getLogger(__name__)
+
 GENERAL_ID = "general"
 GENERAL_NAME = "General"
 MAX_NAME_LENGTH = 40
 
+KIND_GENERAL = "general"
+KIND_LOCAL = "local"
+KIND_VAULT = "vault"
+
 _active = GENERAL_ID
+_active_mount = ""      # the vault's mount point, for an active vault profile
 
 
 # ---- Locations -------------------------------------------------------------
@@ -42,11 +61,20 @@ def _registry_path() -> Path:
 
 
 def profile_dir(profile_id=None) -> Path:
-    """The data folder of a profile (the active one by default). Created on use."""
+    """The data folder of a profile (the active one by default). Created on use.
+    For a vault profile that is <mount>/.tetia, which only exists while the
+    vault is unlocked."""
     profile_id = profile_id or _active
     if profile_id == GENERAL_ID:
         return base_dir()
-    path = base_dir() / "profiles" / profile_id
+    profile = get(profile_id)
+    if profile is not None and profile["kind"] == KIND_VAULT:
+        mount = _active_mount if profile_id == _active else vaults.mount_for(profile["device"])
+        if not mount:
+            raise RuntimeError("The vault for this profile is locked.")
+        path = Path(mount) / ".tetia"
+    else:
+        path = base_dir() / "profiles" / profile_id
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -62,7 +90,8 @@ def thumbnail_base() -> Path:
 # ---- Registry --------------------------------------------------------------
 
 def private_profiles() -> list[dict]:
-    """[{'id', 'name'}, ...] of the private profiles, oldest first."""
+    """[{'id', 'name', 'kind', 'device'}, ...] of the private profiles, oldest
+    first. 'device' is the vault's encrypted folder ('' for local profiles)."""
     try:
         data = json.loads(_registry_path().read_text(encoding="utf-8"))
         items = data.get("profiles", [])
@@ -70,10 +99,20 @@ def private_profiles() -> list[dict]:
         return []
     out = []
     for item in items:
-        if (isinstance(item, dict) and isinstance(item.get("id"), str)
+        if not (isinstance(item, dict) and isinstance(item.get("id"), str)
                 and re.fullmatch(r"[0-9a-f]{12}", item["id"])
                 and isinstance(item.get("name"), str)):
-            out.append({"id": item["id"], "name": item["name"]})
+            continue
+        kind = item.get("kind", KIND_LOCAL)
+        device = item.get("device", "")
+        if kind == KIND_VAULT:
+            if not isinstance(device, str) or not device.startswith("/"):
+                continue
+        elif kind == KIND_LOCAL:
+            device = ""
+        else:
+            continue
+        out.append({"id": item["id"], "name": item["name"], "kind": kind, "device": device})
     return out
 
 
@@ -85,9 +124,11 @@ def _save(profiles: list[dict]):
 
 
 def all_profiles() -> list[dict]:
-    """General first, then the private ones: [{'id','name','private'}]."""
-    return ([{"id": GENERAL_ID, "name": GENERAL_NAME, "private": False}]
-            + [{**p, "private": True} for p in private_profiles()])
+    """General first, then the private ones:
+    [{'id','name','private','kind','device'}]."""
+    general = {"id": GENERAL_ID, "name": GENERAL_NAME, "private": False,
+               "kind": KIND_GENERAL, "device": ""}
+    return [general] + [{**p, "private": True} for p in private_profiles()]
 
 
 def get(profile_id: str):
@@ -99,16 +140,37 @@ def get(profile_id: str):
 def activate(profile_id=None) -> str:
     """Choose the profile for this process. Anything unknown (or no choice at
     all) means General, so a stale or mistyped id can never open a private
-    profile by accident. Returns the id actually activated."""
-    global _active
-    _active = GENERAL_ID
-    if profile_id and profile_id != GENERAL_ID and get(profile_id) is not None:
-        _active = profile_id
+    profile by accident. A vault profile whose vault is not unlocked also
+    means General. Returns the id actually activated."""
+    global _active, _active_mount
+    _active, _active_mount = GENERAL_ID, ""
+    if not profile_id or profile_id == GENERAL_ID:
+        return _active
+    profile = get(profile_id)
+    if profile is None:
+        return _active
+    if profile["kind"] == KIND_VAULT:
+        mount = vaults.mount_for(profile["device"])
+        if not mount:
+            return _active
+        _active_mount = mount
+    _active = profile_id
     return _active
 
 
 def active_id() -> str:
     return _active
+
+
+def active_kind() -> str:
+    profile = get(_active)
+    return profile["kind"] if profile else KIND_GENERAL
+
+
+def active_device() -> str:
+    """The active vault profile's encrypted folder, or ''."""
+    profile = get(_active)
+    return profile["device"] if profile else ""
 
 
 def is_private() -> bool:
@@ -118,6 +180,27 @@ def is_private() -> bool:
 def active_name() -> str:
     profile = get(_active)
     return profile["name"] if profile else GENERAL_NAME
+
+
+# ---- Letting go of files (so a vault can be locked) --------------------------
+
+_release_hooks: list[tuple[int, object]] = []
+
+
+def add_release_hook(fn, order: int = 50):
+    """Register a function that stops using files and connections in the
+    profile's folder. Lower `order` runs first (stop workers, then close
+    databases)."""
+    _release_hooks.append((order, fn))
+    _release_hooks.sort(key=lambda pair: pair[0])
+
+
+def run_release_hooks():
+    for _, fn in list(_release_hooks):
+        try:
+            fn()
+        except Exception:
+            logger.exception("A release hook failed")
 
 
 # ---- Managing profiles -------------------------------------------------------
@@ -143,13 +226,34 @@ def name_error(name: str, ignore_id=None) -> str:
 
 
 def create(name: str):
-    """Create a private profile. Returns (profile dict, '') or (None, error)."""
+    """Create a LOCAL private profile (own folder, not encrypted).
+    Returns (profile dict, '') or (None, error)."""
     clean, error = _clean_name(name)
     if error:
         return None, error
-    profile = {"id": uuid.uuid4().hex[:12], "name": clean}
+    profile = {"id": uuid.uuid4().hex[:12], "name": clean, "kind": KIND_LOCAL, "device": ""}
     try:
-        profile_dir(profile["id"])   # make its folder
+        (base_dir() / "profiles" / profile["id"]).mkdir(parents=True)
+        _save(private_profiles() + [profile])
+    except OSError as e:
+        return None, f"Couldn't create the profile: {e.strerror or e}"
+    return {**profile, "private": True}, ""
+
+
+def create_vault_profile(name: str, device: str):
+    """Register a private profile backed by an existing Plasma Vault (`device`
+    is its encrypted folder). Nothing is written to the vault until the profile
+    is first used. Returns (profile dict, '') or (None, error)."""
+    clean, error = _clean_name(name)
+    if error:
+        return None, error
+    if not device or not device.startswith("/"):
+        return None, "Choose a vault."
+    for existing in private_profiles():
+        if existing["device"] == device:
+            return None, f"That vault is already used by the profile \u201c{existing['name']}\u201d."
+    profile = {"id": uuid.uuid4().hex[:12], "name": clean, "kind": KIND_VAULT, "device": device}
+    try:
         _save(private_profiles() + [profile])
     except OSError as e:
         return None, f"Couldn't create the profile: {e.strerror or e}"
@@ -176,19 +280,24 @@ def rename(profile_id: str, name: str) -> str:
 
 
 def delete(profile_id: str) -> str:
-    """Delete a private profile and everything in its folder. The profile in
-    use can't be deleted. Returns '' on success, else an error message."""
+    """Delete a private profile. A local profile's folder is deleted with it.
+    A vault profile is only forgotten: its data stays inside the vault, which
+    Tetia doesn't open for this (delete the .tetia folder there, or the vault
+    itself in KDE, to get rid of it). The profile in use can't be deleted.
+    Returns '' on success, else an error message."""
     if profile_id == GENERAL_ID:
         return "The General profile can't be deleted."
     if profile_id == _active:
         return "Switch to another profile before deleting this one."
     profiles = private_profiles()
-    if not any(p["id"] == profile_id for p in profiles):
+    target = next((p for p in profiles if p["id"] == profile_id), None)
+    if target is None:
         return "That profile no longer exists."
-    folder = base_dir() / "profiles" / profile_id
     try:
-        if folder.exists():
-            shutil.rmtree(folder)
+        if target["kind"] == KIND_LOCAL:
+            folder = base_dir() / "profiles" / profile_id
+            if folder.exists():
+                shutil.rmtree(folder)
         _save([p for p in profiles if p["id"] != profile_id])
     except OSError as e:
         return f"Couldn't delete the profile: {e.strerror or e}"

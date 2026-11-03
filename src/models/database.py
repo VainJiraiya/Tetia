@@ -1,4 +1,6 @@
 import sqlite3
+import threading
+import weakref
 from pathlib import Path
 
 from models import profiles
@@ -31,12 +33,36 @@ def reset_singleton():
         _instance = None
 
 
+# Every open Database, with the thread it was made on (sqlite connections may
+# only be closed from their own thread), so they can all be closed before a
+# vault is locked.
+_open_databases: "weakref.WeakSet[Database]" = weakref.WeakSet()
+
+
+def close_all_databases():
+    """Close every database connection made on the calling thread. Used just
+    before a vault is locked: an open database file would block the lock."""
+    global _instance
+    for db in list(_open_databases):
+        if db._thread_id == threading.get_ident():
+            try:
+                db.close()
+            except Exception:
+                pass
+    _instance = None
+
+
+profiles.add_release_hook(close_all_databases, order=100)
+
+
 class Database:
     def __init__(self, db_path=None):
         if db_path is None:
             db_path = app_data_dir() / "gallery.db"
 
         # Generous busy timeout: the indexer thread and the UI both write
+        self._thread_id = threading.get_ident()
+        _open_databases.add(self)
         self.conn = sqlite3.connect(str(db_path), timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")

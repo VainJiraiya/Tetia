@@ -10,7 +10,14 @@ Kirigami.ApplicationWindow {
     width: 900
     height: 700
     visible: true
-    title: profileModel.isPrivate ? "Gallery \u2014 private profile: " + profileModel.activeName : "Gallery"
+    title: profileModel.isPrivate
+           ? "Gallery \u2014 " + (profileModel.activeKind === "vault" ? "encrypted profile: " : "private profile: ") + profileModel.activeName
+           : "Gallery"
+
+    // Closing from an encrypted profile first locks its vault (the model quits when that's done)
+    onClosing: function(close) {
+        if (!profileModel.requestQuit()) close.accepted = false
+    }
 
     pageStack {
         globalToolBar.style: Kirigami.ApplicationHeaderStyle.None
@@ -164,7 +171,7 @@ Kirigami.ApplicationWindow {
                     visible: profileModel.isPrivate
 
                     Kirigami.Icon {
-                        source: "lock"
+                        source: profileModel.activeKind === "vault" ? "lock" : "security-low"
                         width: 16
                         height: 16
                     }
@@ -358,6 +365,41 @@ Kirigami.ApplicationWindow {
     ProfilesDialog {
         id: profilesDialog
         backend: profileModel
+    }
+
+    VaultBusyDialog {
+        id: vaultBusyDialog
+        backend: profileModel
+    }
+
+    Connections {
+        target: profileModel
+        function onSwitchFailed(text) {
+            showPassiveNotification(text)
+        }
+        function onVaultLost() {
+            vaultLostDialog.open()
+        }
+    }
+
+    // The vault was locked from outside (Dolphin, the Vaults applet, ...): the
+    // private profile has nothing to work with any more.
+    Kirigami.PromptDialog {
+        id: vaultLostDialog
+        title: "The vault was locked"
+        subtitle: "\u201C" + profileModel.activeName + "\u201D was locked outside Tetia, so this profile can't continue. Tetia will go back to General."
+        closePolicy: Popup.NoAutoClose
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                text: "Back to General"
+                icon.name: "go-home"
+                onTriggered: {
+                    vaultLostDialog.close()
+                    profileModel.leaveToGeneral()
+                }
+            }
+        ]
     }
 
     SearchModel {

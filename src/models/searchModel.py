@@ -10,7 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Property, Signal, Slot, QUrl
 from PySide6.QtQml import QmlElement
 
-from models import covers, tag_query
+from models import covers, profiles, tag_query
 from models.database import Database, get_database
 from models.scanner import scan_folder, ALL_MEDIA_EXTENSIONS
 import hashlib
@@ -105,6 +105,9 @@ class SearchModel(QObject):
         self._indexing = False
         self._index_lock = threading.Lock()
         self._rerun = False
+        self._stop = threading.Event()
+        self._thread = None
+        profiles.add_release_hook(self.stop_indexing, order=0)
 
     # ---- indexing ----------------------------------------------------------
 
@@ -122,13 +125,24 @@ class SearchModel(QObject):
         """Scan every folder of the library, subfolders included, on a
         background thread. Safe to call repeatedly: a call while one is
         running just asks for another pass when it finishes."""
+        if self._stop.is_set():
+            return
         with self._index_lock:
             if self._indexing:
                 self._rerun = True
                 return
             self._set_indexing(True)
         folders = [covers.folder_key(f) for f in self._db.get_all_folders()]
-        threading.Thread(target=self._index_worker, args=(folders,), daemon=True).start()
+        self._thread = threading.Thread(target=self._index_worker, args=(folders,), daemon=True)
+        self._thread.start()
+
+    def stop_indexing(self):
+        """Stop the indexer and wait for it, and keep it stopped. Called before
+        the profile's files are released (locking a vault)."""
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=15)
 
     def _index_worker(self, folders):
         db = None
@@ -136,6 +150,8 @@ class SearchModel(QObject):
             db = Database()   # a connection of its own: sqlite connections are per-thread
             for root in folders:
                 for directory in walk_directories(root):
+                    if self._stop.is_set():
+                        return
                     try:
                         scan_folder(db, Path(directory), content_hash)
                     except (OSError, sqlite3.Error) as e:
@@ -150,7 +166,7 @@ class SearchModel(QObject):
                 self._indexing = False
             self.indexingChanged.emit()
             self.indexFinished.emit()
-            if again:
+            if again and not self._stop.is_set():
                 self.indexLibrary()
 
     # ---- queries -----------------------------------------------------------
