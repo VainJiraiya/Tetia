@@ -6,6 +6,12 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication 
 from PySide6.QtQml import QQmlApplicationEngine
 
+# The profile must be chosen BEFORE anything below opens the database or a
+# cache folder. A normal launch is always General; only a relaunch started by
+# the profile switcher passes --profile.
+from models import profiles
+profiles.activate(profiles.pop_profile_argument(sys.argv))
+
 from models.mediaModel import MediaModel
 from models.thumbModel import ThumbnailProvider
 from models.file_picker import FilePicker
@@ -28,6 +34,9 @@ from models.gridModel import GridModel
 
 # Library search and background indexing
 from models.searchModel import SearchModel
+
+# Profiles (General + private) and the switcher
+from models.profileModel import ProfileModel
 
 if __name__ == "__main__":
     # 2. Initialize the full widget application here

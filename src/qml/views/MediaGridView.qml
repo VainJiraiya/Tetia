@@ -91,6 +91,123 @@ GridView {
         addRangeSelection(0, grid.count - 1)
     }
 
+    // ---- Drag select (tag mode) ------------------------------------------
+    // Dragging on the grid draws a rubber band and selects every file tile it
+    // touches. A plain drag replaces the selection; with Ctrl or Shift held it
+    // adds to what was selected. Folder tiles are never selected. Dragging near
+    // the top or bottom edge scrolls. A click without dragging still toggles a
+    // single tile (the DragHandler only takes over after the drag threshold).
+
+    property bool dragSelecting: false
+    property point dragStart: Qt.point(0, 0)   // content coordinates
+    property point dragEnd: Qt.point(0, 0)     // content coordinates
+    property point dragView: Qt.point(0, 0)    // pointer, in viewport coordinates
+    property var dragBase: []
+
+    function viewToContent(p) {
+        return Qt.point(p.x + grid.contentX, p.y + grid.contentY)
+    }
+
+    function sameIds(a, b) {
+        if (a.length !== b.length) return false
+        for (var i = 0; i < a.length; i++) {
+            if (b.indexOf(a[i]) < 0) return false
+        }
+        return true
+    }
+
+    function updateDragSelection() {
+        var x0 = Math.min(dragStart.x, dragEnd.x)
+        var x1 = Math.max(dragStart.x, dragEnd.x)
+        var y0 = Math.min(dragStart.y, dragEnd.y)
+        var y1 = Math.max(dragStart.y, dragEnd.y)
+
+        // Tiles sit inset by 8 px inside their cells (see the delegates)
+        var inset = 8
+        var firstCol = Math.max(0, Math.floor((x0 - sidePadding) / cellWidth))
+        var lastCol = Math.min(columns - 1, Math.floor((x1 - sidePadding) / cellWidth))
+        var firstRow = Math.max(0, Math.floor(y0 / cellHeight))
+        var lastRow = Math.floor(y1 / cellHeight)
+
+        var ids = dragBase.slice()
+        for (var r = firstRow; r <= lastRow; r++) {
+            for (var c = firstCol; c <= lastCol; c++) {
+                var row = r * columns + c
+                if (row >= grid.count) break
+                var left = sidePadding + c * cellWidth + inset
+                var top = r * cellHeight + inset
+                if (left + cellWidth - 2 * inset <= x0 || left >= x1) continue
+                if (top + cellHeight - 2 * inset <= y0 || top >= y1) continue
+                var id = mediaIdAt(row)
+                if (id !== null && id !== undefined && ids.indexOf(id) < 0) ids.push(id)
+            }
+        }
+        if (!sameIds(ids, selectedIds)) setSelection(ids)
+    }
+
+    DragHandler {
+        id: dragSelect
+        enabled: grid.tagMode
+        target: null
+        acceptedButtons: Qt.LeftButton
+
+        onActiveChanged: {
+            if (active) {
+                grid.forceActiveFocus()
+                var additive = centroid.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)
+                grid.dragBase = additive ? grid.selectedIds.slice() : []
+                grid.dragStart = grid.viewToContent(centroid.pressPosition)
+                grid.dragView = centroid.position
+                grid.dragEnd = grid.viewToContent(centroid.position)
+                grid.dragSelecting = true
+                grid.updateDragSelection()
+            } else {
+                grid.dragSelecting = false
+            }
+        }
+
+        onCentroidChanged: {
+            if (!active) return
+            grid.dragView = centroid.position
+            grid.dragEnd = grid.viewToContent(centroid.position)
+            grid.updateDragSelection()
+        }
+    }
+
+    // Scroll while the pointer is held near the top or bottom edge
+    Timer {
+        interval: 16
+        repeat: true
+        running: grid.dragSelecting
+        onTriggered: {
+            var edge = 48
+            var y = grid.dragView.y
+            var dy = 0
+            if (y < edge) dy = -(edge - y) / 3
+            else if (y > grid.height - edge) dy = (y - (grid.height - edge)) / 3
+            if (dy === 0) return
+            var maxY = Math.max(grid.originY, grid.originY + grid.contentHeight - grid.height)
+            var next = Math.max(grid.originY, Math.min(maxY, grid.contentY + dy))
+            if (next === grid.contentY) return
+            grid.contentY = next
+            grid.dragEnd = grid.viewToContent(grid.dragView)
+            grid.updateDragSelection()
+        }
+    }
+
+    // The rubber band (a child of the Flickable, so it is in content coordinates)
+    Rectangle {
+        visible: grid.dragSelecting
+        z: 100
+        x: Math.min(grid.dragStart.x, grid.dragEnd.x)
+        y: Math.min(grid.dragStart.y, grid.dragEnd.y)
+        width: Math.abs(grid.dragEnd.x - grid.dragStart.x)
+        height: Math.abs(grid.dragEnd.y - grid.dragStart.y)
+        color: Qt.alpha(palette.highlight, 0.18)
+        border.width: 1
+        border.color: palette.highlight
+    }
+
     // ---- Keyboard (tag mode) --------------------------------------------
 
     activeFocusOnTab: true

@@ -10,7 +10,7 @@ Kirigami.ApplicationWindow {
     width: 900
     height: 700
     visible: true
-    title: "Gallery"
+    title: profileModel.isPrivate ? "Gallery \u2014 private profile: " + profileModel.activeName : "Gallery"
 
     pageStack {
         globalToolBar.style: Kirigami.ApplicationHeaderStyle.None
@@ -132,6 +132,15 @@ Kirigami.ApplicationWindow {
                             enabled: !root.onFavoritesTab
                             onTriggered: root.isRemoveMode = !root.isRemoveMode
                         }
+                        MenuSeparator {}
+                        MenuItem {
+                            text: "Profiles\u2026"
+                            icon.name: "user-identity"
+                            onTriggered: {
+                                root.isRemoveMode = false
+                                profilesDialog.open()
+                            }
+                        }
                     }
                 }
             }
@@ -146,6 +155,28 @@ Kirigami.ApplicationWindow {
 
                 readonly property var crumbs: pageStack.currentItem && pageStack.currentItem.crumbs
                                               ? pageStack.currentItem.crumbs : []
+
+                // Always shows which profile you are in, if it isn't General
+                Row {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 4
+                    visible: profileModel.isPrivate
+
+                    Kirigami.Icon {
+                        source: "lock"
+                        width: 16
+                        height: 16
+                    }
+                    Label {
+                        visible: titleSlot.width > 560
+                        width: Math.min(implicitWidth, 150)
+                        text: profileModel.activeName
+                        elide: Text.ElideRight
+                        font.pixelSize: 12
+                        opacity: 0.8
+                    }
+                }
 
                 Label {
                     anchors.fill: parent
@@ -318,6 +349,15 @@ Kirigami.ApplicationWindow {
 
     TagModel {
         id: tagModel
+    }
+
+    ProfileModel {
+        id: profileModel
+    }
+
+    ProfilesDialog {
+        id: profilesDialog
+        backend: profileModel
     }
 
     SearchModel {

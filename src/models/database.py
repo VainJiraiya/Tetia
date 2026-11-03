@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+from models import profiles
+
 _instance = None
 
 
@@ -13,10 +15,9 @@ def get_database():
 
 
 def app_data_dir() -> Path:
-    """The app's data folder (database, covers). Created on first use."""
-    base_dir = Path.home() / ".local" / "share" / "GalleryApp"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    return base_dir
+    """The active profile's data folder (database, covers). Created on first use.
+    General's is ~/.local/share/GalleryApp; a private profile has its own."""
+    return profiles.profile_dir()
 
 
 def reset_singleton():

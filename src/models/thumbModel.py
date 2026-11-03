@@ -9,6 +9,8 @@ from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtGui import QImage, QImageReader
 from PySide6.QtQuick import QQuickImageProvider
 
+from models import profiles
+
 # Characters left unescaped when building the thumbnail-cache URI. The MD5 of
 # this URI is the cache filename, so it has to match what Dolphin/KDE hashes
 # or lookups miss. This is the RFC 2396 path set that glib's
@@ -157,7 +159,8 @@ def _save_thumbnail(base: Path, uri: str, uri_md5: str, img: QImage, local_path:
 class ThumbnailProvider(QQuickImageProvider):
     def __init__(self):
         super().__init__(QQuickImageProvider.Image)
-        self.thumbnails_base = Path.home() / ".cache" / "thumbnails"
+        # General shares the system cache; a private profile only ever uses its own
+        self.thumbnails_base = profiles.thumbnail_base()
         self.cache_dirs = [
             self.thumbnails_base / "x-large",
             self.thumbnails_base / "large",
