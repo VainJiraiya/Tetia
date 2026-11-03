@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.VainJiraiya.Tetia</id>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Tetia</name>
+  <summary>A media library for manga, images and video</summary>
+  <developer id="io.github.vainjiraiya">
+    <name>Tetia contributors</name>
+  </developer>
+
+  <description>
+    <p>
+      Tetia keeps your manga, pictures and videos in one place: browse collections,
+      tag and rate what is in them, and find anything with a single search box.
+    </p>
+    <ul>
+      <li>Collections of folders for photos, videos, manga and books, with covers and nested subfolders</li>
+      <li>Tags in five categories, ratings and favorites, with bulk tagging by click or drag selection</li>
+      <li>One search box for tags and file names, across the whole library or inside a folder</li>
+      <li>Moved and renamed files keep their tags and favorites</li>
+      <li>Private profiles with their own library, optionally encrypted in a KDE Plasma Vault</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.VainJiraiya.Tetia.desktop</launchable>
+  <provides>
+    <binary>tetia</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/VainJiraiya/Tetia</url>
+  <url type="bugtracker">https://github.com/VainJiraiya/Tetia/issues</url>
+  <url type="vcs-browser">https://github.com/VainJiraiya/Tetia</url>
+
+  <categories>
+    <category>Graphics</category>
+    <category>Viewer</category>
+  </categories>
+  <keywords>
+    <keyword>manga</keyword>
+    <keyword>comics</keyword>
+    <keyword>images</keyword>
+    <keyword>gallery</keyword>
+    <keyword>media library</keyword>
+  </keywords>
+
+  <!-- Tetia ships no content of its own, has no network access and no social or
+       purchase features, so every OARS category is "none". CONFIRM before release. -->
+  <content_rating type="oars-1.1"/>
+
+  <!-- TODO: add screenshots once there are public URLs, e.g.
+  <screenshots>
+    <screenshot type="default">
+      <image>https://TODO.example/tetia-folders.png</image>
+      <caption>TODO</caption>
+    </screenshot>
+  </screenshots>
+  -->
+
+  <releases>
+    <release version="0.1.0" date="2026-11-03">
+      <description>
+        <p>First public release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

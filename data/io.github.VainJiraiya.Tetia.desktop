@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Tetia
+GenericName=Media Library
+Comment=A media library for manga, images and video
+Exec=tetia
+Icon=io.github.VainJiraiya.Tetia
+Terminal=false
+StartupNotify=true
+Categories=Qt;KDE;Graphics;Viewer;
+Keywords=manga;comics;images;photos;videos;gallery;library;tags;

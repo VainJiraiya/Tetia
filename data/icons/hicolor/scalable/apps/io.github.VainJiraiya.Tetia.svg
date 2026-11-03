@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLACEHOLDER ICON: a plain, original stand-in (a picture frame with a sun and
+     a hill). Replace it with real artwork before a proper release. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a90d9"/>
+      <stop offset="1" stop-color="#2a5d9f"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="22" fill="url(#bg)"/>
+  <rect x="26" y="30" width="76" height="68" rx="8" fill="#ffffff" fill-opacity="0.92"/>
+  <circle cx="82" cy="52" r="9" fill="#f5b942"/>
+  <path d="M26 98 L52 62 L68 82 L80 70 L102 98 Z" fill="#2a5d9f"/>
+</svg>
