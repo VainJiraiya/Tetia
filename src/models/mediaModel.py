@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtQml import QmlElement
 
+from models import covers
 from models.database import get_database
 
 # Sets the QML import module configuration so QML files can write "import Gallery 1.0"
@@ -409,6 +410,15 @@ class MediaModel(QAbstractListModel):
             logger.error("Failed to get favorite for media_id=%d: %s", media_id, e)
             return False
 
+    @Slot(int, result=int)
+    def getRating(self, media_id: int) -> int:
+        try:
+            rating = self._db.get_media_rating(media_id)
+            return rating if rating is not None else -1
+        except sqlite3.Error as e:
+            logger.error("Failed to get rating for media_id=%d: %s", media_id, e)
+            return -1
+
     @Slot(int, int)
     def setRating(self, media_id: int, rating: int):
         """Set rating for a media item. rating=-1 clears to NULL. Emits dataChanged for the affected row only."""
@@ -423,6 +433,24 @@ class MediaModel(QAbstractListModel):
             idx = self.index(row)
             self._visible_items[row]["rating"] = db_rating
             self.dataChanged.emit(idx, idx, [MediaModel.Roles.RatingRole])
+
+    @Slot(int, result=bool)
+    def setFolderCover(self, media_id: int) -> bool:
+        """Use this item as the cover of the folder being shown. An image is
+        used as is, a video gives a full-size frame (ffmpeg), a manga/book uses
+        its own first page. Returns False if it could not be done."""
+        if not self._current_folder_path:
+            return False
+        try:
+            info = self._db.get_media_info(media_id)
+        except sqlite3.Error as e:
+            logger.error("Failed to look up media_id=%d: %s", media_id, e)
+            return False
+        if info is None:
+            return False
+        return covers.set_cover_from_media(
+            self._current_folder_path, info["path"], info["kind"], db=self._db
+        )
 
     # --- Properties exposed to QML ---
 

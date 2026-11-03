@@ -9,14 +9,21 @@ from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtGui import QImage, QImageReader
 from PySide6.QtQuick import QQuickImageProvider
 
-# RFC 2396 "mark" characters that glib's g_filename_to_uri() (and therefore
-# KDE's thumbnail cache) leaves unescaped, on top of normal unreserved chars.
-# Qt's QUrl.FullyEncoded uses the stricter RFC 3986 set and encodes these,
-# which breaks the MD5 match for names containing e.g. "(1)".
-_URI_SAFE = "/-_.!~*'()"
+# Characters left unescaped when building the thumbnail-cache URI. The MD5 of
+# this URI is the cache filename, so it has to match what Dolphin/KDE hashes
+# or lookups miss. This is the RFC 2396 path set that glib's
+# g_filename_to_uri() uses: the unreserved chars ("-_.!~*'()" plus
+# alphanumerics, the last few handled by quote() itself) PLUS the pchar extras
+# ":@&=+$," and the ";" path-parameter delimiter. Leaving any of those out
+# percent-encodes them (e.g. "," -> %2C), which changes the hash for every
+# filename containing that character. "[", "]", "^", "#", "%", "?", spaces and
+# non-ASCII are escaped by everyone, so they stay out of this set.
+_URI_SAFE = "/-_.!~*'():@&=+$,;"
 
 def _local_path_to_thumb_uri(path: str) -> str:
-    abs_path = str(Path(path).resolve())
+    # abspath, not resolve(): the cache key is the path as Dolphin sees it,
+    # and resolve() follows symlinks, which would change the hash.
+    abs_path = os.path.abspath(path)
     return "file://" + quote(abs_path, safe=_URI_SAFE)
 
 
@@ -167,6 +174,9 @@ class ThumbnailProvider(QQuickImageProvider):
             local_path = q.toLocalFile() or id_string
         else:
             local_path = id_string
+
+        if not os.path.exists(local_path):
+            print(f"[THUMB] path does not exist: id={id_string!r} -> {local_path!r}")
 
         uri = _local_path_to_thumb_uri(local_path)
         uri_md5 = hashlib.md5(uri.encode("utf-8")).hexdigest()

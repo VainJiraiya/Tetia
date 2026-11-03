@@ -16,6 +16,12 @@ from models.folderModel import FolderModel
 # NEW: Import TagModel for QML registration
 from models.tagModel import TagModel
 
+# NEW: Import MediaActions (move to trash) for QML registration
+from models.mediaActions import MediaActions
+
+# NEW: Import FavoritesModel (the Favorites tab) for QML registration
+from models.favoritesModel import FavoritesModel
+
 if __name__ == "__main__":
     # 2. Initialize the full widget application here
     app = QApplication(sys.argv)

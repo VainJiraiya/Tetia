@@ -1,7 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 
-// Defines the main grid layout that will hold all the media tiles
+// The grid of media tiles. It is only the grid: the tag panel lives next to it
+// in main.qml, so it never ends up inside this Flickable's scrolling content.
 GridView {
     id: grid
 
@@ -12,7 +13,10 @@ GridView {
     signal comicClicked(int index)
     signal bookClicked(int index)
     signal selectionChanged()
-    signal deleteRequested()
+
+    // The context menu's "Edit tags" asks the host to enter tag mode with this
+    // item selected (the host owns the tag-mode flag).
+    signal editTagsRequested(int mediaId)
 
     // Exposed properties
     property int columns: Math.max(1, Math.floor(width / cellWidth))
@@ -22,206 +26,309 @@ GridView {
     property var mediaBackend: null
     property var selectedIds: []
 
+    // Qt.UserRole + 1 in MediaModel: the `mediaId` role (also exposed to
+    // delegates as model.mediaId). Keep in sync with the Python model.
+    readonly property int mediaIdRole: 257
+
+    property var contextMenuData: ({})
+
     onTagModeChanged: {
         if (!tagMode) {
             selectedIds = []
         }
     }
 
-    function toggleSelection(mediaId) {
-        var newIds = grid.selectedIds.slice()
-        var idx = newIds.indexOf(mediaId)
-        if (idx >= 0) { newIds.splice(idx, 1) } else { newIds.push(mediaId) }
-        grid.selectedIds = newIds
+    // ---- Selection helpers ----------------------------------------------
+    // Always assign a new array: mutating selectedIds in place doesn't notify
+    // the bindings (tile highlights, the tag panel) that depend on it.
+
+    function mediaIdAt(row) {
+        return grid.model.data(grid.model.index(row, 0), grid.mediaIdRole)
+    }
+
+    function rowOfMediaId(mediaId) {
+        for (var i = 0; i < grid.count; i++) {
+            if (mediaIdAt(i) === mediaId) return i
+        }
+        return -1
+    }
+
+    function setSelection(ids) {
+        grid.selectedIds = ids
         selectionChanged()
     }
 
-    function addRangeSelection(fromIndex, toIndex) {
-        var start = Math.min(fromIndex, toIndex)
-        var end = Math.max(fromIndex, toIndex)
+    function toggleSelection(mediaId) {
+        var ids = grid.selectedIds.slice()
+        var at = ids.indexOf(mediaId)
+        if (at >= 0) ids.splice(at, 1)
+        else ids.push(mediaId)
+        setSelection(ids)
+    }
+
+    function addRangeSelection(fromRow, toRow) {
+        var ids = grid.selectedIds.slice()
+        var start = Math.min(fromRow, toRow)
+        var end = Math.max(fromRow, toRow)
         for (var i = start; i <= end; i++) {
-            var item = grid.model.data(grid.model.index(i), 257)
-            if (item !== null && item !== undefined) {
-                var idx = grid.selectedIds.indexOf(item)
-                if (idx < 0) {
-                    grid.selectedIds.push(item)
-                }
+            var id = mediaIdAt(i)
+            if (id !== null && id !== undefined && ids.indexOf(id) < 0) {
+                ids.push(id)
             }
         }
-        selectionChanged()
+        setSelection(ids)
     }
+
+    function selectAll() {
+        addRangeSelection(0, grid.count - 1)
+    }
+
+    // ---- Keyboard (tag mode) --------------------------------------------
+
+    activeFocusOnTab: true
+    Keys.onPressed: function(event) {
+        if (!grid.tagMode) return
+        if (event.matches(StandardKey.SelectAll)) {
+            grid.selectAll()
+            event.accepted = true
+        } else if (event.key === Qt.Key_Escape && grid.selectedIds.length > 0) {
+            grid.setSelection([])
+            event.accepted = true
+        }
+    }
+
+    // ---- Context menu ---------------------------------------------------
 
     Menu {
         id: contextMenu
-        x: 0
-        y: 0
+
         MenuItem {
             text: "Edit tags"
+            icon.name: "tag"
             onTriggered: {
-                grid.tagMode = true
-                var mediaId = contextMenuData.mediaId
-                grid.selectedIds = [mediaId]
+                var id = grid.contextMenuData.mediaId
+                // Right-clicking something already in a multi-selection keeps it
+                if (!(grid.tagMode && grid.selectedIds.indexOf(id) >= 0)) {
+                    grid.selectedIds = [id]
+                }
+                grid.editTagsRequested(id)
                 grid.selectionChanged()
+            }
+        }
+
+        MenuItem {
+            id: favoriteItem
+            enabled: grid.mediaBackend !== null
+            onTriggered: {
+                var id = grid.contextMenuData.mediaId
+                grid.mediaBackend.setFavorite(id, !grid.mediaBackend.getFavorite(id))
+            }
+        }
+
+        // Uses this item as the cover of the folder being browsed. The wording
+        // follows the item: a picture is used as is, a video gives a frame, a
+        // manga or book uses its own first page.
+        MenuItem {
+            id: coverItem
+            icon.name: "image-x-generic"
+            enabled: grid.mediaBackend !== null && typeof grid.mediaBackend.setFolderCover === "function"
+            onTriggered: {
+                var kind = grid.contextMenuData.kind
+                var ok = grid.mediaBackend.setFolderCover(grid.contextMenuData.mediaId)
+                if (ok) {
+                    toast.show("Folder cover updated")
+                } else if (kind === "video") {
+                    toast.show("Couldn't grab a frame (is ffmpeg installed?)")
+                } else {
+                    toast.show("Couldn't set the folder cover")
+                }
             }
         }
     }
 
-    property var contextMenuData: ({})
+    // kind: "image", "video", "comic" or "ebook"
+    function openContextMenu(mediaId, kind) {
+        grid.contextMenuData = { mediaId: mediaId, kind: kind }
+        var isFavorite = grid.mediaBackend ? !!grid.mediaBackend.getFavorite(mediaId) : false
+        favoriteItem.text = isFavorite ? "Remove from favorites" : "Add to favorites"
+        favoriteItem.icon.name = isFavorite ? "non-starred-symbolic" : "starred-symbolic"
+        coverItem.text = kind === "video" ? "Use a frame as folder cover"
+                       : (kind === "image" ? "Set as folder cover" : "Use as folder cover")
+        contextMenu.popup()
+    }
 
-    // We increase the cell height slightly so there is room for both the picture and the text
+    // ---- Toast -----------------------------------------------------------
+    // A small message at the bottom of the window. It lives in the window's
+    // overlay, not in the grid, so it never scrolls with the tiles.
+
+    Timer {
+        id: toastTimer
+        interval: 2600
+        onTriggered: toast.close()
+    }
+
+    Popup {
+        id: toast
+        property string message: ""
+
+        parent: Overlay.overlay
+        x: parent ? Math.round((parent.width - width) / 2) : 0
+        y: parent ? parent.height - height - 48 : 0
+        padding: 12
+        modal: false
+        focus: false
+        closePolicy: Popup.NoAutoClose
+
+        function show(text) {
+            toast.message = text
+            toast.open()
+            toastTimer.restart()
+        }
+
+        background: Rectangle {
+            radius: 8
+            color: Qt.rgba(0, 0, 0, 0.8)
+        }
+        contentItem: Label {
+            text: toast.message
+            color: "white"
+        }
+    }
+
+    // ---- Grid ------------------------------------------------------------
+
+    // Cell height leaves room for both the picture and the file name
     cellWidth: 160
     cellHeight: 185
     clip: true
+    boundsBehavior: Flickable.StopAtBounds
+    ScrollBar.vertical: ScrollBar {}
 
-    // 1. Calculate how many columns can fit, and how much left-over space there is
-
-    // The delegate dictates how every individual item in the model is drawn on the screen
+    // The delegate dictates how every individual item in the model is drawn
     delegate: Item {
+        id: tile
         width: grid.cellWidth
         height: grid.cellHeight
 
-        // 2. We shift the visual contents inside the delegate to perfectly center the whole block.
-        // This avoids QML bugs with dynamic margins breaking the scroll position.
+        readonly property bool selected: grid.tagMode && grid.selectedIds.indexOf(model.mediaId) >= 0
+
+        // Shift the visual contents to center the whole block of columns
+        // (avoids dynamic margins breaking the scroll position).
         Item {
             x: grid.sidePadding
             width: parent.width
             height: parent.height
 
-            // Creates a container for the tile with a small margin so items don't touch each other
             Rectangle {
+                id: card
                 anchors.fill: parent
                 anchors.margins: 8
-                color: "transparent"
-                radius: 4
+                radius: 6
+                color: tile.selected ? Qt.alpha(palette.highlight, 0.18)
+                                     : Qt.alpha(palette.text, hover.hovered ? 0.07 : 0)
+                border.width: tile.selected ? 2 : 0
+                border.color: palette.highlight
 
-                // Selection highlight
-                Rectangle {
-                    anchors.fill: parent
-                    anchors.margins: -2
-                    radius: 6
-                    color: "transparent"
-                    border.color: Qt.rgba(0.2, 0.6, 1.0, 0.6)
-                    border.width: 2
-                    visible: grid.tagMode && grid.selectedIds.indexOf(model.mediaId) >= 0
+                HoverHandler {
+                    id: hover
+                    cursorShape: Qt.PointingHandCursor
                 }
 
-                // TWEAK 2: The image thumbnail setup
+                ToolTip.visible: hover.hovered && fileNameText.truncated
+                ToolTip.delay: 700
+                ToolTip.text: model.fileName
+
                 Image {
                     id: thumbnail
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    // Anchors the bottom of the image to the top of the text label
                     anchors.bottom: fileNameText.top
+                    anchors.margins: 4
                     anchors.bottomMargin: 6
 
-                    // Request the image through our thumbnail provider
                     source: "image://thumbnail/" + model.fileUri
 
-                    // PreserveAspectFit scales the image down so the entire picture fits
-                    // inside the square without cropping any edges off
+                    // Scale down so the entire picture fits without cropping
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                 }
 
-                // TWEAK 3: The file name label setup
                 Text {
                     id: fileNameText
                     anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 4
                     anchors.left: parent.left
                     anchors.right: parent.right
+                    anchors.leftMargin: 4
+                    anchors.rightMargin: 4
 
                     text: model.fileName
-
-                    // Pulls the native text color from the user's active KDE Plasma color scheme
                     color: palette.text
-
-                    // Centers the text and adds an ellipsis (...) in the middle if the filename
-                    // is too long to fit on one line
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideMiddle
                     font.pixelSize: 12
                 }
 
-                // Checkmark badge (top-right)
+                // Selection check badge (top-right)
                 Rectangle {
                     anchors.top: parent.top
                     anchors.right: parent.right
-                    anchors.margins: 4
+                    anchors.margins: 6
                     width: 20
                     height: 20
                     radius: 10
-                    color: Qt.rgba(0.2, 0.6, 1.0, 0.85)
-                    visible: grid.tagMode && grid.selectedIds.indexOf(model.mediaId) >= 0
+                    color: palette.highlight
+                    visible: tile.selected
 
                     Text {
                         anchors.centerIn: parent
                         text: "\u2713"
-                        color: "white"
+                        color: palette.highlightedText
                         font.pixelSize: 12
                         font.bold: true
                     }
                 }
 
                 // Routes the tap to whichever signal matches this item's type.
-                // Each delegate instance knows its own type via the model
-                // roles already in context here, so we decide the route at
-                // the source instead of making callers re-check roles.
                 MouseArea {
                     anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    onClicked: {
+
+                    onClicked: function(mouse) {
+                        grid.forceActiveFocus()
+
                         if (mouse.button === Qt.RightButton) {
-                            grid.contextMenuData = { mediaId: model.mediaId }
-                            contextMenu.popup()
+                            grid.openContextMenu(model.mediaId,
+                                model.isVideo ? "video"
+                                : (model.isComic ? "comic"
+                                : (model.isBook ? "ebook" : "image")))
                         } else if (grid.tagMode) {
-                            if (mouse.modifiers & Qt.ShiftModifier && grid.selectedIds.length > 0) {
-                                var lastSelected = grid.selectedIds[grid.selectedIds.length - 1]
-                                var lastIdx = -1
-                                for (var i = 0; i < grid.model.count; i++) {
-                                    if (grid.model.data(grid.model.index(i), 257) === lastSelected) {
-                                        lastIdx = i
-                                        break
-                                    }
-                                }
-                                if (lastIdx >= 0) {
-                                    grid.addRangeSelection(lastIdx, index)
+                            if ((mouse.modifiers & Qt.ShiftModifier) && grid.selectedIds.length > 0) {
+                                // Range from the last selected item to this one
+                                var anchorRow = grid.rowOfMediaId(grid.selectedIds[grid.selectedIds.length - 1])
+                                if (anchorRow >= 0) {
+                                    grid.addRangeSelection(anchorRow, index)
                                 }
                             } else if (mouse.modifiers & Qt.ControlModifier) {
                                 grid.toggleSelection(model.mediaId)
+                            } else if (grid.selectedIds.indexOf(model.mediaId) >= 0) {
+                                grid.toggleSelection(model.mediaId)
                             } else {
-                                if (grid.selectedIds.indexOf(model.mediaId) >= 0) {
-                                    grid.toggleSelection(model.mediaId)
-                                } else {
-                                    grid.selectedIds = [model.mediaId]
-                                    grid.selectionChanged()
-                                }
+                                grid.setSelection([model.mediaId])
                             }
+                        } else if (model.isVideo) {
+                            grid.videoClicked(index)
+                        } else if (model.isComic) {
+                            grid.comicClicked(index)
+                        } else if (model.isBook) {
+                            grid.bookClicked(index)
                         } else {
-                            if (model.isVideo) {
-                                grid.videoClicked(index)
-                            } else if (model.isComic) {
-                                grid.comicClicked(index)
-                            } else if (model.isBook) {
-                                grid.bookClicked(index)
-                            } else {
-                                grid.imageClicked(index)
-                            }
+                            grid.imageClicked(index)
                         }
                     }
                 }
             }
         }
-    }
-
-    TagPanel {
-        visible: grid.tagMode && grid.selectedIds.length > 0
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        mediaIds: grid.selectedIds
-        tagModel: grid.tagBackend
-        mediaModel: grid.mediaBackend
     }
 }

@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami 2.20 as Kirigami
+import Gallery 1.0
 
 Item {
     id: root
@@ -34,6 +35,40 @@ Item {
             Layout.alignment: Qt.AlignHCenter
             onClicked: root.addFolderRequested()
             visible: root.model && root.model.currentCategory !== "favorites"
+        }
+    }
+
+    // Opens the image dialog for "Choose cover image..."
+    FilePicker {
+        id: coverPicker
+        onCoverImageSelected: function(folderPath, imagePath) {
+            if (root.model) root.model.setCoverFromFile(folderPath, imagePath)
+        }
+    }
+
+    // Right-click menu for a folder tile
+    Menu {
+        id: folderMenu
+        property string folderPath: ""
+        property bool isFavorite: false
+        property bool hasCustomCover: false
+
+        MenuItem {
+            text: "Choose cover image…"
+            icon.name: "image-x-generic"
+            onTriggered: coverPicker.openCoverImageDialog(folderMenu.folderPath)
+        }
+        MenuItem {
+            text: "Use default cover"
+            icon.name: "edit-undo"
+            enabled: folderMenu.hasCustomCover
+            onTriggered: root.model.clearCover(folderMenu.folderPath)
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: folderMenu.isFavorite ? "Remove from favorites" : "Add to favorites"
+            icon.name: folderMenu.isFavorite ? "non-starred-symbolic" : "starred-symbolic"
+            onTriggered: root.model.setFavorite(folderMenu.folderPath, !folderMenu.isFavorite)
         }
     }
 
@@ -259,7 +294,16 @@ Item {
                     id: hoverArea
                     anchors.fill: cardBg
                     hoverEnabled: true
-                    onClicked: {
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: function(mouse) {
+                        if (mouse.button === Qt.RightButton) {
+                            if (root.removeMode) return
+                            folderMenu.folderPath = model.folderPath
+                            folderMenu.isFavorite = !!model.isFavorite
+                            folderMenu.hasCustomCover = !!model.hasCustomCover
+                            folderMenu.popup()
+                            return
+                        }
                         if (root.removeMode) {
                             root.model.removeFolder(model.folderPath)
                         } else {

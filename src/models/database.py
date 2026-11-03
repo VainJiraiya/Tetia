@@ -12,6 +12,13 @@ def get_database():
     return _instance
 
 
+def app_data_dir() -> Path:
+    """The app's data folder (database, covers). Created on first use."""
+    base_dir = Path.home() / ".local" / "share" / "GalleryApp"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir
+
+
 def reset_singleton():
     """Close and reset the singleton. For tests only."""
     global _instance
@@ -26,13 +33,15 @@ def reset_singleton():
 class Database:
     def __init__(self, db_path=None):
         if db_path is None:
-            base_dir = Path.home() / ".local" / "share" / "GalleryApp"
-            base_dir.mkdir(parents=True, exist_ok=True)
-            db_path = base_dir / "gallery.db"
+            db_path = app_data_dir() / "gallery.db"
 
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # WAL keeps UI reads (thumbnail/tag lookups) from blocking behind a scan's
+        # write transaction, and NORMAL sync is safe with WAL.
+        self.conn.execute("PRAGMA journal_mode = WAL")
+        self.conn.execute("PRAGMA synchronous = NORMAL")
         self._init_tables()
         self._migrate()
 
@@ -72,86 +81,112 @@ class Database:
             """)
 
     def _migrate(self):
-        cursor = self.conn.cursor()
-        cursor.execute("PRAGMA user_version")
-        version = cursor.fetchone()[0]
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        steps = (
+            (1, self._migrate_v1),
+            (2, self._migrate_v2),
+            (3, self._migrate_v3),
+            (4, self._migrate_v4),
+        )
+        for target, step in steps:
+            if version < target:
+                self._run_migration(target, step)
 
-        if version < 1:
-            with self.conn:
-                self.conn.execute("""
-                    CREATE TABLE IF NOT EXISTS media (
-                        id            INTEGER PRIMARY KEY,
-                        path          TEXT NOT NULL UNIQUE,
-                        name          TEXT NOT NULL,
-                        kind          TEXT NOT NULL CHECK (kind IN ('image','video','comic','ebook')),
-                        size          INTEGER,
-                        mtime         INTEGER,
-                        content_hash  TEXT,
-                        favorite      INTEGER NOT NULL DEFAULT 0,
-                        rating        INTEGER CHECK (rating BETWEEN 0 AND 3),
-                        missing       INTEGER NOT NULL DEFAULT 0
-                    );
-                """)
-                self.conn.execute("PRAGMA user_version = 1")
+    def _run_migration(self, target: int, step):
+        """Run one migration step and bump user_version in a single transaction.
 
-        if version < 2:
-            with self.conn:
-                self.conn.execute("CREATE INDEX IF NOT EXISTS media_hash ON media(content_hash)")
-                self.conn.execute("PRAGMA user_version = 2")
+        Python's sqlite3 doesn't open a transaction before DDL, so without the
+        explicit BEGIN a crash mid-migration could leave half the tables created
+        and user_version unchanged. The steps also use IF NOT EXISTS, so a
+        database left half-migrated by an older build still upgrades cleanly.
+        """
+        with self.conn:  # commits on success, rolls back on exception
+            self.conn.execute("BEGIN")
+            step()
+            self.conn.execute(f"PRAGMA user_version = {int(target)}")
 
-        if version < 3:
-            with self.conn:
-                self.conn.execute("""
-                    CREATE TABLE tag_category (
-                        id         INTEGER PRIMARY KEY,
-                        name       TEXT NOT NULL UNIQUE,
-                        sort_order INTEGER NOT NULL
-                    );
-                """)
-                self.conn.execute("""
-                    CREATE TABLE tag (
-                        id          INTEGER PRIMARY KEY,
-                        name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                        category_id INTEGER NOT NULL REFERENCES tag_category(id),
-                        description TEXT
-                    );
-                """)
-                self.conn.execute("""
-                    CREATE TABLE tag_alias (
-                        alias  TEXT PRIMARY KEY COLLATE NOCASE,
-                        tag_id INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE
-                    );
-                """)
-                self.conn.execute("""
-                    CREATE TABLE tag_implication (
-                        antecedent_id INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE,
-                        consequent_id INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE,
-                        PRIMARY KEY (antecedent_id, consequent_id),
-                        CHECK (antecedent_id <> consequent_id)
-                    );
-                """)
-                self.conn.execute("""
-                    CREATE TABLE media_tag (
-                        media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
-                        tag_id   INTEGER NOT NULL REFERENCES tag(id)   ON DELETE CASCADE,
-                        source   TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','import')),
-                        PRIMARY KEY (media_id, tag_id)
-                    );
-                """)
-                self.conn.execute("CREATE INDEX IF NOT EXISTS media_tag_by_tag ON media_tag(tag_id, media_id)")
+    def _migrate_v1(self):
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS media (
+                id            INTEGER PRIMARY KEY,
+                path          TEXT NOT NULL UNIQUE,
+                name          TEXT NOT NULL,
+                kind          TEXT NOT NULL CHECK (kind IN ('image','video','comic','ebook')),
+                size          INTEGER,
+                mtime         INTEGER,
+                content_hash  TEXT,
+                favorite      INTEGER NOT NULL DEFAULT 0,
+                rating        INTEGER CHECK (rating BETWEEN 0 AND 3),
+                missing       INTEGER NOT NULL DEFAULT 0
+            );
+        """)
 
-                # Seed categories in sort order
-                self.conn.executemany(
-                    "INSERT OR IGNORE INTO tag_category (id, name, sort_order) VALUES (?, ?, ?)",
-                    [
-                        (1, "creator", 1),
-                        (2, "series", 2),
-                        (3, "character", 3),
-                        (4, "genre", 4),
-                        (5, "content", 5),
-                    ]
-                )
-                self.conn.execute("PRAGMA user_version = 3")
+    def _migrate_v2(self):
+        self.conn.execute("CREATE INDEX IF NOT EXISTS media_hash ON media(content_hash)")
+
+    def _migrate_v3(self):
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS tag_category (
+                id         INTEGER PRIMARY KEY,
+                name       TEXT NOT NULL UNIQUE,
+                sort_order INTEGER NOT NULL
+            );
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS tag (
+                id          INTEGER PRIMARY KEY,
+                name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                category_id INTEGER NOT NULL REFERENCES tag_category(id),
+                description TEXT
+            );
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS tag_alias (
+                alias  TEXT PRIMARY KEY COLLATE NOCASE,
+                tag_id INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE
+            );
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS tag_implication (
+                antecedent_id INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE,
+                consequent_id INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE,
+                PRIMARY KEY (antecedent_id, consequent_id),
+                CHECK (antecedent_id <> consequent_id)
+            );
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS media_tag (
+                media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                tag_id   INTEGER NOT NULL REFERENCES tag(id)   ON DELETE CASCADE,
+                source   TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','import')),
+                PRIMARY KEY (media_id, tag_id)
+            );
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS media_tag_by_tag ON media_tag(tag_id, media_id)")
+
+        # Seed categories in sort order
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO tag_category (id, name, sort_order) VALUES (?, ?, ?)",
+            [
+                (1, "creator", 1),
+                (2, "series", 2),
+                (3, "character", 3),
+                (4, "genre", 4),
+                (5, "content", 5),
+            ]
+        )
+
+    def _migrate_v4(self):
+        # Per-folder ("collection") settings. Keyed by the folder's plain local
+        # path (covers.folder_key), not by the `folders` row, so it keeps
+        # working for subfolders once nested collections exist.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS collection (
+                path       TEXT PRIMARY KEY,
+                cover_path TEXT,
+                favorite   INTEGER NOT NULL DEFAULT 0
+            );
+        """)
 
     def close(self):
         self.conn.close()
@@ -172,6 +207,72 @@ class Database:
     def get_folders_by_category(self, category: str) -> list[dict]:
         cursor = self.conn.cursor()
         cursor.execute("SELECT path, category FROM folders WHERE category = ?", (category,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_all_folders(self) -> list[str]:
+        """Every folder path in the library (the stored strings, any category)."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT DISTINCT path FROM folders")
+        return [row[0] for row in cursor.fetchall()]
+
+    # --- Collections: cover image + favorite per folder ---
+    # Each commits on its own. Rows with no cover and no favorite are dropped.
+
+    def get_collection_meta(self, path: str) -> dict:
+        """{'cover_path': str | None, 'favorite': bool} (defaults if no row)."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT cover_path, favorite FROM collection WHERE path = ?", (path,))
+        row = cursor.fetchone()
+        if row is None:
+            return {"cover_path": None, "favorite": False}
+        return {"cover_path": row["cover_path"], "favorite": bool(row["favorite"])}
+
+    def get_collections_meta(self, paths) -> dict[str, dict]:
+        """get_collection_meta for many paths at once: {path: meta}."""
+        paths = list(paths)
+        out = {}
+        for start in range(0, len(paths), 500):  # stay under SQLite's variable limit
+            chunk = paths[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            cursor = self.conn.execute(
+                f"SELECT path, cover_path, favorite FROM collection WHERE path IN ({marks})",
+                chunk
+            )
+            for row in cursor.fetchall():
+                out[row["path"]] = {"cover_path": row["cover_path"], "favorite": bool(row["favorite"])}
+        return out
+
+    def _tidy_collection(self, path: str):
+        self.conn.execute(
+            "DELETE FROM collection WHERE path = ? AND favorite = 0 AND cover_path IS NULL",
+            (path,)
+        )
+
+    def set_collection_favorite(self, path: str, favorite: bool):
+        def _do():
+            self.conn.execute(
+                "INSERT INTO collection (path, favorite) VALUES (?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET favorite = excluded.favorite",
+                (path, 1 if favorite else 0)
+            )
+            self._tidy_collection(path)
+        self._write(_do)
+
+    def set_collection_cover(self, path: str, cover_path):
+        """Set the cover (a file path), or None to go back to the default."""
+        def _do():
+            self.conn.execute(
+                "INSERT INTO collection (path, cover_path) VALUES (?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET cover_path = excluded.cover_path",
+                (path, cover_path)
+            )
+            self._tidy_collection(path)
+        self._write(_do)
+
+    def get_favorite_collections(self) -> list[dict]:
+        """Favorited folders as dicts: path, cover_path."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT path, cover_path FROM collection WHERE favorite = 1")
         return [dict(row) for row in cursor.fetchall()]
 
     # --- Media scan helpers ---
@@ -303,11 +404,25 @@ class Database:
         return row[0] if row else None
 
     def set_media_rating(self, media_id: int, rating):
+        """Set a rating: 0 General, 1 SFW, 2 Explicit, 3 NSFW.
+        None or any negative value means Unrated and is stored as NULL
+        (the UI sends -1; the column's CHECK only allows 0..3 or NULL)."""
         self._write(
             self.conn.execute,
             "UPDATE media SET rating = ? WHERE id = ?",
-            (rating, media_id)
+            (self._normalize_rating(rating), media_id)
         )
+
+    @staticmethod
+    def _normalize_rating(rating):
+        if rating is None:
+            return None
+        rating = int(rating)
+        if rating < 0:
+            return None
+        if rating > 3:
+            raise ValueError(f"rating must be 0-3, -1 or None, got {rating}")
+        return rating
 
     # --- Tag helpers ---
 
@@ -363,4 +478,144 @@ class Database:
             self.conn.execute,
             "DELETE FROM media_tag WHERE media_id = ? AND tag_id = ?",
             (media_id, tag_id)
+        )
+
+    # --- Favorites (for the consolidated Favorites tab) ---
+
+    KIND_ORDER = ("image", "video", "comic", "ebook")
+
+    def get_favorites(self) -> list[dict]:
+        """All non-missing favorites, grouped by kind (images, videos, comics,
+        ebooks) and then by name, so a view can put a section header whenever
+        `kind` changes. Returns dicts: id, path, name, kind, rating."""
+        order = " ".join(f"WHEN '{k}' THEN {i}" for i, k in enumerate(self.KIND_ORDER))
+        cursor = self.conn.cursor()
+        cursor.execute(f"""
+            SELECT id, path, name, kind, rating
+            FROM media
+            WHERE favorite = 1 AND missing = 0
+            ORDER BY CASE kind {order} ELSE 99 END, name COLLATE NOCASE
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+
+    # --- Tag reads ---
+
+    def resolve_tag_id(self, tag_name: str) -> int | None:
+        """Tag id for a name, falling back to aliases."""
+        tag_id = self.get_tag_id(tag_name)
+        if tag_id is None:
+            tag_id = self.get_alias_tag_id(tag_name)
+        return tag_id
+
+    def get_tags_for_media(self, media_id: int) -> list[dict]:
+        """Tags on one item, in category order (creator, series, ... content)
+        then alphabetical. Returns dicts: id, name, category."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT t.id, t.name, tc.name AS category
+            FROM media_tag mt
+            JOIN tag t ON t.id = mt.tag_id
+            JOIN tag_category tc ON tc.id = t.category_id
+            WHERE mt.media_id = ?
+            ORDER BY tc.sort_order, t.name
+        """, (media_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def search_tags(self, text: str, limit: int = 10) -> list[dict]:
+        """Autocomplete: tags whose name (or alias) starts with or contains `text`.
+
+        Prefix matches rank first, then the most-used tags. `_` and `%` in the
+        input are matched literally (stored names are full of underscores).
+        Returns dicts: id, name, category (plus `alias` when matched via one).
+        """
+        text = text.strip()
+        if not text:
+            return []
+        esc = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        prefix, anywhere = esc + "%", "%" + esc + "%"
+
+        usage = "(SELECT COUNT(*) FROM media_tag mt WHERE mt.tag_id = t.id)"
+        cursor = self.conn.cursor()
+        cursor.execute(f"""
+            SELECT t.id, t.name, tc.name AS category, NULL AS alias,
+                   (t.name LIKE ? ESCAPE '\\') AS is_prefix, {usage} AS uses
+            FROM tag t JOIN tag_category tc ON tc.id = t.category_id
+            WHERE t.name LIKE ? ESCAPE '\\'
+            UNION ALL
+            SELECT t.id, t.name, tc.name, a.alias,
+                   (a.alias LIKE ? ESCAPE '\\'), {usage}
+            FROM tag_alias a
+            JOIN tag t ON t.id = a.tag_id
+            JOIN tag_category tc ON tc.id = t.category_id
+            WHERE a.alias LIKE ? ESCAPE '\\'
+        """, (prefix, anywhere, prefix, anywhere))
+
+        best = {}
+        for row in cursor.fetchall():
+            key = (not row["is_prefix"], -row["uses"], row["name"])
+            current = best.get(row["id"])
+            if current is None or key < current[0]:
+                best[row["id"]] = (key, {
+                    "id": row["id"], "name": row["name"], "category": row["category"],
+                    **({"alias": row["alias"]} if row["alias"] else {}),
+                })
+        return [item for _, item in sorted(best.values(), key=lambda p: p[0])[:limit]]
+
+    # --- Tag writes ---
+
+    def get_or_create_tag(self, tag_name: str, category_name: str) -> int | None:
+        """Return the id for `tag_name` (resolving aliases), creating it in
+        `category_name` if it doesn't exist. None if the category is unknown.
+        An existing tag keeps its own category."""
+        existing = self.resolve_tag_id(tag_name)
+        if existing is not None:
+            return existing
+        category_id = self.get_category_id(category_name)
+        if category_id is None:
+            return None
+        return self.insert_tag(tag_name, category_id)
+
+    def insert_media_tags(self, media_ids, tag_id: int, source: str = "manual"):
+        """Link one tag to many items in ONE transaction (one commit)."""
+        rows = [(m, tag_id, source) for m in media_ids]
+        self._write(
+            self.conn.executemany,
+            "INSERT OR IGNORE INTO media_tag (media_id, tag_id, source) VALUES (?, ?, ?)",
+            rows
+        )
+
+    def remove_media_tags(self, media_ids, tag_id: int):
+        """Unlink one tag from many items in ONE transaction (one commit)."""
+        self._write(
+            self.conn.executemany,
+            "DELETE FROM media_tag WHERE media_id = ? AND tag_id = ?",
+            [(m, tag_id) for m in media_ids]
+        )
+
+    # --- Deleting media ---
+
+    def get_media_paths(self, media_ids) -> dict[int, str]:
+        """{id: path} for the given ids (unknown ids are left out)."""
+        ids = [int(i) for i in media_ids]
+        paths = {}
+        for start in range(0, len(ids), 500):  # stay under SQLite's variable limit
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            cursor = self.conn.execute(f"SELECT id, path FROM media WHERE id IN ({marks})", chunk)
+            paths.update({row["id"]: row["path"] for row in cursor.fetchall()})
+        return paths
+
+    def get_media_info(self, media_id: int):
+        """{'path', 'kind'} for one media id, or None if unknown."""
+        cursor = self.conn.execute("SELECT path, kind FROM media WHERE id = ?", (int(media_id),))
+        row = cursor.fetchone()
+        return {"path": row["path"], "kind": row["kind"]} if row else None
+
+    def delete_media(self, media_ids):
+        """Delete media rows in ONE transaction. Their tag links go with them
+        (media_tag cascades); the tags themselves are kept."""
+        self._write(
+            self.conn.executemany,
+            "DELETE FROM media WHERE id = ?",
+            [(int(i),) for i in media_ids]
         )

@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 QML_IMPORT_NAME = "Gallery"
 QML_IMPORT_MAJOR_VERSION = 1
 
+# Characters that would break tag syntax in search ("a,b", "creator:x", "x*", "~x", "-x").
+# TagPanel.qml checks the same rules so it can show an error instead of failing silently.
+FORBIDDEN_CHARS = {",", ":", "*", "~"}
+
 
 def normalize_tag(name: str) -> str:
     """Normalize a tag name for storage and comparison.
@@ -27,18 +31,25 @@ def normalize_tag(name: str) -> str:
     if not name:
         raise ValueError("Tag name cannot be empty")
 
-    # Check for forbidden characters
-    forbidden = {",", ":", "*", "~"}
-    if any(c in name for c in forbidden):
-        raise ValueError(f"Tag name contains forbidden character")
+    if any(c in name for c in FORBIDDEN_CHARS):
+        raise ValueError("Tag name contains a forbidden character")
 
     if name.startswith("-"):
         raise ValueError("Tag name cannot start with '-'")
 
     # Collapse internal whitespace to underscores
-    name = re.sub(r"\s+", "_", name)
+    return re.sub(r"\s+", "_", name)
 
-    return name
+
+def _as_ids(media_ids) -> list[int]:
+    """QML hands lists over as Python lists of int/float; coerce and drop junk."""
+    ids = []
+    for value in media_ids or []:
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return ids
 
 
 @QmlElement
@@ -51,113 +62,56 @@ class TagModel(QObject):
 
     @Slot(int, result=list)
     def tagsFor(self, media_id: int) -> list[dict]:
-        """Return a list of dicts with tags for a given media_id.
+        """Return the tags on a media item, ordered by category then name.
 
         Returns: [{"id": 1, "name": "isekai", "category": "genre"}, ...]
         """
         try:
-            cursor = self._db.conn.cursor()
-            cursor.execute("""
-                SELECT t.id, t.name, tc.name AS category
-                FROM media_tag mt
-                JOIN tag t ON t.id = mt.tag_id
-                JOIN tag_category tc ON tc.id = t.category_id
-                WHERE mt.media_id = ?
-            """, (media_id,))
-            return [{"id": row["id"], "name": row["name"], "category": row["category"]}
-                    for row in cursor.fetchall()]
+            return self._db.get_tags_for_media(media_id)
         except sqlite3.Error as e:
             logger.error("Failed to get tags for media_id=%d: %s", media_id, e)
             return []
 
-    @Slot(int, str, str)
-    def addTag(self, media_id: int, raw_name: str, category_name: str) -> bool:
-        """Add a tag to a media item.
-
-        Normalizes the name, resolves aliases, creates the tag if missing,
-        then links it to the media item. Returns True on success.
-        """
+    def _resolve_tag(self, raw_name: str, category_name: str) -> int | None:
+        """Normalize, resolve aliases and create the tag if needed.
+        Returns the tag id, or None if the name/category is invalid."""
         try:
             normalized = normalize_tag(raw_name)
         except ValueError:
-            return False
-
-        # Check if this normalized name already exists as a tag
-        tag_id = self._db.get_tag_id(normalized)
-
-        # Check if the normalized name is an alias for another tag
-        if tag_id is None:
-            alias_tag_id = self._db.get_alias_tag_id(normalized)
-            if alias_tag_id is not None:
-                tag_id = alias_tag_id
-
-        # Get the category id
-        cat_id = self._db.get_category_id(category_name)
-        if cat_id is None:
-            return False
-
-        # Create the tag if it doesn't exist
-        if tag_id is None:
-            try:
-                tag_id = self._db.insert_tag(normalized, cat_id)
-            except sqlite3.Error:
-                # Tag might already exist (race condition or UNIQUE violation)
-                tag_id = self._db.get_tag_id(normalized)
-                if tag_id is None:
-                    return False
-
-        # Link the tag to the media item
+            return None
         try:
-            self._db.conn.execute("PRAGMA foreign_keys = ON")
+            return self._db.get_or_create_tag(normalized, category_name)
+        except sqlite3.Error as e:
+            logger.error("Failed to create tag %r: %s", normalized, e)
+            return None
+
+    @Slot(int, str, str, result=bool)
+    def addTag(self, media_id: int, raw_name: str, category_name: str) -> bool:
+        """Add a tag to a media item. Returns True on success, False if the
+        name is invalid, the category is unknown, or the write failed."""
+        tag_id = self._resolve_tag(raw_name, category_name)
+        if tag_id is None:
+            return False
+        try:
             self._db.insert_media_tag(media_id, tag_id)
             return True
         except sqlite3.Error as e:
             logger.error("Failed to add tag to media_id=%d: %s", media_id, e)
             return False
 
-    @Slot(list, str, str)
-    def addTagsToMedia(self, media_ids: list, raw_name: str, category_name: str):
-        """Bulk add a tag to multiple media items in a single transaction."""
-        try:
-            normalized = normalize_tag(raw_name)
-        except ValueError:
-            return
-
-        # Check if this normalized name already exists as a tag
-        tag_id = self._db.get_tag_id(normalized)
-
-        # Check if the normalized name is an alias for another tag
+    @Slot(list, str, str, result=bool)
+    def addTagsToMedia(self, media_ids: list, raw_name: str, category_name: str) -> bool:
+        """Add one tag to many media items in a single transaction.
+        All-or-nothing; returns True on success."""
+        tag_id = self._resolve_tag(raw_name, category_name)
         if tag_id is None:
-            alias_tag_id = self._db.get_alias_tag_id(normalized)
-            if alias_tag_id is not None:
-                tag_id = alias_tag_id
-
-        # Get the category id
-        cat_id = self._db.get_category_id(category_name)
-        if cat_id is None:
-            return
-
-        # Create the tag if it doesn't exist
-        if tag_id is None:
-            try:
-                tag_id = self._db.insert_tag(normalized, cat_id)
-            except sqlite3.Error:
-                tag_id = self._db.get_tag_id(normalized)
-                if tag_id is None:
-                    return
-
-        # Bulk insert in a single transaction
-        in_txn = self._db.conn.in_transaction
+            return False
         try:
-            self._db.conn.execute("PRAGMA foreign_keys = ON")
-            for media_id in media_ids:
-                self._db.insert_media_tag(media_id, tag_id)
-            if not in_txn:
-                self._db.conn.commit()
+            self._db.insert_media_tags(_as_ids(media_ids), tag_id)
+            return True
         except sqlite3.Error as e:
             logger.error("Failed to bulk-add tag: %s", e)
-            if not in_txn:
-                self._db.conn.rollback()
+            return False
 
     @Slot(int, int)
     def removeTag(self, media_id: int, tag_id: int):
@@ -169,36 +123,25 @@ class TagModel(QObject):
 
     @Slot(list, int)
     def removeTagsFromMedia(self, media_ids: list, tag_id: int):
-        """Remove a tag from multiple media items in a single transaction."""
-        in_txn = self._db.conn.in_transaction
+        """Remove a tag from many media items in a single transaction."""
         try:
-            for media_id in media_ids:
-                self._db.remove_media_tag(media_id, tag_id)
-            if not in_txn:
-                self._db.conn.commit()
+            self._db.remove_media_tags(_as_ids(media_ids), tag_id)
         except sqlite3.Error as e:
             logger.error("Failed to bulk-remove tag: %s", e)
-            if not in_txn:
-                self._db.conn.rollback()
 
     @Slot(str, result=list)
-    def suggest(self, prefix: str) -> list[dict]:
-        """Return up to 10 tag dicts matching the prefix for autocomplete.
+    def suggest(self, text: str) -> list[dict]:
+        """Autocomplete for the tag input: up to 10 tags whose name or alias
+        starts with / contains the text, best matches first.
 
-        Returns: [{"id": 1, "name": "isekai", "category": "genre"}, ...]
+        The text is normalized the same way stored names are (so "john sm"
+        finds "john_smith"). Returns: [{"id", "name", "category"}, ...]
         """
+        text = re.sub(r"\s+", "_", text.strip().lower())
+        if not text:
+            return []
         try:
-            cursor = self._db.conn.cursor()
-            cursor.execute("""
-                SELECT t.id, t.name, tc.name AS category
-                FROM tag t
-                JOIN tag_category tc ON tc.id = t.category_id
-                WHERE t.name LIKE ?
-                ORDER BY t.name
-                LIMIT 10
-            """, (prefix + "%",))
-            return [{"id": row["id"], "name": row["name"], "category": row["category"]}
-                    for row in cursor.fetchall()]
+            return self._db.search_tags(text, limit=10)
         except sqlite3.Error as e:
             logger.error("Failed to suggest tags: %s", e)
             return []

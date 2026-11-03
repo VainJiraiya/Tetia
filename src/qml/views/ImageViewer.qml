@@ -26,6 +26,12 @@ ListView {
     property var tagBackend: null
     property int currentMediaId: -1
 
+    signal tagOpened()
+    signal tagExited()
+
+    // The tag panel's Delete button; the host confirms and deletes.
+    signal deleteRequested(int mediaId)
+
     orientation: ListView.Horizontal
     snapMode: ListView.SnapOneItem
     highlightRangeMode: ListView.StrictlyEnforceRange
@@ -52,7 +58,18 @@ ListView {
     Keys.onPressed: {
         if (event.key === Qt.Key_T) {
             root.showTagPanel = !root.showTagPanel
+            if (!root.showTagPanel) {
+                root.tagExited()
+            }
             event.accepted = true
+        }
+    }
+
+    onShowTagPanelChanged: {
+        if (showTagPanel) {
+            root.tagOpened()
+        } else {
+            root.tagExited()
         }
     }
 
@@ -93,7 +110,12 @@ ListView {
         // True once the user has pinched/double-clicked past 1x zoom.
         // While true, the inner Flickable takes over dragging for panning.
         property bool zoomed: photo.scale > 1.02
-        
+
+        // Off only for the instant a mouse-wheel zoom writes scale/pan, so
+        // each wheel step lands exactly (no animation fighting the next step).
+        // Double-click zoom keeps its animation.
+        property bool animateZoom: true
+
         // Expose the model's fileName so the ListView can read it as currentItem.fileName
         property string fileName: model.fileName
         property int mediaId: model.mediaId
@@ -114,11 +136,11 @@ ListView {
             // kinetic engine is flicking. This allows raw, instant frame updates 
             // during pans and stops the diagonal smoothing arc.
             Behavior on contentX { 
-                enabled: !flick.moving
+                enabled: !flick.moving && page.animateZoom
                 NumberAnimation { duration: 150; easing.type: Easing.OutCubic } 
             }
             Behavior on contentY { 
-                enabled: !flick.moving
+                enabled: !flick.moving && page.animateZoom
                 NumberAnimation { duration: 150; easing.type: Easing.OutCubic } 
             }
 
@@ -154,7 +176,10 @@ ListView {
                 // space instead of fighting a mismatched pivot point.
                 transformOrigin: Item.TopLeft
 
-                Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+                Behavior on scale {
+                    enabled: page.animateZoom
+                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                }
             }
 
             PinchArea {
@@ -216,6 +241,42 @@ ListView {
                         flick.contentX = Math.max(0, Math.min(targetX, photo.width * newScale - flick.width))
                         flick.contentY = Math.max(0, Math.min(targetY, photo.height * newScale - flick.height))
                     }
+                }
+            }
+            // Scroll wheel / touchpad scroll zooms toward the cursor. While
+            // zoomed in, panning is by dragging.
+            WheelHandler {
+                id: wheelZoom
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: function(event) {
+                    var delta = event.angleDelta.y
+                    if (delta === 0) return
+
+                    // About 22% per wheel notch, smooth on touchpads
+                    var target = photo.scale * Math.exp(delta / 600)
+                    var newScale = Math.max(photo.minScale, Math.min(photo.maxScale, target))
+                    if (newScale === photo.scale) return
+
+                    page.animateZoom = false
+                    if (newScale <= photo.minScale) {
+                        photo.scale = photo.minScale
+                        flick.contentX = 0
+                        flick.contentY = 0
+                    } else {
+                        // Same zoom-to-point maths as double-click: keep the
+                        // content point under the cursor under the cursor.
+                        // point.position is in flick.contentItem coordinates.
+                        var mx = wheelZoom.point.position.x - flick.contentX
+                        var my = wheelZoom.point.position.y - flick.contentY
+                        var ratio = newScale / photo.scale
+                        var targetX = (flick.contentX + mx) * ratio - mx
+                        var targetY = (flick.contentY + my) * ratio - my
+
+                        photo.scale = newScale
+                        flick.contentX = Math.max(0, Math.min(targetX, photo.width * newScale - flick.width))
+                        flick.contentY = Math.max(0, Math.min(targetY, photo.height * newScale - flick.height))
+                    }
+                    page.animateZoom = true
                 }
             }
         }
@@ -333,7 +394,7 @@ ListView {
 
     ToolButton {
         anchors.top: parent.top
-        anchors.right: root.showTagPanel ? listView.right : parent.right
+        anchors.right: root.showTagPanel ? root.right : parent.right
         anchors.margins: 8
         icon.name: "tag"
         display: AbstractButton.IconOnly
@@ -355,5 +416,6 @@ ListView {
         currentMediaId: root.currentMediaId
         tagModel: root.tagBackend
         mediaModel: root.model
+        onDeleteRequested: root.deleteRequested(root.currentMediaId)
     }
 }
