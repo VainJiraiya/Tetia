@@ -27,6 +27,10 @@ def _register_qml_types():
 def main(argv=None) -> int:
     argv = list(sys.argv if argv is None else argv)
 
+    # Outside Plasma nothing selects a Qt Quick Controls style that matches
+    # Kirigami; use the KDE desktop style unless the user chose one.
+    os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "org.kde.desktop")
+
     # Bring data over from the old (GalleryApp) folder, once, before anything
     # creates the new one. The old folder is only ever copied from.
     from tetia import migration

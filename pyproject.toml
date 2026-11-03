@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tetia"
+version = "0.1.0"
+description = "A media library for manga, images and video"
+readme = "README.md"
+# `int | None` annotations are evaluated at import time, which needs Python 3.10
+requires-python = ">=3.10"
+# Developed and tested with PySide6 6.11; the floor is a conservative guess
+dependencies = ["PySide6>=6.6"]
+authors = [{ name = "Tetia contributors" }]
+keywords = ["media library", "manga", "gallery", "kde", "kirigami", "qt"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Multimedia :: Graphics :: Viewers",
+]
+# license: added once the project's license has been chosen
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+tetia = "tetia.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/VainJiraiya/project-tetia"
+Source = "https://github.com/VainJiraiya/project-tetia"
+Issues = "https://github.com/VainJiraiya/project-tetia/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+# The QML is located through importlib.resources as real files
+zip-safe = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tetia = ["qml/*.qml", "qml/views/*.qml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

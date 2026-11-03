@@ -393,14 +393,70 @@ class FlowTests(unittest.TestCase):
 
     # -- what QML sees ------------------------------------------------------------------
 
+    # -- Plasma Vault is optional -----------------------------------------------------
+
+    def test_nothing_touches_plasma_vault_at_startup(self):
+        m = pm.ProfileModel(relaunch=lambda pid: True, quit_fn=lambda: None)   # no service injected
+        self.assertIsNone(m._service, "a normal start must not create the D-Bus client")
+        self.assertFalse(m.vaultAvailable)
+        self.assertEqual(m.vaults, [])
+        self.assertTrue(m.requestQuit(), "General closes without ever involving Plasma Vault")
+        self.assertIsNone(m._service)
+
+    def test_switching_to_a_vault_profile_without_plasma_vault(self):
+        self.service.ok, self.service.reason = False, "The Plasma Vault service isn't running."
+        m = self.model()
+        failures = []
+        m.switchFailed.connect(failures.append)
+        m.switchTo(self.vault["id"])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("isn't available", failures[0])
+        self.assertIn("The Plasma Vault service isn't running.", failures[0])
+        self.assertEqual((m.busy, self.service.calls, self.relaunched), (False, [], []))
+
+    def test_local_profiles_work_without_plasma_vault(self):
+        self.service.ok = False
+        local, _ = profiles.create("Plain")
+        m = self.model()
+        m.switchTo(local["id"])
+        self.assertTrue(pump(until=lambda: self.quit))
+        self.assertEqual(self.relaunched, [local["id"]])
+
+    def test_missing_qtdbus_means_unavailable_not_a_crash(self):
+        import sys
+        saved = sys.modules.get("tetia.models.vaultService")
+        sys.modules["tetia.models.vaultService"] = None          # makes the import raise ImportError
+        try:
+            m = pm.ProfileModel(relaunch=lambda pid: True, quit_fn=lambda: None)
+            m.refreshVaults()
+            self.assertFalse(m.vaultAvailable)
+            self.assertIn("isn't available", m.vaultUnavailableReason)
+            self.assertEqual(m.vaults, [])
+            failures = []
+            m.switchFailed.connect(failures.append)
+            m.switchTo(self.vault["id"])
+            self.assertEqual(len(failures), 1)
+            m.requestNewVault()                                  # must not raise either
+            self.assertEqual(len(failures), 2)
+        finally:
+            if saved is None:
+                sys.modules.pop("tetia.models.vaultService", None)
+            else:
+                sys.modules["tetia.models.vaultService"] = saved
+
     def test_profile_list_and_vault_choices(self):
         m = self.model()
         kinds = {p["name"]: p["kind"] for p in m.profiles}
         self.assertEqual(kinds, {"General": "general", "Secret": "vault", "Second": "vault"})
+        self.assertEqual(m.vaults, [], "nothing is probed until asked")
+        self.assertFalse(m.vaultAvailable)
+        m.refreshVaults()
         self.assertEqual([v["name"] for v in m.vaults], ["Free"])        # "Safe" already has a profile
         self.assertTrue(m.vaultAvailable)
         self.service.ok, self.service.reason = False, "Plasma Vault isn't installed"
+        m.refreshVaults()
         self.assertFalse(m.vaultAvailable)
+        self.assertEqual(m.vaults, [])
         self.assertEqual(m.vaultUnavailableReason, "Plasma Vault isn't installed")
 
     def test_vault_profile_error_messages(self):

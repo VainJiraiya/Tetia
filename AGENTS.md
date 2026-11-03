@@ -6,6 +6,7 @@
 nix develop                       # enter dev shell (or rely on direnv via .envrc)
 PYTHONPATH=src python -m tetia    # launch the app from the source tree
 PYTHONPATH=src python -m pytest   # run the tests (needs pytest; see below)
+pip install -e '.[dev]'           # or install it (in a venv with --system-site-packages) and run `tetia`
 ```
 
 PySide6 and all KDE/Qt libraries come from the Nix flake (`flake.nix`). pytest is not in the flake: use a throwaway `python -m venv --system-site-packages` and `pip install pytest`.

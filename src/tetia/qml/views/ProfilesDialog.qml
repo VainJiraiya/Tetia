@@ -32,10 +32,10 @@ Kirigami.Dialog {
 
     function startCreate() {
         error = ""
+        if (backend) backend.refreshVaults()   // the first (and only) time D-Bus is asked about Plasma Vault
         editing = "create"
         kindBox.currentIndex = 0
         createName.text = ""
-        if (backend) backend.refreshVaults()
         if (useVault) {
             vaultBox.currentIndex = vaultBox.count > 0 ? 0 : -1
         }

@@ -44,6 +44,27 @@ def _default_relaunch(profile_id: str) -> bool:
     return QProcess.startDetached(command[0], command[1:], os.getcwd())
 
 
+class _NoVaultService(QObject):
+    """Stands in for the Plasma Vault client when it can't even be loaded (for
+    example a PySide6 build without QtDBus). Everything reports 'unavailable'."""
+    changed = Signal()
+    lockBlocked = Signal(str, str)
+    callFinished = Signal(str, str)
+
+    def __init__(self, reason, parent=None):
+        super().__init__(parent)
+        self._reason = reason
+
+    def available(self): return False
+    def unavailableReason(self): return self._reason
+    def vaults(self): return []
+
+    def _unavailable(self, *args):
+        raise RuntimeError(self._reason)
+
+    open = close = requestNew = _unavailable
+
+
 @QmlElement
 class ProfileModel(QObject):
     profilesChanged = Signal()
@@ -56,10 +77,14 @@ class ProfileModel(QObject):
 
     def __init__(self, parent=None, service=None, relaunch=None, quit_fn=None):
         super().__init__(parent)
-        if service is None:
-            from tetia.models.vaultService import VaultService
-            service = VaultService(self)
-        self._service = service
+        # The Plasma Vault client is created the first time it is needed, so a
+        # normal start never touches D-Bus (and Plasma Vault stays optional).
+        self._service = None
+        self._probed = False           # have we asked whether Plasma Vault is usable?
+        self._available = False
+        self._unavailable_reason = ""
+        if service is not None:
+            self._attach(service)
         self._relaunch = relaunch or _default_relaunch
         self._quit = quit_fn or QCoreApplication.quit
 
@@ -83,9 +108,22 @@ class ProfileModel(QObject):
         if profiles.active_kind() == profiles.KIND_VAULT:
             self._watch.start()
 
-        self._service.lockBlocked.connect(self._on_lock_blocked)
-        self._service.changed.connect(self.vaultsChanged)
-        self._service.callFinished.connect(self._on_call_finished)
+    def _attach(self, service):
+        self._service = service
+        service.lockBlocked.connect(self._on_lock_blocked)
+        service.changed.connect(self.vaultsChanged)
+        service.callFinished.connect(self._on_call_finished)
+
+    def _svc(self):
+        """The Plasma Vault client, created on first use."""
+        if self._service is None:
+            try:
+                from tetia.models.vaultService import VaultService
+                service = VaultService(self)
+            except ImportError as e:        # e.g. no QtDBus in this PySide6
+                service = _NoVaultService(f"Plasma Vault support isn't available ({e}).", self)
+            self._attach(service)
+        return self._service
 
     # ---- what QML shows ------------------------------------------------------------
 
@@ -111,18 +149,21 @@ class ProfileModel(QObject):
 
     @Property(bool, notify=vaultsChanged)
     def vaultAvailable(self):
-        return self._service.available()
+        """Whether Plasma Vault can be used. False until refreshVaults() has asked."""
+        return self._probed and self._available
 
     @Property(str, notify=vaultsChanged)
     def vaultUnavailableReason(self):
-        return self._service.unavailableReason()
+        return self._unavailable_reason
 
     @Property(list, notify=vaultsChanged)
     def vaults(self):
         """Vaults a new profile could use: [{name, device, mounted}] (not yet used)."""
+        if not (self._probed and self._available):
+            return []
         used = {p["device"] for p in profiles.private_profiles() if p["kind"] == profiles.KIND_VAULT}
         return [{"name": v["name"], "device": v["device"], "mounted": v["mounted"]}
-                for v in self._service.vaults() if v["device"] not in used]
+                for v in self._svc().vaults() if v["device"] not in used]
 
     @Property(bool, notify=busyChanged)
     def busy(self):
@@ -144,6 +185,12 @@ class ProfileModel(QObject):
 
     @Slot()
     def refreshVaults(self):
+        """Ask whether Plasma Vault is usable and re-read the vault list. This is
+        the only place that probes D-Bus; call it when the user is about to need it."""
+        service = self._svc()
+        self._available = service.available()
+        self._unavailable_reason = "" if self._available else service.unavailableReason()
+        self._probed = True
         self.vaultsChanged.emit()
 
     @Slot(str, str, result=str)
@@ -186,7 +233,10 @@ class ProfileModel(QObject):
     @Slot()
     def requestNewVault(self):
         """Open KDE's own wizard for making a new vault."""
-        self._service.requestNew()
+        try:
+            self._svc().requestNew()
+        except Exception as e:
+            self.switchFailed.emit(f"Couldn't open the vault wizard: {e}")
 
     @Slot(str, str, result=str)
     def renameProfile(self, profile_id: str, name: str) -> str:
@@ -213,6 +263,14 @@ class ProfileModel(QObject):
         target = profiles.get(profile_id)
         if target is None:
             return
+        if target["kind"] == profiles.KIND_VAULT and not vaults.mount_for(target["device"]):
+            # Needs Plasma Vault to unlock it: say so plainly if it isn't there
+            self.refreshVaults()
+            if not self._available:
+                self.switchFailed.emit(
+                    f"\u201c{target['name']}\u201d is stored in a Plasma Vault, which isn't available "
+                    f"here: {self._unavailable_reason}")
+                return
         self._action = ("switch", profile_id)
         self._begin_unlock(target)
 
@@ -274,7 +332,7 @@ class ProfileModel(QObject):
                         f"Waiting for the vault “{target['name']}” to unlock.\n"
                         "Enter its password in the KDE window.")
         try:
-            self._service.open(target["device"])
+            self._svc().open(target["device"])
         except Exception as e:                    # never leave the user waiting on a prompt that won't come
             self._fail(f"Couldn't ask Plasma Vault to unlock the vault: {e}")
             return
@@ -292,7 +350,7 @@ class ProfileModel(QObject):
         self._deadline = time.monotonic() + LOCK_TIMEOUT
         self._set_stage(STAGE_LOCKING, f"Locking “{profiles.active_name()}”…")
         try:
-            self._service.close(self._active_device())
+            self._svc().close(self._active_device())
         except Exception as e:
             self._blocked_text = f"Couldn't ask Plasma Vault to lock the vault: {e}"
             self._set_stage(STAGE_BLOCKED, self._blocked_text)
