@@ -23,6 +23,7 @@ _SUB_ROLES = {
     Qt.UserRole + 103: (b"subfolderHero", Qt.UserRole + 3),
     Qt.UserRole + 104: (b"subfolderCount", Qt.UserRole + 4),
     Qt.UserRole + 105: (b"subfolderFavorite", Qt.UserRole + 5),
+    Qt.UserRole + 106: (b"subfolderIsSeries", Qt.UserRole + 7),
 }
 _IS_FOLDER = Qt.UserRole + 100
 

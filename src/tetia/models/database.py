@@ -118,6 +118,7 @@ class Database:
             (2, self._migrate_v2),
             (3, self._migrate_v3),
             (4, self._migrate_v4),
+            (5, self._migrate_v5),
         )
         for target, step in steps:
             if version < target:
@@ -219,6 +220,16 @@ class Database:
             );
         """)
 
+    def _migrate_v5(self):
+        # A folder can be shown as one series (a tile that opens its chapters);
+        # last_read is the chapter file opened last. ALTER has no IF NOT EXISTS,
+        # so check the columns first (a half-migrated database must still upgrade).
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(collection)")}
+        if "is_series" not in columns:
+            self.conn.execute("ALTER TABLE collection ADD COLUMN is_series INTEGER NOT NULL DEFAULT 0")
+        if "last_read" not in columns:
+            self.conn.execute("ALTER TABLE collection ADD COLUMN last_read TEXT")
+
     def close(self):
         self.conn.close()
 
@@ -250,13 +261,19 @@ class Database:
     # Each commits on its own. Rows with no cover and no favorite are dropped.
 
     def get_collection_meta(self, path: str) -> dict:
-        """{'cover_path': str | None, 'favorite': bool} (defaults if no row)."""
+        """{'cover_path', 'favorite', 'is_series', 'last_read'} (defaults if no row)."""
         cursor = self.conn.cursor()
-        cursor.execute("SELECT cover_path, favorite FROM collection WHERE path = ?", (path,))
+        cursor.execute(
+            "SELECT cover_path, favorite, is_series, last_read FROM collection WHERE path = ?", (path,))
         row = cursor.fetchone()
+        return self._meta_from_row(row) if row else self._meta_from_row(None)
+
+    @staticmethod
+    def _meta_from_row(row) -> dict:
         if row is None:
-            return {"cover_path": None, "favorite": False}
-        return {"cover_path": row["cover_path"], "favorite": bool(row["favorite"])}
+            return {"cover_path": None, "favorite": False, "is_series": False, "last_read": None}
+        return {"cover_path": row["cover_path"], "favorite": bool(row["favorite"]),
+                "is_series": bool(row["is_series"]), "last_read": row["last_read"]}
 
     def get_collections_meta(self, paths) -> dict[str, dict]:
         """get_collection_meta for many paths at once: {path: meta}."""
@@ -266,16 +283,18 @@ class Database:
             chunk = paths[start:start + 500]
             marks = ",".join("?" * len(chunk))
             cursor = self.conn.execute(
-                f"SELECT path, cover_path, favorite FROM collection WHERE path IN ({marks})",
+                f"SELECT path, cover_path, favorite, is_series, last_read FROM collection "
+                f"WHERE path IN ({marks})",
                 chunk
             )
             for row in cursor.fetchall():
-                out[row["path"]] = {"cover_path": row["cover_path"], "favorite": bool(row["favorite"])}
+                out[row["path"]] = self._meta_from_row(row)
         return out
 
     def _tidy_collection(self, path: str):
         self.conn.execute(
-            "DELETE FROM collection WHERE path = ? AND favorite = 0 AND cover_path IS NULL",
+            "DELETE FROM collection WHERE path = ? AND favorite = 0 AND cover_path IS NULL "
+            "AND is_series = 0",
             (path,)
         )
 
@@ -300,10 +319,27 @@ class Database:
             self._tidy_collection(path)
         self._write(_do)
 
+    def set_collection_series(self, path: str, is_series: bool):
+        def _do():
+            self.conn.execute(
+                "INSERT INTO collection (path, is_series) VALUES (?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET is_series = excluded.is_series",
+                (path, 1 if is_series else 0)
+            )
+            if not is_series:
+                self.conn.execute("UPDATE collection SET last_read = NULL WHERE path = ?", (path,))
+            self._tidy_collection(path)
+        self._write(_do)
+
+    def set_collection_last_read(self, path: str, chapter_path):
+        """Remember the chapter file opened last in a series (None to forget)."""
+        self._write(lambda: self.conn.execute(
+            "UPDATE collection SET last_read = ? WHERE path = ?", (chapter_path, path)))
+
     def get_favorite_collections(self) -> list[dict]:
         """Favorited folders as dicts: path, cover_path."""
         cursor = self.conn.cursor()
-        cursor.execute("SELECT path, cover_path FROM collection WHERE favorite = 1")
+        cursor.execute("SELECT path, cover_path, is_series FROM collection WHERE favorite = 1")
         return [dict(row) for row in cursor.fetchall()]
 
     # --- Media scan helpers ---

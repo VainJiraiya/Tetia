@@ -28,6 +28,8 @@ Kirigami.ApplicationWindow {
     }
 
     property bool isRemoveMode: false
+    // Set while the folder picker opened by "Add Folder as Series" is up
+    property bool addingAsSeries: false
     property bool isTagMode: false
 
     // The search strip, and what the search page on the stack (if any) is showing
@@ -133,6 +135,18 @@ Kirigami.ApplicationWindow {
                             enabled: !root.onFavoritesTab
                             onTriggered: {
                                 root.isRemoveMode = false
+                                root.addingAsSeries = false
+                                filePicker.openFolderDialog()
+                            }
+                        }
+                        MenuItem {
+                            text: "Add Folder as Series"
+                            icon.name: "bookmarks-symbolic"
+                            // A series is a folder of chapter files, so only on the Manga tab
+                            enabled: folderModel.currentCategory === "manga"
+                            onTriggered: {
+                                root.isRemoveMode = false
+                                root.addingAsSeries = true
                                 filePicker.openFolderDialog()
                             }
                         }
@@ -452,6 +466,8 @@ Kirigami.ApplicationWindow {
             // Favorites is a virtual tab, not a folder category
             if (root.onFavoritesTab) return
             folderModel.addFolder(selectedFolder, folderModel.currentCategory)
+            if (root.addingAsSeries) folderModel.setSeries(selectedFolder, true)
+            root.addingAsSeries = false
             searchModel.indexLibrary()
         }
         onFolderRejected: function(problem) { showPassiveNotification(problem, 12000) }
@@ -689,10 +705,19 @@ Kirigami.ApplicationWindow {
             removeMode: root.isRemoveMode
             onRemoveModeExitRequested: root.isRemoveMode = false
 
-            onAddFolderRequested: filePicker.openFolderDialog()
+            onAddFolderRequested: {
+                root.addingAsSeries = false
+                filePicker.openFolderDialog()
+            }
 
             onFolderClicked: function(folderPath) {
                 openMediaGrid(folderPath, folderModel.currentCategory)
+            }
+
+            onSeriesRequested: function(folderPath, which) {
+                var chapter = folderModel.openSeries(folderPath, which)
+                if (chapter !== "") Qt.openUrlExternally(chapter)
+                else openMediaGrid(folderPath, folderModel.currentCategory)   // no chapter files: just browse it
             }
         }
     }
@@ -773,6 +798,11 @@ Kirigami.ApplicationWindow {
                     tagMode: root.isTagMode && pageStack.currentItem === gridPage
                     subfolderBackend: subfolderModel
 
+                    onSubfolderSeriesRequested: function(subfolderPath, which) {
+                        var chapter = subfolderModel.openSeries(subfolderPath, which)
+                        if (chapter !== "") Qt.openUrlExternally(chapter)
+                        else root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
+                    }
                     onSubfolderClicked: function(subfolderPath) {
                         root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
                     }

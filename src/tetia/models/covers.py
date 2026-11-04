@@ -126,11 +126,20 @@ def first_media_file(local_dir: str, extensions=None, seen=None, depth: int = 0)
     return ""
 
 
-def hero_path(key: str, cover_path=None) -> str:
+def hero_path(key: str, cover_path=None, is_series: bool = False) -> str:
     """The picture for a folder tile: its cover if one is set and still on
-    disk, otherwise the first media file inside."""
+    disk, else a loose picture named cover/folder/poster/... lying in it, else
+    (for a series) its first chapter, else the first media file inside."""
     if cover_path and os.path.exists(cover_path):
         return cover_path
+    from tetia.models import series        # series imports this module
+    loose = series.loose_cover(key)
+    if loose:
+        return loose
+    if is_series:
+        chapters = series.chapters(key)
+        if chapters:
+            return chapters[0]
     return first_media_file(key)
 
 

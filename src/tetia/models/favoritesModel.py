@@ -95,7 +95,7 @@ class FavoritesModel(QAbstractListModel):
             out.append({
                 "key": key,
                 "name": os.path.basename(key) or key,
-                "hero": covers.hero_path(key, row["cover_path"]),
+                "hero": covers.hero_path(key, row["cover_path"], bool(row["is_series"])),
                 "uri": covers.folder_uri(key),
             })
         out.sort(key=lambda c: c["name"].lower())

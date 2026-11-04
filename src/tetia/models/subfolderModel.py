@@ -16,7 +16,7 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QUrl, Signal, Slot, Property
 from PySide6.QtQml import QmlElement
 
-from tetia.models import covers
+from tetia.models import covers, series
 from tetia.models.database import get_database
 from tetia.models.mediaModel import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
@@ -92,6 +92,7 @@ class SubfolderModel(QAbstractListModel):
         ItemCountRole = Qt.UserRole + 4
         IsFavoriteRole = Qt.UserRole + 5
         HasCustomCoverRole = Qt.UserRole + 6
+        IsSeriesRole = Qt.UserRole + 7
 
     filterModeChanged = Signal()
 
@@ -109,9 +110,27 @@ class SubfolderModel(QAbstractListModel):
     def rowCount(self, parent=QModelIndex()):
         return len(self._dirs)
 
+    def _is_series(self, entry: dict) -> bool:
+        return bool(self._meta.get(covers.folder_key(entry["path"]), {}).get("is_series"))
+
     def _cover(self, entry: dict):
         cover = self._meta.get(covers.folder_key(entry["path"]), {}).get("cover_path")
         return cover if cover and os.path.exists(cover) else None
+
+    def _hero(self, entry: dict) -> str:
+        """Own cover, else a loose cover picture, else (a series) its first
+        chapter, else the first matching picture inside (any depth). The same
+        lookup as the Favorites tab, so both show the same picture."""
+        cover = self._cover(entry) or series.loose_cover(entry["path"])
+        if cover:
+            return cover
+        if self._is_series(entry):
+            chapters = series.chapters(entry["path"])
+            if chapters:
+                return chapters[0]
+        return covers.first_media_file(
+            entry["path"], self._extensions() & _PICTURE_EXTENSIONS,
+            {os.path.realpath(self._parent_dir)})
 
     def data(self, index, role):
         if not index.isValid() or not (0 <= index.row() < len(self._dirs)):
@@ -122,13 +141,11 @@ class SubfolderModel(QAbstractListModel):
         if role == self.Roles.NameRole:
             return entry["name"]
         if role == self.Roles.HeroPathRole:
-            # Own cover, else the first matching picture inside (any depth)
-            # Same lookup as the Favorites tab, so both show the same picture
-            return self._cover(entry) or covers.first_media_file(
-                entry["path"], self._extensions() & _PICTURE_EXTENSIONS,
-                {os.path.realpath(self._parent_dir)})
+            return self._hero(entry)
         if role == self.Roles.ItemCountRole:
-            return entry["count"]
+            return len(series.chapters(entry["path"])) if self._is_series(entry) else entry["count"]
+        if role == self.Roles.IsSeriesRole:
+            return self._is_series(entry)
         if role == self.Roles.IsFavoriteRole:
             return bool(self._meta.get(covers.folder_key(entry["path"]), {}).get("favorite"))
         if role == self.Roles.HasCustomCoverRole:
@@ -143,6 +160,7 @@ class SubfolderModel(QAbstractListModel):
             self.Roles.ItemCountRole: b"itemCount",
             self.Roles.IsFavoriteRole: b"isFavorite",
             self.Roles.HasCustomCoverRole: b"hasCustomCover",
+            self.Roles.IsSeriesRole: b"isSeries",
         }
 
     # ---- loading ----------------------------------------------------------
@@ -195,6 +213,8 @@ class SubfolderModel(QAbstractListModel):
                 self.Roles.HeroPathRole,
                 self.Roles.IsFavoriteRole,
                 self.Roles.HasCustomCoverRole,
+                self.Roles.IsSeriesRole,
+                self.Roles.ItemCountRole,
             ])
             return
 
@@ -213,6 +233,14 @@ class SubfolderModel(QAbstractListModel):
     @Slot(str, str, result=bool)
     def setCoverFromFile(self, folder_path: str, image_path: str) -> bool:
         return covers.set_cover_from_file(folder_path, image_path, db=self._db)
+
+    @Slot(str, bool)
+    def setSeries(self, folder_path: str, is_series: bool):
+        series.set_series(self._db, folder_path, is_series)
+
+    @Slot(str, str, result=str)
+    def openSeries(self, folder_path: str, which: str) -> str:
+        return series.open_series(self._db, folder_path, which)
 
     @Slot(str, result=bool)
     def hasCustomCover(self, folder_path: str) -> bool:

@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QUrl, Signal, Slot, Property
 from PySide6.QtQml import QmlElement
 
-from tetia.models import covers
+from tetia.models import covers, series
 from tetia.models.covers import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tetia.models.database import Database
 
@@ -31,6 +31,7 @@ class FolderModel(QAbstractListModel):
         ItemCountRole = Qt.UserRole + 5
         IsFavoriteRole = Qt.UserRole + 6
         HasCustomCoverRole = Qt.UserRole + 7
+        IsSeriesRole = Qt.UserRole + 8
 
     categoryChanged = Signal()
 
@@ -63,12 +64,15 @@ class FolderModel(QAbstractListModel):
         elif role == self.Roles.CategoryRole:
             return folder["category"]
         elif role == self.Roles.HeroPathRole:
-            cover = self._meta_for(folder).get("cover_path")
-            if cover and os.path.exists(cover):
-                return cover
-            return self._find_first_media(folder["path"])
+            meta = self._meta_for(folder)
+            return covers.hero_path(covers.folder_key(folder["path"]), meta.get("cover_path"),
+                                    bool(meta.get("is_series")))
         elif role == self.Roles.ItemCountRole:
+            if self._meta_for(folder).get("is_series"):
+                return len(series.chapters(covers.folder_key(folder["path"])))
             return self._count_media(folder["path"])
+        elif role == self.Roles.IsSeriesRole:
+            return bool(self._meta_for(folder).get("is_series"))
         elif role == self.Roles.IsFavoriteRole:
             return bool(self._meta_for(folder).get("favorite"))
         elif role == self.Roles.HasCustomCoverRole:
@@ -85,6 +89,7 @@ class FolderModel(QAbstractListModel):
             self.Roles.ItemCountRole: b"itemCount",
             self.Roles.IsFavoriteRole: b"isFavorite",
             self.Roles.HasCustomCoverRole: b"hasCustomCover",
+            self.Roles.IsSeriesRole: b"isSeries",
         }
 
     def _uri_to_local_path(self, uri: str) -> str:
@@ -112,6 +117,18 @@ class FolderModel(QAbstractListModel):
     def addFolder(self, path: str, category: str):
         self.db.add_folder(path, category)
         self.refresh()
+
+    @Slot(str, bool)
+    def setSeries(self, folder_path: str, is_series: bool):
+        """Show this folder as one series tile (or as a folder again)."""
+        series.set_series(self.db, folder_path, is_series)
+
+    @Slot(str, str, result=str)
+    def openSeries(self, folder_path: str, which: str) -> str:
+        """The file:// URI of the chapter to open for a series tile ('' if the
+        folder has no chapter files). `which` is "resume", "first", "next" or
+        "previous"."""
+        return series.open_series(self.db, folder_path, which)
 
     @Slot(str)
     def removeFolder(self, path: str):
@@ -166,6 +183,8 @@ class FolderModel(QAbstractListModel):
                 self.Roles.HeroPathRole,
                 self.Roles.IsFavoriteRole,
                 self.Roles.HasCustomCoverRole,
+                self.Roles.IsSeriesRole,
+                self.Roles.ItemCountRole,
             ])
             return
 

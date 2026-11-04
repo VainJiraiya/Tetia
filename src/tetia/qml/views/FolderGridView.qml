@@ -14,6 +14,8 @@ Item {
     property bool removeMode: false
 
     signal folderClicked(string folderPath)
+    // A series tile was opened: which chapter to open is "resume", "first" or "next"
+    signal seriesRequested(string folderPath, string which)
     signal addFolderRequested()
     signal removeModeExitRequested()
 
@@ -55,7 +57,48 @@ Item {
         property string folderPath: ""
         property bool isFavorite: false
         property bool hasCustomCover: false
+        property bool isSeries: false
 
+        MenuItem {
+            text: "Open next chapter"
+            icon.name: "go-next"
+            visible: folderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: root.seriesRequested(folderMenu.folderPath, "next")
+        }
+        MenuItem {
+            text: "Open previous chapter"
+            icon.name: "go-previous"
+            visible: folderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: root.seriesRequested(folderMenu.folderPath, "previous")
+        }
+        MenuItem {
+            text: "Open first chapter"
+            icon.name: "go-first"
+            visible: folderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: root.seriesRequested(folderMenu.folderPath, "first")
+        }
+        MenuItem {
+            text: "Browse chapters"
+            icon.name: "view-list-details"
+            visible: folderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: root.folderClicked(folderMenu.folderPath)
+        }
+        MenuSeparator { visible: folderMenu.isSeries }
+        MenuItem {
+            text: folderMenu.isSeries ? "Show as a folder" : "Show as a series"
+            ToolTip.visible: hovered
+            ToolTip.delay: 600
+            ToolTip.text: "Treat this folder's chapter files as one manga: one tile that opens where you left off"
+            icon.name: "bookmarks-symbolic"
+            // Only manga folders hold chapters
+            visible: root.model && root.model.currentCategory === "manga"
+            height: visible ? implicitHeight : 0
+            onTriggered: root.model.setSeries(folderMenu.folderPath, !folderMenu.isSeries)
+        }
         MenuItem {
             text: "Choose cover image…"
             icon.name: "image-x-generic"
@@ -304,11 +347,14 @@ Item {
                             folderMenu.folderPath = model.folderPath
                             folderMenu.isFavorite = !!model.isFavorite
                             folderMenu.hasCustomCover = !!model.hasCustomCover
+                            folderMenu.isSeries = !!model.isSeries
                             folderMenu.popup()
                             return
                         }
                         if (root.removeMode) {
                             root.model.removeFolder(model.folderPath)
+                        } else if (model.isSeries) {
+                            root.seriesRequested(model.folderPath, "resume")
                         } else {
                             root.folderClicked(model.folderPath)
                         }

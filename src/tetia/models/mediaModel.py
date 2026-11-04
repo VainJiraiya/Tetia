@@ -22,7 +22,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtQml import QmlElement
 
-from tetia.models import covers, profiles
+from tetia.models import covers, profiles, series
 from tetia.models.database import get_database
 from tetia.models.scanner import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
@@ -258,6 +258,13 @@ class MediaModel(QAbstractListModel):
         self.load_from_qurl(modified_directory_path)
 
     # Rebuilds the active grid display list according to the current filter mode setting
+    def _folder_is_series(self) -> bool:
+        try:
+            meta = self._db.get_collection_meta(covers.folder_key(self._current_folder_path))
+        except sqlite3.Error:
+            return False
+        return bool(meta["is_series"])
+
     def _update_visible_items(self):
         # Tells Qt to temporarily freeze UI updates while we rebuild the data list
         self.beginResetModel()
@@ -273,13 +280,17 @@ class MediaModel(QAbstractListModel):
         # Displays comic/manga archives and PDFs if filter mode is set to MangaOnly.
         # PDFs are ebooks by kind, so they are picked out of the books list.
         elif self._filter_mode == MediaModel.FilterMode.MangaOnly:
-            self._visible_items = sorted(
-                self._all_comics + [
-                    item for item in self._all_books
-                    if Path(item["file_name"]).suffix.lower() in MANGA_TAB_EXTENSIONS
-                ],
-                key=lambda item: covers.natural_key(item["file_name"]),
-            )
+            manga = self._all_comics + [
+                item for item in self._all_books
+                if Path(item["file_name"]).suffix.lower() in MANGA_TAB_EXTENSIONS
+            ]
+            manga.sort(key=lambda item: covers.natural_key(item["file_name"]))
+            if self._folder_is_series() and manga:
+                # One title's chapters: reading order, not alphabetical
+                position = {name: i for i, name in enumerate(
+                    series.sort_chapter_names([item["file_name"] for item in manga]))}
+                manga.sort(key=lambda item: position[item["file_name"]])
+            self._visible_items = manga
 
         # Displays only ebooks if filter mode is set to BooksOnly
         elif self._filter_mode == MediaModel.FilterMode.BooksOnly:

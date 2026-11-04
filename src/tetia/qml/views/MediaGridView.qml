@@ -21,6 +21,8 @@ GridView {
 
     // A subfolder tile was tapped; folderPath is a file:// URI.
     signal subfolderClicked(string subfolderPath)
+    // A series tile was opened: which chapter is "resume", "first", "next" or "previous"
+    signal subfolderSeriesRequested(string subfolderPath, string which)
 
     // The context menu's "Edit tags" asks the host to enter tag mode with this
     // item selected (the host owns the tag-mode flag).
@@ -292,7 +294,48 @@ GridView {
         property string folderPath: ""
         property bool isFavorite: false
         property bool hasCustomCover: false
+        property bool isSeries: false
 
+        MenuItem {
+            text: "Open next chapter"
+            icon.name: "go-next"
+            visible: subfolderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "next")
+        }
+        MenuItem {
+            text: "Open previous chapter"
+            icon.name: "go-previous"
+            visible: subfolderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "previous")
+        }
+        MenuItem {
+            text: "Open first chapter"
+            icon.name: "go-first"
+            visible: subfolderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "first")
+        }
+        MenuItem {
+            text: "Browse chapters"
+            icon.name: "view-list-details"
+            visible: subfolderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderClicked(subfolderMenu.folderPath)
+        }
+        MenuSeparator { visible: subfolderMenu.isSeries }
+        MenuItem {
+            text: subfolderMenu.isSeries ? "Show as a folder" : "Show as a series"
+            ToolTip.visible: hovered
+            ToolTip.delay: 600
+            ToolTip.text: "Treat this folder's chapter files as one manga: one tile that opens where you left off"
+            icon.name: "bookmarks-symbolic"
+            // Only manga folders hold chapters
+            visible: grid.subfolderBackend !== null && grid.subfolderBackend.filterMode === MediaModel.MangaOnly
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderBackend.setSeries(subfolderMenu.folderPath, !subfolderMenu.isSeries)
+        }
         MenuItem {
             text: "Choose cover image\u2026"
             icon.name: "image-x-generic"
@@ -462,11 +505,13 @@ GridView {
                         if (mouse.button === Qt.RightButton) {
                             subfolderMenu.folderPath = model.subfolderPath
                             subfolderMenu.isFavorite = model.subfolderFavorite
+                            subfolderMenu.isSeries = !!model.subfolderIsSeries
                             subfolderMenu.hasCustomCover = grid.subfolderBackend
                                 ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
                             subfolderMenu.popup()
                         } else if (!grid.tagMode) {
-                            grid.subfolderClicked(model.subfolderPath)
+                            if (model.subfolderIsSeries) grid.subfolderSeriesRequested(model.subfolderPath, "resume")
+                            else grid.subfolderClicked(model.subfolderPath)
                         }
                     }
                 }
