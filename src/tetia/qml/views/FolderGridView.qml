@@ -92,7 +92,9 @@ Item {
             text: folderMenu.isSeries ? "Show as a folder" : "Show as a series"
             ToolTip.visible: hovered
             ToolTip.delay: 600
-            ToolTip.text: "Treat this folder's chapter files as one manga: one tile that opens where you left off"
+            ToolTip.text: folderMenu.isSeries
+                          ? "Go back to showing this as an ordinary folder you can open"
+                          : "Treat this folder's chapter files as one manga: one tile that opens where you left off"
             icon.name: "bookmarks-symbolic"
             // Only manga folders hold chapters
             visible: root.model && root.model.currentCategory === "manga"
@@ -277,7 +279,7 @@ Item {
                                 height: countBadgeText.implicitHeight + 8
                                 radius: height / 2
                                 color: Qt.rgba(0, 0, 0, 0.65)
-                                visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode
+                                visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode && !model.isSeries
     
                                 Label {
                                     id: countBadgeText

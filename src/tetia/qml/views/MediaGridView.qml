@@ -329,7 +329,9 @@ GridView {
             text: subfolderMenu.isSeries ? "Show as a folder" : "Show as a series"
             ToolTip.visible: hovered
             ToolTip.delay: 600
-            ToolTip.text: "Treat this folder's chapter files as one manga: one tile that opens where you left off"
+            ToolTip.text: subfolderMenu.isSeries
+                          ? "Go back to showing this as an ordinary folder you can open"
+                          : "Treat this folder's chapter files as one manga: one tile that opens where you left off"
             icon.name: "bookmarks-symbolic"
             // Only manga folders hold chapters
             visible: grid.subfolderBackend !== null && grid.subfolderBackend.filterMode === MediaModel.MangaOnly
@@ -429,9 +431,13 @@ GridView {
             id: folderCard
 
             Rectangle {
+                id: folderTile
+                // A series (a folder of chapters) is drawn exactly like a single file:
+                // no outline, no count badge, no bold name
+                readonly property bool asFile: model.subfolderIsSeries === true
                 radius: 6
-                color: Qt.alpha(palette.text, folderHover.hovered ? 0.07 : 0.03)
-                border.width: 1
+                color: Qt.alpha(palette.text, folderHover.hovered ? 0.07 : (asFile ? 0 : 0.03))
+                border.width: asFile ? 0 : 1
                 border.color: Qt.alpha(palette.text, 0.15)
 
                 HoverHandler {
@@ -459,7 +465,7 @@ GridView {
                     height: width
                     source: "folder"
                     opacity: 0.5
-                    visible: folderHero.status !== Image.Ready
+                    visible: folderHero.status !== Image.Ready && !folderTile.asFile
                 }
 
                 Rectangle {
@@ -470,7 +476,7 @@ GridView {
                     height: folderCountText.implicitHeight + 8
                     radius: height / 2
                     color: Qt.rgba(0, 0, 0, 0.65)
-                    visible: model.subfolderCount > 0
+                    visible: model.subfolderCount > 0 && !folderTile.asFile
 
                     Text {
                         id: folderCountText
@@ -492,7 +498,7 @@ GridView {
                     anchors.rightMargin: 4
                     text: model.subfolderName
                     color: palette.text
-                    font.bold: true
+                    font.bold: !folderTile.asFile
                     font.pixelSize: 12
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideMiddle
