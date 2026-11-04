@@ -159,16 +159,50 @@ def _save_thumbnail(base: Path, uri: str, uri_md5: str, img: QImage, local_path:
                 pass
 
 
+# The freedesktop thumbnail sizes, smallest first: (directory, longer edge in pixels)
+_TIERS = (("normal", 128), ("large", 256), ("x-large", 512))
+
+
 class ThumbnailProvider(QQuickImageProvider):
     def __init__(self):
         super().__init__(QQuickImageProvider.Image)
         # General shares the system cache; a private profile only ever uses its own
         self.thumbnails_base = profiles.thumbnail_base()
-        self.cache_dirs = [
-            self.thumbnails_base / "x-large",
-            self.thumbnails_base / "large",
-            self.thumbnails_base / "normal",
-        ]
+
+    def _lookup_dirs(self, hint: int) -> list:
+        """Cache folders to try, best first, as (folder, edge). With no size hint:
+        biggest first (the original behaviour). With a hint (the picture's size on
+        screen): the smallest tier that is big enough, then bigger ones, then
+        smaller ones, so a tiny tile does not decode a 512 pixel thumbnail when
+        a 128 one exists."""
+        if hint <= 0:
+            return [(self.thumbnails_base / name, edge) for name, edge in reversed(_TIERS)]
+        want = next((i for i, (_, edge) in enumerate(_TIERS) if edge >= hint), len(_TIERS) - 1)
+        order = [want] + list(range(want + 1, len(_TIERS))) + list(range(want - 1, -1, -1))
+        return [(self.thumbnails_base / _TIERS[i][0], _TIERS[i][1]) for i in order]
+
+    @staticmethod
+    def _generate(local_path: str, target_size: QSize) -> QImage:
+        """Make a thumbnail of an image or a video (null for anything else)."""
+        if _is_video(local_path):
+            return _extract_video_frame(local_path, target_size)
+        reader = QImageReader(local_path)
+        orig_size = reader.size()
+        if orig_size.isValid():
+            reader.setScaledSize(orig_size.scaled(target_size, Qt.KeepAspectRatio))
+        else:
+            reader.setScaledSize(target_size)
+        return reader.read()
+
+    @staticmethod
+    def _big_enough(img: QImage, wanted_edge: int, local_path: str) -> bool:
+        """Whether a cached thumbnail is as big as its tier promises. Older
+        versions saved smaller pictures (320 pixels) in the x-large folder, which
+        look blurry on a big tile. Videos (the real size is unknowable) and files
+        Tetia cannot draw itself (comics, PDFs) are always accepted."""
+        if max(img.width(), img.height()) >= 0.9 * wanted_edge:
+            return True
+        return _is_video(local_path) or not QImageReader(local_path).canRead()
 
     def requestImage(self, id_string: str, requested_size: QSize, size: QSize):
         # id_string may arrive either as a plain local path or as a file:// URI
@@ -188,43 +222,43 @@ class ThumbnailProvider(QQuickImageProvider):
         uri_md5 = hashlib.md5(uri.encode("utf-8")).hexdigest()
         cached_thumb_name = f"{uri_md5}.png"
 
-        # 1. Try all cache directories
-        for cache_dir in self.cache_dirs:
+        # The size the picture will be shown at, if the tile said ("sourceSize" in QML)
+        hint = max(requested_size.width(), requested_size.height()) if requested_size.isValid() else 0
+        folders = self._lookup_dirs(hint)
+        wanted_edge = folders[0][1] if hint > 0 else 0
+
+        # 1. Try the cache folders. With a hint, a hit that is too small is kept as a
+        # fallback while the wanted size is made.
+        fallback = QImage()
+        for cache_dir, edge in folders:
             thumb_file = cache_dir / cached_thumb_name
-            # print(f"CHECKING {thumb_file}")
-            if thumb_file.exists():
-                img = QImage(str(thumb_file))
-                if not img.isNull():
-                    # print(f"[CACHE HIT] {cache_dir, id_string}")
-                    size.setWidth(img.width())
-                    size.setHeight(img.height())
-                    return img
+            if not thumb_file.exists():
+                continue
+            img = QImage(str(thumb_file))
+            if img.isNull():
+                continue
+            if hint <= 0 or (edge >= wanted_edge and self._big_enough(img, wanted_edge, local_path)):
+                size.setWidth(img.width())
+                size.setHeight(img.height())
+                return img
+            if max(img.width(), img.height()) > max(fallback.width(), fallback.height()):
+                fallback = img
 
-        # 2. Generate fallback (preserve aspect ratio)
-        target_size = requested_size if requested_size.isValid() else QSize(256, 256)
+        # 2. Generate (preserve aspect ratio). A hint asks for the whole tier size, so
+        # the file lands in the right freedesktop folder for other apps to reuse.
+        target_size = QSize(wanted_edge, wanted_edge) if hint > 0 else QSize(256, 256)
+        img = self._generate(local_path, target_size)
 
-        if _is_video(local_path):
-            img = _extract_video_frame(local_path, target_size)
-        else:
-            reader = QImageReader(local_path)
-            orig_size = reader.size()
-
-            if orig_size.isValid():
-                scaled_size = orig_size.scaled(target_size, Qt.KeepAspectRatio)
-            else:
-                scaled_size = target_size
-
-            reader.setScaledSize(scaled_size)
-            img = reader.read()
-
-        if not img.isNull():
-            # print(f"[CACHE MISS]{id_string, local_path}")
+        if not img.isNull() and max(img.width(), img.height()) >= max(fallback.width(), fallback.height()):
             size.setWidth(img.width())
             size.setHeight(img.height())
             _save_thumbnail(self.thumbnails_base, uri, uri_md5, img, local_path)
-        else:
-            # print(f"[ERROR READING] {local_path}")
-            size.setWidth(target_size.width())
-            size.setHeight(target_size.height())
+            return img
+        if not fallback.isNull():
+            size.setWidth(fallback.width())
+            size.setHeight(fallback.height())
+            return fallback
 
+        size.setWidth(target_size.width())
+        size.setHeight(target_size.height())
         return img

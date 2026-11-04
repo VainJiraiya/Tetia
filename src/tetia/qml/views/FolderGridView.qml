@@ -13,6 +13,13 @@ Item {
     property var model
     property bool removeMode: false
 
+    // Tile size: -2 .. +2, 0 being the size the grid always had (see MediaGridView)
+    property int tileLevel: 0
+    // (the base cell is 180 wide, so +1 and +2 come to 280 and 400 pixels, as in the media grid)
+    readonly property real tileScale: [1 / 3, 2 / 3, 1, 1.55, 2.2][tileLevel + 2]
+    readonly property int thumbHint: [128, 128, 256, 256, 512][tileLevel + 2]
+    readonly property bool showLabels: tileLevel > -2
+
     signal folderClicked(string folderPath)
     // A series tile was opened: which chapter to open is "resume", "first" or "next"
     signal seriesRequested(string folderPath, string which)
@@ -127,8 +134,8 @@ Item {
         visible: grid.count > 0
 
         model: root.model
-        cellWidth: 180
-        cellHeight: 220
+        cellWidth: Math.round(180 * root.tileScale)
+        cellHeight: root.showLabels ? Math.round(220 * root.tileScale) : cellWidth
         clip: true
 
         // 1. Calculate the available columns and left-over horizontal space
@@ -163,7 +170,7 @@ Item {
                                 id: heroRect
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                Layout.minimumHeight: 100
+                                Layout.minimumHeight: Math.round(100 * root.tileScale)
     
                                 // Plain fallback fill so there's a background even
                                 // before the image loads / if there's no heroPath.
@@ -197,7 +204,7 @@ Item {
                                     source: model.heroPath && model.heroPath.length > 0
                                             ? "image://thumbnail/" + model.heroPath
                                             : ""
-                                    sourceSize: Qt.size(320, 320)
+                                    sourceSize: Qt.size(root.thumbHint, root.thumbHint)
                                     fillMode: Image.PreserveAspectFit
                                     asynchronous: true
                                     cache: true
@@ -279,7 +286,7 @@ Item {
                                 height: countBadgeText.implicitHeight + 8
                                 radius: height / 2
                                 color: Qt.rgba(0, 0, 0, 0.65)
-                                visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode
+                                visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode && root.showLabels
                                          && (!model.isSeries || hoverArea.containsMouse)
     
                                 Label {
@@ -296,7 +303,8 @@ Item {
                         Rectangle {
                             id: labelBackground
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 36
+                            visible: root.showLabels
+                            Layout.preferredHeight: root.showLabels ? 36 : 0
                             
                             // Fill the background color you want
                             color: Kirigami.Theme.alternateBackgroundColor 
@@ -343,6 +351,9 @@ Item {
                     id: hoverArea
                     anchors.fill: cardBg
                     hoverEnabled: true
+                    ToolTip.visible: containsMouse && !root.showLabels
+                    ToolTip.delay: 700
+                    ToolTip.text: model.folderName || ""
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onClicked: function(mouse) {
                         if (mouse.button === Qt.RightButton) {

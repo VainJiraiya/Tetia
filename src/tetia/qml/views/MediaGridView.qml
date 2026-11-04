@@ -28,6 +28,16 @@ GridView {
     // item selected (the host owns the tag-mode flag).
     signal editTagsRequested(int mediaId)
 
+    // Tile size: -2 .. +2, 0 being the size the grid always had. The scale is
+    // applied to the cell; thumbHint is the thumbnail size to ask for (0: no
+    // preference, so the biggest cached one). -2 and -1 are the normal (128 px)
+    // thumbnails drawn smaller; +1 and +2 ask for the large (256) and x-large (512) ones.
+    property int tileLevel: 0
+    readonly property real tileScale: [1 / 3, 2 / 3, 1, 1.75, 2.5][tileLevel + 2]
+    readonly property int thumbHint: [128, 128, 0, 256, 512][tileLevel + 2]
+    // At the smallest size there is no room for a file name (hover shows it)
+    readonly property bool showLabels: tileLevel > -2
+
     // Exposed properties
     property int columns: Math.max(1, Math.floor(width / cellWidth))
     property real sidePadding: Math.max(0, Math.floor((width - (columns * cellWidth)) / 2))
@@ -408,8 +418,8 @@ GridView {
     // ---- Grid ------------------------------------------------------------
 
     // Cell height leaves room for both the picture and the file name
-    cellWidth: 160
-    cellHeight: 185
+    cellWidth: Math.round(160 * tileScale)
+    cellHeight: showLabels ? Math.round(185 * tileScale) : cellWidth
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     ScrollBar.vertical: ScrollBar {}
@@ -445,6 +455,10 @@ GridView {
                     cursorShape: Qt.PointingHandCursor
                 }
 
+                ToolTip.visible: folderHover.hovered && !grid.showLabels
+                ToolTip.delay: 700
+                ToolTip.text: model.subfolderName || ""
+
                 Image {
                     id: folderHero
                     anchors.top: parent.top
@@ -455,6 +469,7 @@ GridView {
                     anchors.bottomMargin: 6
                     source: model.subfolderHero && model.subfolderHero.length > 0
                             ? "image://thumbnail/" + model.subfolderHero : ""
+                    sourceSize: grid.thumbHint > 0 ? Qt.size(grid.thumbHint, grid.thumbHint) : Qt.size(0, 0)
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                 }
@@ -477,7 +492,7 @@ GridView {
                     radius: height / 2
                     color: Qt.rgba(0, 0, 0, 0.65)
                     // A series shows its chapter count only on hover: the one tell that it is not a single file
-                    visible: model.subfolderCount > 0 && (!folderTile.asFile || folderHover.hovered)
+                    visible: model.subfolderCount > 0 && grid.showLabels && (!folderTile.asFile || folderHover.hovered)
 
                     Text {
                         id: folderCountText
@@ -501,6 +516,8 @@ GridView {
                     color: palette.text
                     font.bold: !folderTile.asFile
                     font.pixelSize: 12
+                    visible: grid.showLabels
+                    height: grid.showLabels ? implicitHeight : 0
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideMiddle
                 }
@@ -556,7 +573,7 @@ GridView {
                     cursorShape: Qt.PointingHandCursor
                 }
 
-                ToolTip.visible: hover.hovered && fileNameText.truncated
+                ToolTip.visible: hover.hovered && (fileNameText.truncated || !grid.showLabels)
                 ToolTip.delay: 700
                 ToolTip.text: model.fileName || ""
 
@@ -570,6 +587,7 @@ GridView {
                     anchors.bottomMargin: 6
 
                     source: model.isFolder ? "" : "image://thumbnail/" + model.fileUri
+                    sourceSize: grid.thumbHint > 0 ? Qt.size(grid.thumbHint, grid.thumbHint) : Qt.size(0, 0)
 
                     // Scale down so the entire picture fits without cropping
                     fillMode: Image.PreserveAspectFit
@@ -590,6 +608,8 @@ GridView {
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideMiddle
                     font.pixelSize: 12
+                    visible: grid.showLabels
+                    height: grid.showLabels ? implicitHeight : 0
                 }
 
                 // Selection check badge (top-right)

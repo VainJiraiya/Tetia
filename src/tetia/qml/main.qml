@@ -28,6 +28,60 @@ Kirigami.ApplicationWindow {
     }
 
     property bool isRemoveMode: false
+
+    // Tile sizes, -2 .. +2 (0 is the usual size): five values in all. "top" is shared
+    // by every collections grid; each category has its own "<category>.grid", used
+    // inside any folder or subfolder. Saved in the profile ("tile.top",
+    // "tile.photos.grid" and so on). Changed with Ctrl + wheel, Ctrl + / - / 0
+    // (whichever grid is showing) or, for "top", the Tile Size menu.
+    property var tileLevels: ({})
+    function levelFor(key) {
+        var level = tileLevels[key]
+        return level === undefined ? 0 : level
+    }
+    function setTileLevel(key, level) {
+        level = Math.max(-2, Math.min(2, level))
+        if (levelFor(key) === level) return
+        var levels = Object.assign({}, tileLevels)   // a new object, so bindings notice
+        levels[key] = level
+        tileLevels = levels
+        uiSettings.setIntValue("tile." + key, level)
+    }
+    // Which size a resize applies to right now ("" when there is no grid to resize,
+    // e.g. the image viewer or the Favorites tab)
+    readonly property string tileTarget: {
+        var page = pageStack.currentItem
+        if (page && page.isViewer === true) return ""
+        if (pageStack.depth <= 1) return root.onFavoritesTab ? "" : "top"
+        if (page && page.filterCategory !== undefined)
+            return (page.filterCategory || folderModel.currentCategory) + ".grid"
+        return ""
+    }
+    readonly property int topTileLevel: levelFor("top")
+    function stepTileLevel(delta) {
+        if (tileTarget !== "") setTileLevel(tileTarget, levelFor(tileTarget) + delta)
+    }
+
+    function loadTileLevels() {
+        var levels = { "top": uiSettings.intValue("tile.top", 0) }
+        var categories = ["photos", "videos", "manga", "books"]
+        for (var i = 0; i < categories.length; i++)
+            levels[categories[i] + ".grid"] = uiSettings.intValue("tile." + categories[i] + ".grid", 0)
+        tileLevels = levels
+    }
+
+    UiSettings { id: uiSettings }
+
+    Shortcut { sequences: ["Ctrl++", "Ctrl+="]; enabled: root.tileTarget !== ""; onActivated: root.stepTileLevel(1) }
+    Shortcut { sequence: "Ctrl+-"; enabled: root.tileTarget !== ""; onActivated: root.stepTileLevel(-1) }
+    Shortcut { sequence: "Ctrl+0"; enabled: root.tileTarget !== ""; onActivated: root.setTileLevel(root.tileTarget, 0) }
+
+    // Ctrl + wheel resizes the grid (see WheelZoom: a WheelHandler misses some wheels)
+    WheelZoom {
+        target: root
+        enabled: root.tileTarget !== ""
+        onStepped: function(delta) { root.stepTileLevel(delta) }
+    }
     // Set while the folder picker opened by "Add Folder as Series" is up
     property bool addingAsSeries: false
     property bool isTagMode: false
@@ -158,6 +212,35 @@ Kirigami.ApplicationWindow {
                             icon.name: "edit-delete"
                             enabled: !root.onFavoritesTab
                             onTriggered: root.isRemoveMode = !root.isRemoveMode
+                        }
+                        Menu {
+                            title: "Tile Size"
+                            enabled: !root.onFavoritesTab
+                            MenuItem {
+                                text: "Extra small"
+                                icon.name: root.topTileLevel === -2 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel("top", -2)
+                            }
+                            MenuItem {
+                                text: "Small"
+                                icon.name: root.topTileLevel === -1 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel("top", -1)
+                            }
+                            MenuItem {
+                                text: "Normal"
+                                icon.name: root.topTileLevel === 0 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel("top", 0)
+                            }
+                            MenuItem {
+                                text: "Large"
+                                icon.name: root.topTileLevel === 1 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel("top", 1)
+                            }
+                            MenuItem {
+                                text: "Extra large"
+                                icon.name: root.topTileLevel === 2 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel("top", 2)
+                            }
                         }
                         MenuSeparator {}
                         MenuItem {
@@ -482,7 +565,10 @@ Kirigami.ApplicationWindow {
         onIndexFinished: root.refreshSearch()
     }
 
-    Component.onCompleted: searchModel.indexLibrary()
+    Component.onCompleted: {
+        loadTileLevels()
+        searchModel.indexLibrary()
+    }
 
     Shortcut {
         sequence: StandardKey.Find
@@ -761,6 +847,7 @@ Kirigami.ApplicationWindow {
 
             removeMode: root.isRemoveMode
             onRemoveModeExitRequested: root.isRemoveMode = false
+            tileLevel: root.topTileLevel
 
             onAddFolderRequested: {
                 root.addingAsSeries = false
@@ -848,6 +935,7 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     model: gridModel
+                    tileLevel: root.levelFor((gridPage.filterCategory || folderModel.currentCategory) + ".grid")
                     mediaBackend: mediaModel
                     tagBackend: tagModel
                     // Only this page reacts: while the image viewer is open on

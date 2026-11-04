@@ -119,6 +119,7 @@ class Database:
             (3, self._migrate_v3),
             (4, self._migrate_v4),
             (5, self._migrate_v5),
+            (6, self._migrate_v6),
         )
         for target, step in steps:
             if version < target:
@@ -230,6 +231,16 @@ class Database:
         if "last_read" not in columns:
             self.conn.execute("ALTER TABLE collection ADD COLUMN last_read TEXT")
 
+    def _migrate_v6(self):
+        # View preferences (tile sizes and the like), kept in the profile's own
+        # database so a private profile keeps its own and leaves nothing outside it
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS setting (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+
     def close(self):
         self.conn.close()
 
@@ -256,6 +267,17 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute("SELECT DISTINCT path FROM folders")
         return [row[0] for row in cursor.fetchall()]
+
+    # --- Settings: small key/value preferences ---
+
+    def get_setting(self, key: str, default=None):
+        row = self.conn.execute("SELECT value FROM setting WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str):
+        self._write(lambda: self.conn.execute(
+            "INSERT INTO setting (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value)))
 
     # --- Collections: cover image + favorite per folder ---
     # Each commits on its own. Rows with no cover and no favorite are dropped.
