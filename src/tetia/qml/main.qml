@@ -73,6 +73,9 @@ Kirigami.ApplicationWindow {
             // Measured from the widest label ("Done") so the slots don't
             // resize when the button switches between "Tag" and "Done".
             readonly property real sideSlotWidth: Math.max(leftButton.implicitWidth, doneMetrics.width + 16 + 4 + 20, 40)
+            // The sort button sits just left of the mode button. Its slot is also
+            // reserved on the left (and when the button is hidden) so the title stays centred.
+            readonly property real sortSlotWidth: 40
 
             TextMetrics {
                 id: doneMetrics
@@ -82,7 +85,7 @@ Kirigami.ApplicationWindow {
 
             // Dynamic Left Button (Menu vs. Back)
             Item {
-                Layout.preferredWidth: headerRow.sideSlotWidth
+                Layout.preferredWidth: headerRow.sideSlotWidth + headerRow.sortSlotWidth
                 Layout.preferredHeight: leftButton.height
 
                 ToolButton {
@@ -250,6 +253,60 @@ Kirigami.ApplicationWindow {
                                     onClicked: root.popToCrumb(index)
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // Sort button: only on a folder's (or subfolder's) page. Search results
+            // keep their ranking and the top-level tab lists folders, so neither has it.
+            Item {
+                Layout.preferredWidth: headerRow.sortSlotWidth
+                Layout.preferredHeight: leftButton.height
+
+                ToolButton {
+                    id: sortButton
+                    anchors.centerIn: parent
+                    icon.name: "view-sort"
+                    display: AbstractButton.IconOnly
+                    visible: pageStack.currentItem !== null
+                             && pageStack.currentItem.filterCategory !== undefined
+                             && pageStack.currentItem.isSearch === false
+                    onClicked: sortMenu.popup(sortButton, 0, sortButton.height)
+
+                    Menu {
+                        id: sortMenu
+
+                        MenuItem {
+                            text: "Default"
+                            icon.name: mediaModel.sortMode === MediaModel.Default ? "checkmark" : ""
+                            onTriggered: mediaModel.sortMode = MediaModel.Default
+                        }
+                        MenuSeparator {}
+                        MenuItem {
+                            text: "Name, Z to A"
+                            icon.name: mediaModel.sortMode === MediaModel.NameDescending ? "checkmark" : ""
+                            onTriggered: mediaModel.sortMode = MediaModel.NameDescending
+                        }
+                        MenuItem {
+                            text: "Newest first"
+                            icon.name: mediaModel.sortMode === MediaModel.NewestFirst ? "checkmark" : ""
+                            onTriggered: mediaModel.sortMode = MediaModel.NewestFirst
+                        }
+                        MenuItem {
+                            text: "Oldest first"
+                            icon.name: mediaModel.sortMode === MediaModel.OldestFirst ? "checkmark" : ""
+                            onTriggered: mediaModel.sortMode = MediaModel.OldestFirst
+                        }
+                        MenuItem {
+                            text: "Largest first"
+                            icon.name: mediaModel.sortMode === MediaModel.LargestFirst ? "checkmark" : ""
+                            onTriggered: mediaModel.sortMode = MediaModel.LargestFirst
+                        }
+                        MenuItem {
+                            text: "Smallest first"
+                            icon.name: mediaModel.sortMode === MediaModel.SmallestFirst ? "checkmark" : ""
+                            onTriggered: mediaModel.sortMode = MediaModel.SmallestFirst
                         }
                     }
                 }

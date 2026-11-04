@@ -130,6 +130,8 @@ def scan_folder(db, folder_directory: Path, hash_fn):
                     "media_id": media_id,
                     "uniform_resource_identifier": directory_item.as_uri(),
                     "file_name": directory_item.name,
+                    "size": file_size,
+                    "mtime": file_mtime,
                     "is_video": is_video,
                     "is_comic": is_comic,
                     "is_book": is_book,

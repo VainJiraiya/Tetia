@@ -195,3 +195,47 @@ def test_browse_chapters_uses_reading_order_only_for_a_series(tmp_path, qapp):
     assert shown()[0].startswith("Amy")                      # a plain folder: alphabetical
     series.set_series(get_database(), str(folder), True)
     assert [n.split("_")[1] for n in shown()] == ["Vol.1 Ch.1", "Vol.1 Ch.2", "Vol.1 Ch.3"]
+
+
+def test_sort_modes_reorder_the_files_of_a_folder(tmp_path, qapp):
+    from tetia.models.mediaModel import MediaModel
+    folder = tmp_path / "Mixed"
+    folder.mkdir()
+    # name, size in bytes, age (older = larger number)
+    for name, size, age in (("a.png", 30, 300), ("b.png", 10, 100), ("c.png", 20, 200)):
+        path = folder / name
+        path.write_bytes(b"x" * size)
+        os.utime(path, (1_700_000_000 - age, 1_700_000_000 - age))
+    model = MediaModel()
+    model.filterMode = MediaModel.FilterMode.ImagesOnly
+    model.load_from_qurl(covers.folder_uri(str(folder)))
+
+    def shown():
+        return [model.data(model.index(i), MediaModel.Roles.FileNameRole) for i in range(model.rowCount())]
+
+    assert shown() == ["a.png", "b.png", "c.png"]                       # default
+    for mode, expected in (
+        (MediaModel.SortMode.NameDescending, ["c.png", "b.png", "a.png"]),
+        (MediaModel.SortMode.NewestFirst, ["b.png", "c.png", "a.png"]),
+        (MediaModel.SortMode.OldestFirst, ["a.png", "c.png", "b.png"]),
+        (MediaModel.SortMode.LargestFirst, ["a.png", "c.png", "b.png"]),
+        (MediaModel.SortMode.SmallestFirst, ["b.png", "c.png", "a.png"]),
+    ):
+        model.sortMode = mode
+        assert shown() == expected, mode
+    model.sortMode = MediaModel.SortMode.Default
+    assert shown() == ["a.png", "b.png", "c.png"]
+
+
+def test_sort_mode_does_not_reorder_search_results(tmp_path, qapp):
+    from tetia.models.mediaModel import MediaModel
+    folder = tmp_path / "Mixed"
+    folder.mkdir()
+    for name in ("a.png", "b.png"):
+        (folder / name).write_bytes(b"x")
+    model = MediaModel()
+    model.load_from_qurl(covers.folder_uri(str(folder)))
+    ids = [model.data(model.index(i), MediaModel.Roles.MediaIdRole) for i in range(model.rowCount())]
+    model.sortMode = MediaModel.SortMode.NameDescending
+    model.load_media_ids(list(reversed(ids)))                           # ranked order from a search
+    assert [model.data(model.index(i), MediaModel.Roles.MediaIdRole) for i in range(model.rowCount())] == list(reversed(ids))

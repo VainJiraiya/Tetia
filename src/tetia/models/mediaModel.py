@@ -60,8 +60,21 @@ class MediaModel(QAbstractListModel):
     # Registers the FilterMode enum with Qt's meta-object system so QML can access it
     QEnum(FilterMode)
 
+    # How the files of an open folder are ordered. Default is the order each
+    # tab has always used (natural name order; chapter order in a series).
+    class SortMode(IntEnum):
+        Default = 0
+        NameDescending = 1
+        NewestFirst = 2
+        OldestFirst = 3
+        LargestFirst = 4
+        SmallestFirst = 5
+
+    QEnum(SortMode)
+
     # Defines Qt signals to notify QML whenever properties change
     filterModeChanged = Signal()
+    sortModeChanged = Signal()
     folderPathChanged = Signal()
 
     # Initializes the class instance and sets up default internal variables
@@ -77,6 +90,7 @@ class MediaModel(QAbstractListModel):
 
         # Internal state tracking variables
         self._current_folder_path: str = ""
+        self._sort_mode = MediaModel.SortMode.Default
         self._filter_mode: MediaModel.FilterMode = MediaModel.FilterMode.All
 
         # Database connection for persistent media identity
@@ -258,6 +272,23 @@ class MediaModel(QAbstractListModel):
         self.load_from_qurl(modified_directory_path)
 
     # Rebuilds the active grid display list according to the current filter mode setting
+    def _sorted(self, items: list) -> list:
+        """`items` in the chosen sort order. Only for an open folder (search
+        results keep their ranking); ties fall back to natural name order."""
+        mode = self._sort_mode
+        if mode == MediaModel.SortMode.Default or not self._current_folder_path:
+            return items
+        name = lambda item: covers.natural_key(item["file_name"])
+        if mode == MediaModel.SortMode.NameDescending:
+            return sorted(items, key=name, reverse=True)
+        keys = {
+            MediaModel.SortMode.NewestFirst: lambda i: (-i.get("mtime", 0), name(i)),
+            MediaModel.SortMode.OldestFirst: lambda i: (i.get("mtime", 0), name(i)),
+            MediaModel.SortMode.LargestFirst: lambda i: (-i.get("size", 0), name(i)),
+            MediaModel.SortMode.SmallestFirst: lambda i: (i.get("size", 0), name(i)),
+        }
+        return sorted(items, key=keys[mode])
+
     def _folder_is_series(self) -> bool:
         try:
             meta = self._db.get_collection_meta(covers.folder_key(self._current_folder_path))
@@ -304,6 +335,8 @@ class MediaModel(QAbstractListModel):
                 + self._all_comics
                 + self._all_books
             )
+
+        self._visible_items = self._sorted(self._visible_items)
 
         # Unfreezes Qt UI updates and tells QML to redraw the grid view
         self.endResetModel()
@@ -432,6 +465,17 @@ class MediaModel(QAbstractListModel):
             self._filter_mode = MediaModel.FilterMode(selected_mode)
             self._update_visible_items()
             self.filterModeChanged.emit()
+
+    @Property(int, notify=sortModeChanged)
+    def sortMode(self) -> int:
+        return int(self._sort_mode)
+
+    @sortMode.setter
+    def sortMode(self, selected_mode: int):
+        if int(self._sort_mode) != selected_mode:
+            self._sort_mode = MediaModel.SortMode(selected_mode)
+            self._update_visible_items()
+            self.sortModeChanged.emit()
 
     # Exposes the current loaded folder path string to QML as a read-only property
     @Property(str, notify=folderPathChanged)
