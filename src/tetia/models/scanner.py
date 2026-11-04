@@ -68,8 +68,12 @@ def scan_folder(db, folder_directory: Path, hash_fn):
     real_hash_fn = hash_fn
     hash_fn = lambda path: memo[path] if path in memo else real_hash_fn(path)
 
-    # One transaction for the whole scan; database helpers used here never commit
-    db.conn.execute("BEGIN")
+    # One transaction for the whole scan; database helpers used here never commit.
+    # IMMEDIATE takes the write lock now and waits for it (the busy timeout). A plain
+    # BEGIN starts with reads, and if the other connection commits meanwhile, SQLite
+    # refuses to turn that stale read into a write and fails at once with
+    # "database is locked", whatever the timeout.
+    db.conn.execute("BEGIN IMMEDIATE")
     try:
         # Iterates over every file in the target directory and collects media metadata
         for directory_item in sorted(
