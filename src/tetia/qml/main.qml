@@ -909,6 +909,15 @@ Kirigami.ApplicationWindow {
             property string filterCategory: ""
             property var crumbs: []
 
+            // The file whose metadata panel is open (-1: none)
+            property int metadataMediaId: -1
+            Connections {
+                target: root
+                function onIsTagModeChanged() {
+                    if (root.isTagMode) gridPage.metadataMediaId = -1
+                }
+            }
+
             // A search results page: no folder, just the matches of root.searchState
             property bool isSearch: false
             property string searchScope: ""
@@ -956,6 +965,12 @@ Kirigami.ApplicationWindow {
                         root.isTagMode = true
                     }
 
+                    // The metadata panel and the tag panel share one spot: showing one hides the other
+                    onMetadataRequested: function(mediaId) {
+                        root.isTagMode = false
+                        gridPage.metadataMediaId = mediaId
+                    }
+
                     onImageClicked: function(index) {
                         pageStack.push(imageViewerComponent, { initialIndex: index })
                     }
@@ -974,6 +989,14 @@ Kirigami.ApplicationWindow {
                     onBookClicked: function(index) {
                         Qt.openUrlExternally(mediaModel.getFileUri(index))
                     }
+                }
+
+                MetadataPanel {
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: implicitWidth
+                    visible: gridPage.metadataMediaId >= 0
+                    mediaId: gridPage.metadataMediaId
+                    onCloseRequested: gridPage.metadataMediaId = -1
                 }
 
                 // Shown for the whole of tag mode (not only while something is

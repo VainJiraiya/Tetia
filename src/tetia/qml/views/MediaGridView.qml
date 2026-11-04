@@ -28,6 +28,9 @@ GridView {
     // item selected (the host owns the tag-mode flag).
     signal editTagsRequested(int mediaId)
 
+    // The context menu's "Metadata" asks the host to show this item's metadata panel.
+    signal metadataRequested(int mediaId)
+
     // Tile size: -2 .. +2, 0 being the size the grid always had. The scale is
     // applied to the cell; thumbHint is the thumbnail size to ask for (0: no
     // preference, so the biggest cached one). -2 and -1 are the normal (128 px)
@@ -254,6 +257,12 @@ GridView {
                 grid.editTagsRequested(id)
                 grid.selectionChanged()
             }
+        }
+
+        MenuItem {
+            text: "Metadata"
+            icon.name: "help-about-symbolic"
+            onTriggered: grid.metadataRequested(grid.contextMenuData.mediaId)
         }
 
         MenuItem {

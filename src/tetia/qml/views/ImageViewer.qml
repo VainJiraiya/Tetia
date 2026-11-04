@@ -26,6 +26,7 @@ ListView {
     // the global header can display it.
     property string title: currentItem ? currentItem.fileName : ""
     property bool showTagPanel: false
+    property bool showMetadataPanel: false
     property var tagBackend: null
     property int currentMediaId: -1
 
@@ -65,10 +66,19 @@ ListView {
                 root.tagExited()
             }
             event.accepted = true
+        } else if (event.key === Qt.Key_I) {
+            root.showMetadataPanel = !root.showMetadataPanel
+            event.accepted = true
         }
     }
 
+    // The metadata panel and the tag panel share one spot: showing one hides the other
+    onShowMetadataPanelChanged: {
+        if (showMetadataPanel) showTagPanel = false
+    }
+
     onShowTagPanelChanged: {
+        if (showTagPanel) showMetadataPanel = false
         if (showTagPanel) {
             root.tagOpened()
         } else {
@@ -396,6 +406,7 @@ ListView {
     }
 
     ToolButton {
+        id: tagButton
         anchors.top: parent.top
         anchors.right: root.showTagPanel ? root.right : parent.right
         anchors.margins: 8
@@ -407,6 +418,33 @@ ListView {
         Behavior on opacity { NumberAnimation { duration: 150 } }
 
         onClicked: root.showTagPanel = !root.showTagPanel
+    }
+
+    // The metadata button, just left of the tag button
+    ToolButton {
+        anchors.top: parent.top
+        anchors.right: tagButton.left
+        anchors.topMargin: 8
+        icon.name: "help-about-symbolic"
+        display: AbstractButton.IconOnly
+        hoverEnabled: true
+        opacity: root.controlsVisible ? 0.85 : 0.3
+        enabled: opacity > 0.05
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+        ToolTip.visible: hovered
+        ToolTip.delay: 500
+        ToolTip.text: "Metadata (I)"
+
+        onClicked: root.showMetadataPanel = !root.showMetadataPanel
+    }
+
+    MetadataPanel {
+        visible: root.showMetadataPanel
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        mediaId: root.showMetadataPanel ? root.currentMediaId : -1
+        onCloseRequested: root.showMetadataPanel = false
     }
 
     TagPanel {
