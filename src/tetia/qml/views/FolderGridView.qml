@@ -279,7 +279,8 @@ Item {
                                 height: countBadgeText.implicitHeight + 8
                                 radius: height / 2
                                 color: Qt.rgba(0, 0, 0, 0.65)
-                                visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode && !model.isSeries
+                                visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode
+                                         && (!model.isSeries || hoverArea.containsMouse)
     
                                 Label {
                                     id: countBadgeText

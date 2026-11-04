@@ -433,7 +433,7 @@ GridView {
             Rectangle {
                 id: folderTile
                 // A series (a folder of chapters) is drawn exactly like a single file:
-                // no outline, no count badge, no bold name
+                // no outline, no bold name, and the count badge only on hover
                 readonly property bool asFile: model.subfolderIsSeries === true
                 radius: 6
                 color: Qt.alpha(palette.text, folderHover.hovered ? 0.07 : (asFile ? 0 : 0.03))
@@ -476,7 +476,8 @@ GridView {
                     height: folderCountText.implicitHeight + 8
                     radius: height / 2
                     color: Qt.rgba(0, 0, 0, 0.65)
-                    visible: model.subfolderCount > 0 && !folderTile.asFile
+                    // A series shows its chapter count only on hover: the one tell that it is not a single file
+                    visible: model.subfolderCount > 0 && (!folderTile.asFile || folderHover.hovered)
 
                     Text {
                         id: folderCountText
