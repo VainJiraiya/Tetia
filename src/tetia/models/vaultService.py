@@ -13,6 +13,7 @@ import logging
 from PySide6.QtCore import QObject, SLOT, Signal, Slot
 from PySide6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage, QDBusPendingCallWatcher
 
+from tetia import sandbox
 from tetia.models import vaults
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,8 @@ class VaultService(QObject):
 
     def unavailableReason(self) -> str:
         """'' if Plasma Vault can be used, else a short reason."""
+        if sandbox.in_flatpak():
+            return "The Flatpak sandbox can't reach Plasma Vault."
         if not self._bus.isConnected():
             return "There is no D-Bus session bus."
         if not self._interface().isValid():

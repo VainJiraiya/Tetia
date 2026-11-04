@@ -26,6 +26,7 @@ import time
 from PySide6.QtCore import QCoreApplication, QObject, QProcess, QTimer, Property, Signal, Slot
 from PySide6.QtQml import QmlElement
 
+from tetia import sandbox
 from tetia.models import profiles, vaults
 
 QML_IMPORT_NAME = "Tetia"
@@ -137,6 +138,10 @@ class ProfileModel(QObject):
         return [{"id": p["id"], "name": p["name"], "isPrivate": p["private"],
                  "kind": p["kind"], "active": p["id"] == active}
                 for p in profiles.all_profiles()]
+
+    @Property(bool, constant=True)
+    def inSandbox(self):
+        return sandbox.in_flatpak()
 
     @Property(bool, constant=True)
     def isPrivate(self):

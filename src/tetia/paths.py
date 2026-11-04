@@ -10,6 +10,8 @@ app's sandbox. Pure Python, no Qt, so the tests need no display.
 import os
 from pathlib import Path
 
+from tetia import sandbox
+
 APP_DIR = "tetia"
 # What the app was called before it was renamed; its data is migrated once
 # (see migration.py). It was never XDG-aware: it always lived under ~/.local/share.
@@ -42,5 +44,14 @@ def legacy_data_dir() -> Path:
 
 
 def thumbnails_dir() -> Path:
-    """The shared freedesktop thumbnail cache that General uses."""
+    """The shared freedesktop thumbnail cache that General uses.
+
+    Inside a Flatpak $XDG_CACHE_HOME is the app's private cache, so the
+    thumbnails would not be shared with Dolphin and others. The Flatpak is
+    granted the real ~/.cache/thumbnails (xdg-cache/thumbnails); use it when it
+    is there and writable, else fall back to the private one."""
+    if sandbox.in_flatpak():
+        shared = Path.home() / ".cache" / "thumbnails"
+        if shared.is_dir() and os.access(shared, os.W_OK | os.X_OK):
+            return shared
     return cache_home() / "thumbnails"

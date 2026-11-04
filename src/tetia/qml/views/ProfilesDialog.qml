@@ -211,7 +211,9 @@ Kirigami.Dialog {
                 Layout.fillWidth: true
                 visible: dialog.backend !== null && !dialog.backend.vaultAvailable
                 wrapMode: Text.WordWrap
-                text: "Encrypted profiles need KDE Plasma Vaults, which isn't available here (" + (dialog.backend ? dialog.backend.vaultUnavailableReason : "") + ")\n\nInstall Plasma Vaults (the plasma-vault package) and gocryptfs or CryFS to keep a private profile encrypted. Until then you can make a local private profile: its data is kept separate from General, but it is not encrypted."
+                text: dialog.backend && dialog.backend.inSandbox
+                      ? "Encrypted profiles aren't available in the Flatpak version of Tetia: the sandbox can't reach KDE Plasma Vaults. You can make a local private profile: its data is kept separate from General, but it is not encrypted."
+                      : "Encrypted profiles need KDE Plasma Vaults, which isn't available here (" + (dialog.backend ? dialog.backend.vaultUnavailableReason : "") + ")\n\nInstall Plasma Vaults (the plasma-vault package) and gocryptfs or CryFS to keep a private profile encrypted. Until then you can make a local private profile: its data is kept separate from General, but it is not encrypted."
             }
 
             ComboBox {

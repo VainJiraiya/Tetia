@@ -454,6 +454,7 @@ Kirigami.ApplicationWindow {
             folderModel.addFolder(selectedFolder, folderModel.currentCategory)
             searchModel.indexLibrary()
         }
+        onFolderRejected: function(problem) { showPassiveNotification(problem, 12000) }
     }
 
     footer: Kirigami.NavigationTabBar {

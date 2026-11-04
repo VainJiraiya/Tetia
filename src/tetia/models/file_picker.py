@@ -5,6 +5,8 @@ from PySide6.QtCore import QObject, Slot, Signal, QUrl
 from PySide6.QtWidgets import QFileDialog
 from PySide6.QtQml import QmlElement
 
+from tetia import sandbox
+
 # Register this module for QML
 QML_IMPORT_NAME = "Tetia"
 QML_IMPORT_MAJOR_VERSION = 1
@@ -16,6 +18,9 @@ class FilePicker(QObject):
 
     # Emitted when a cover image is chosen: (folder as passed in, local image path)
     coverImageSelected = Signal(str, str)
+
+    # Emitted instead of folderSelected when Tetia can't read the folder (sandbox)
+    folderRejected = Signal(str)
 
     @Slot()
     def openFolderDialog(self):
@@ -29,6 +34,10 @@ class FilePicker(QObject):
         
         # If the user selected a folder (didn't hit cancel)
         if folder_path:
+            folder_path, problem = sandbox.usable_folder(folder_path)
+            if problem:
+                self.folderRejected.emit(problem)
+                return
             # Convert the raw local path to a QUrl string (file://...) to match your existing model logic
             qurl_string = QUrl.fromLocalFile(folder_path).toString()
             self.folderSelected.emit(qurl_string)
