@@ -39,6 +39,19 @@ GridView {
     signal coverPickerRequested(int mediaId)
     signal subfolderCoverPickerRequested(string filePath)
 
+    // Virtual folders. The grid only asks; the host (main.qml) does the work and reloads.
+    // A virtual folder tile was opened
+    signal virtualFolderClicked(int virtualId, string name)
+    // Menu actions on a selection (ids: files, tiles: folder tiles as "virtual:<id>" or a file:// address):
+    // "add" (pick a virtual folder), "addNew" (make one), "remove" (out of the virtual folder it is in)
+    signal virtualActionRequested(string action, var ids, var tiles)
+    // "Select" in a menu: enter select mode with this selected
+    signal selectRequested(var ids, var tiles)
+    signal newVirtualFolderRequested()
+    signal virtualRenameRequested(int virtualId, string name)
+    signal virtualDeleteRequested(int virtualId, string name)
+    signal virtualCoverResetRequested(int virtualId)
+
     // A cover changed by hand: this number is added to the pictures' URLs so they reload
     property int coverRevision: 0
     readonly property string revisionSuffix: coverRevision > 0 ? "?v=" + coverRevision : ""
@@ -57,6 +70,16 @@ GridView {
     property int columns: Math.max(1, Math.floor(width / cellWidth))
     property real sidePadding: Math.max(0, Math.floor((width - (columns * cellWidth)) / 2))
     property bool tagMode: false
+    // Select mode: the same click and drag selection as tag mode, for moving things into virtual
+    // folders. Folder tiles can be selected in it (tag mode only tags files).
+    property bool selectMode: false
+    readonly property bool selecting: tagMode || selectMode
+    // The host says what the page allows: virtual folder actions at all (not in a search from the top level),
+    // being inside a virtual folder (so "Remove from virtual folder" makes sense), making one on empty space
+    property bool virtualAllowed: false
+    property bool virtualPage: false
+    property bool canCreateHere: false
+    property var selectedTiles: []
     property var tagBackend: null
     property var mediaBackend: null
     // The SubfolderModel behind the folder tiles (favorites and covers). The
@@ -70,10 +93,53 @@ GridView {
 
     property var contextMenuData: ({})
 
-    onTagModeChanged: {
-        if (!tagMode) {
+    onSelectingChanged: {
+        if (!selecting) {
             selectedIds = []
+            selectedTiles = []
         }
+    }
+    onSelectModeChanged: {
+        // folder tiles can only be selected in select mode
+        if (!selectMode) selectedTiles = []
+    }
+
+    // Folder tiles in the grid's rows: Qt.UserRole + 100 (isFolder) and + 101 (the tile's path or "virtual:<id>")
+    readonly property int isFolderRole: 356
+    readonly property int tilePathRole: 357
+
+    function tileKeyAt(row) {
+        var index = grid.model.index(row, 0)
+        return grid.model.data(index, grid.isFolderRole) === true ? String(grid.model.data(index, grid.tilePathRole)) : ""
+    }
+
+    function setTiles(keys) {
+        grid.selectedTiles = keys
+        selectionChanged()
+    }
+
+    function toggleTile(key) {
+        var keys = grid.selectedTiles.slice()
+        var at = keys.indexOf(key)
+        if (at >= 0) keys.splice(at, 1)
+        else keys.push(key)
+        setTiles(keys)
+    }
+
+    function clearSelection() {
+        grid.selectedIds = []
+        grid.selectedTiles = []
+        selectionChanged()
+    }
+
+    // What a menu action applies to: the whole selection if the clicked thing is part of it, else just the thing
+    function targetOf(mediaId, tileKey) {
+        if (grid.selecting) {
+            var inFiles = mediaId >= 0 && grid.selectedIds.indexOf(mediaId) >= 0
+            var inTiles = tileKey !== "" && grid.selectedTiles.indexOf(tileKey) >= 0
+            if (inFiles || inTiles) return { ids: grid.selectedIds.slice(), tiles: grid.selectedTiles.slice() }
+        }
+        return { ids: mediaId >= 0 ? [mediaId] : [], tiles: tileKey !== "" ? [tileKey] : [] }
     }
 
     // ---- Selection helpers ----------------------------------------------
@@ -119,9 +185,17 @@ GridView {
 
     function selectAll() {
         addRangeSelection(0, grid.count - 1)
+        if (grid.selectMode) {
+            var keys = grid.selectedTiles.slice()
+            for (var i = 0; i < grid.count; i++) {
+                var key = tileKeyAt(i)
+                if (key !== "" && keys.indexOf(key) < 0) keys.push(key)
+            }
+            setTiles(keys)
+        }
     }
 
-    // ---- Drag select (tag mode) ------------------------------------------
+    // ---- Drag select (tag and select mode) ------------------------------------------
     // Dragging on the grid draws a rubber band and selects every file tile it
     // touches. A plain drag replaces the selection; with Ctrl or Shift held it
     // adds to what was selected. Folder tiles are never selected. Dragging near
@@ -133,6 +207,7 @@ GridView {
     property point dragEnd: Qt.point(0, 0)     // content coordinates
     property point dragView: Qt.point(0, 0)    // pointer, in viewport coordinates
     property var dragBase: []
+    property var dragBaseTiles: []
 
     function viewToContent(p) {
         return Qt.point(p.x + grid.contentX, p.y + grid.contentY)
@@ -160,6 +235,7 @@ GridView {
         var lastRow = Math.floor(y1 / cellHeight)
 
         var ids = dragBase.slice()
+        var keys = dragBaseTiles.slice()
         for (var r = firstRow; r <= lastRow; r++) {
             for (var c = firstCol; c <= lastCol; c++) {
                 var row = r * columns + c
@@ -170,14 +246,22 @@ GridView {
                 if (top + cellHeight - 2 * inset <= y0 || top >= y1) continue
                 var id = mediaIdAt(row)
                 if (id !== null && id !== undefined && ids.indexOf(id) < 0) ids.push(id)
+                if (grid.selectMode) {
+                    var key = tileKeyAt(row)
+                    if (key !== "" && keys.indexOf(key) < 0) keys.push(key)
+                }
             }
         }
-        if (!sameIds(ids, selectedIds)) setSelection(ids)
+        var changed = !sameIds(ids, selectedIds) || !sameIds(keys, selectedTiles)
+        if (changed) {
+            grid.selectedTiles = keys
+            setSelection(ids)
+        }
     }
 
     DragHandler {
         id: dragSelect
-        enabled: grid.tagMode
+        enabled: grid.selecting
         target: null
         acceptedButtons: Qt.LeftButton
 
@@ -186,6 +270,7 @@ GridView {
                 grid.forceActiveFocus()
                 var additive = centroid.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)
                 grid.dragBase = additive ? grid.selectedIds.slice() : []
+                grid.dragBaseTiles = additive ? grid.selectedTiles.slice() : []
                 grid.dragStart = grid.viewToContent(centroid.pressPosition)
                 grid.dragView = centroid.position
                 grid.dragEnd = grid.viewToContent(centroid.position)
@@ -238,16 +323,16 @@ GridView {
         border.color: palette.highlight
     }
 
-    // ---- Keyboard (tag mode) --------------------------------------------
+    // ---- Keyboard (tag and select mode) --------------------------------------------
 
     activeFocusOnTab: true
     Keys.onPressed: function(event) {
-        if (!grid.tagMode) return
+        if (!grid.selecting) return
         if (event.matches(StandardKey.SelectAll)) {
             grid.selectAll()
             event.accepted = true
-        } else if (event.key === Qt.Key_Escape && grid.selectedIds.length > 0) {
-            grid.setSelection([])
+        } else if (event.key === Qt.Key_Escape && (grid.selectedIds.length > 0 || grid.selectedTiles.length > 0)) {
+            grid.clearSelection()
             event.accepted = true
         }
     }
@@ -311,7 +396,7 @@ GridView {
             id: coverItem
             icon.name: "image-x-generic"
             enabled: grid.mediaBackend !== null && typeof grid.mediaBackend.setFolderCover === "function"
-                     && grid.mediaBackend.folderPath !== ""   // not in search results
+                     && (grid.mediaBackend.folderPath !== "" || grid.mediaBackend.virtualId >= 0)   // not in search results
             onTriggered: {
                 var kind = grid.contextMenuData.kind
                 var ok = grid.mediaBackend.setFolderCover(grid.contextMenuData.mediaId)
@@ -323,6 +408,36 @@ GridView {
                     toast.show("Couldn't set the folder cover")
                 }
             }
+        }
+
+        MenuSeparator { visible: grid.virtualAllowed }
+        MenuItem {
+            text: "Select"
+            icon.name: "edit-select"
+            visible: grid.virtualAllowed && !grid.selecting
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(grid.contextMenuData.mediaId, ""); grid.selectRequested(t.ids, t.tiles) }
+        }
+        MenuItem {
+            text: "Add to virtual folder\u2026"
+            icon.name: "folder-add"
+            visible: grid.virtualAllowed
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(grid.contextMenuData.mediaId, ""); grid.virtualActionRequested("add", t.ids, t.tiles) }
+        }
+        MenuItem {
+            text: "Add to new virtual folder\u2026"
+            icon.name: "folder-new"
+            visible: grid.virtualAllowed
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(grid.contextMenuData.mediaId, ""); grid.virtualActionRequested("addNew", t.ids, t.tiles) }
+        }
+        MenuItem {
+            text: "Remove from virtual folder"
+            icon.name: "go-up"
+            visible: grid.virtualAllowed && grid.virtualPage
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(grid.contextMenuData.mediaId, ""); grid.virtualActionRequested("remove", t.ids, t.tiles) }
         }
     }
 
@@ -444,6 +559,110 @@ GridView {
             enabled: grid.subfolderBackend !== null
             onTriggered: grid.subfolderBackend.setFavorite(subfolderMenu.folderPath, !subfolderMenu.isFavorite)
         }
+
+        MenuSeparator { visible: grid.virtualAllowed }
+        MenuItem {
+            text: "Select"
+            icon.name: "edit-select"
+            visible: grid.virtualAllowed && !grid.selecting
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(-1, subfolderMenu.folderPath); grid.selectRequested(t.ids, t.tiles) }
+        }
+        MenuItem {
+            text: "Add to virtual folder\u2026"
+            icon.name: "folder-add"
+            visible: grid.virtualAllowed
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(-1, subfolderMenu.folderPath); grid.virtualActionRequested("add", t.ids, t.tiles) }
+        }
+        MenuItem {
+            text: "Add to new virtual folder\u2026"
+            icon.name: "folder-new"
+            visible: grid.virtualAllowed
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(-1, subfolderMenu.folderPath); grid.virtualActionRequested("addNew", t.ids, t.tiles) }
+        }
+        MenuItem {
+            text: "Remove from virtual folder"
+            icon.name: "go-up"
+            visible: grid.virtualAllowed && grid.virtualPage
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(-1, subfolderMenu.folderPath); grid.virtualActionRequested("remove", t.ids, t.tiles) }
+        }
+    }
+
+    // Right-click menu for a virtual folder tile
+    Menu {
+        id: virtualMenu
+        property int virtualId: -1
+        property string virtualName: ""
+        property bool hasCover: false
+
+        MenuItem {
+            text: "Rename\u2026"
+            icon.name: "edit-rename"
+            onTriggered: grid.virtualRenameRequested(virtualMenu.virtualId, virtualMenu.virtualName)
+        }
+        MenuItem {
+            text: "Use default cover"
+            icon.name: "edit-undo"
+            enabled: virtualMenu.hasCover
+            onTriggered: grid.virtualCoverResetRequested(virtualMenu.virtualId)
+        }
+
+        MenuSeparator { visible: grid.virtualAllowed }
+        MenuItem {
+            text: "Select"
+            icon.name: "edit-select"
+            visible: grid.virtualAllowed && !grid.selecting
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(-1, "virtual:" + virtualMenu.virtualId); grid.selectRequested(t.ids, t.tiles) }
+        }
+        MenuItem {
+            text: "Add to virtual folder\u2026"
+            icon.name: "folder-add"
+            visible: grid.virtualAllowed
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(-1, "virtual:" + virtualMenu.virtualId); grid.virtualActionRequested("add", t.ids, t.tiles) }
+        }
+        MenuItem {
+            text: "Add to new virtual folder\u2026"
+            icon.name: "folder-new"
+            visible: grid.virtualAllowed
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(-1, "virtual:" + virtualMenu.virtualId); grid.virtualActionRequested("addNew", t.ids, t.tiles) }
+        }
+        MenuItem {
+            text: "Remove from virtual folder"
+            icon.name: "go-up"
+            visible: grid.virtualAllowed && grid.virtualPage
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(-1, "virtual:" + virtualMenu.virtualId); grid.virtualActionRequested("remove", t.ids, t.tiles) }
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: "Delete virtual folder"
+            icon.name: "edit-delete"
+            ToolTip.visible: hovered
+            ToolTip.delay: 600
+            ToolTip.text: "What is in it goes back where it was. No file is touched."
+            onTriggered: grid.virtualDeleteRequested(virtualMenu.virtualId, virtualMenu.virtualName)
+        }
+    }
+
+    // Right-click on empty space
+    Menu {
+        id: emptyMenu
+        MenuItem {
+            text: "New virtual folder\u2026"
+            icon.name: "folder-new"
+            onTriggered: grid.newVirtualFolderRequested()
+        }
+    }
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        enabled: grid.canCreateHere
+        onTapped: emptyMenu.popup()
     }
 
     // Opens the image dialog for a subfolder's "Choose cover image..."
@@ -507,7 +726,7 @@ GridView {
         width: grid.cellWidth
         height: grid.cellHeight
 
-        readonly property bool selected: grid.tagMode && grid.selectedIds.indexOf(model.mediaId) >= 0
+        readonly property bool selected: grid.selecting && grid.selectedIds.indexOf(model.mediaId) >= 0
 
         // Row in the media model: the grid's rows start with the folder tiles
         readonly property int fileIndex: index - grid.model.folderCount
@@ -522,10 +741,13 @@ GridView {
                 // A series (a folder of chapters) or a folder holding one file is drawn exactly
                 // like a single file: no outline, no bold name, and (series) the count badge only on hover
                 readonly property bool asFile: model.subfolderIsSeries === true || !!model.subfolderSingleFile
+                readonly property bool isVirtual: model.subfolderIsVirtual === true
+                readonly property bool picked: grid.selectMode && grid.selectedTiles.indexOf(String(model.subfolderPath)) >= 0
                 radius: 6
-                color: Qt.alpha(palette.text, folderHover.hovered ? 0.07 : (asFile ? 0 : 0.03))
-                border.width: asFile ? 0 : 1
-                border.color: Qt.alpha(palette.text, 0.15)
+                color: picked ? Qt.alpha(palette.highlight, 0.18)
+                              : Qt.alpha(palette.text, folderHover.hovered ? 0.07 : (asFile ? 0 : 0.03))
+                border.width: picked ? 2 : (asFile ? 0 : 1)
+                border.color: picked ? palette.highlight : Qt.alpha(palette.text, 0.15)
 
                 HoverHandler {
                     id: folderHover
@@ -570,7 +792,7 @@ GridView {
                     color: Qt.rgba(0, 0, 0, 0.65)
                     // A series shows its chapter count only on hover: the one tell that it is not a single file
                     visible: model.subfolderCount > 0 && grid.showLabels && !model.subfolderSingleFile
-                             && (!folderTile.asFile || folderHover.hovered)
+                             && (!folderTile.asFile || folderHover.hovered) && !folderTile.picked
 
                     Text {
                         id: folderCountText
@@ -578,6 +800,46 @@ GridView {
                         text: model.subfolderCount
                         color: "white"
                         font.pixelSize: 11
+                        font.bold: true
+                    }
+                }
+
+                // Marks a virtual folder (it exists only in Tetia)
+                Rectangle {
+                    // only on hover: on every tile it clutters the pictures
+                    visible: folderTile.isVirtual && grid.showLabels && folderHover.hovered
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.margins: 6
+                    width: virtualMark.implicitWidth + 12
+                    height: virtualMark.implicitHeight + 6
+                    radius: height / 2
+                    color: Qt.rgba(0, 0, 0, 0.65)
+                    Text {
+                        id: virtualMark
+                        anchors.centerIn: parent
+                        text: "\u25C7"
+                        color: "white"
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
+                }
+
+                // Selection check badge (top-right), like a file's
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.margins: 6
+                    width: 20
+                    height: 20
+                    radius: 10
+                    color: palette.highlight
+                    visible: folderTile.picked
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2713"
+                        color: palette.highlightedText
+                        font.pixelSize: 12
                         font.bold: true
                     }
                 }
@@ -604,7 +866,13 @@ GridView {
                     anchors.fill: parent
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onClicked: function(mouse) {
-                        if (mouse.button === Qt.RightButton) {
+                        if (mouse.button === Qt.RightButton && folderTile.isVirtual) {
+                            virtualMenu.virtualId = model.subfolderVirtualId
+                            virtualMenu.virtualName = model.subfolderName
+                            virtualMenu.hasCover = grid.subfolderBackend
+                                ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
+                            virtualMenu.popup()
+                        } else if (mouse.button === Qt.RightButton) {
                             subfolderMenu.folderPath = model.subfolderPath
                             subfolderMenu.isFavorite = model.subfolderFavorite
                             subfolderMenu.isSeries = !!model.subfolderIsSeries
@@ -614,8 +882,18 @@ GridView {
                             subfolderMenu.hasCustomCover = grid.subfolderBackend
                                 ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
                             subfolderMenu.popup()
+                        } else if (grid.selectMode) {
+                            grid.forceActiveFocus()
+                            var key = String(model.subfolderPath)
+                            if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier) || grid.selectedTiles.indexOf(key) >= 0) {
+                                grid.toggleTile(key)
+                            } else {
+                                grid.selectedIds = []
+                                grid.setTiles([key])
+                            }
                         } else if (!grid.tagMode) {
-                            if (model.subfolderIsSeries) grid.subfolderSeriesRequested(model.subfolderPath, "resume")
+                            if (folderTile.isVirtual) grid.virtualFolderClicked(model.subfolderVirtualId, model.subfolderName)
+                            else if (model.subfolderIsSeries) grid.subfolderSeriesRequested(model.subfolderPath, "resume")
                             else if (model.subfolderSingleFile) grid.subfolderSingleFileRequested(model.subfolderPath)
                             else grid.subfolderClicked(model.subfolderPath)
                         }
@@ -727,7 +1005,7 @@ GridView {
                                 model.isVideo ? "video"
                                 : (model.isComic ? "comic"
                                 : (model.isBook ? "ebook" : "image")), tile.fileIndex)
-                        } else if (grid.tagMode) {
+                        } else if (grid.selecting) {
                             if ((mouse.modifiers & Qt.ShiftModifier) && grid.selectedIds.length > 0) {
                                 // Range from the last selected item to this one
                                 var anchorRow = grid.rowOfMediaId(grid.selectedIds[grid.selectedIds.length - 1])
@@ -739,6 +1017,7 @@ GridView {
                             } else if (grid.selectedIds.indexOf(model.mediaId) >= 0) {
                                 grid.toggleSelection(model.mediaId)
                             } else {
+                                grid.selectedTiles = []
                                 grid.setSelection([model.mediaId])
                             }
                         } else if (model.isVideo) {

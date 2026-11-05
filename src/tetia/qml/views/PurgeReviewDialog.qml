@@ -46,12 +46,12 @@ Dialog {
             Item { Layout.fillHeight: true }
             Kirigami.Heading {
                 level: 3
-                text: root.items.length === 0 ? "Nothing is marked for the trash"
-                      : "Move " + root.items.length + (root.items.length === 1 ? " image" : " images") + " to the trash?"
+                text: root.items.length === 0 ? "Nothing is marked for the Trash"
+                      : "Move " + root.items.length + (root.items.length === 1 ? " image" : " images") + " to the Trash?"
                 Layout.fillWidth: true
             }
             Label {
-                text: "They go to the system trash, so you can restore them from there."
+                text: "They go to the system Trash, so you can restore them from there."
                 opacity: 0.7
                 Layout.fillWidth: true
             }
@@ -182,7 +182,7 @@ Dialog {
             Layout.topMargin: Kirigami.Units.smallSpacing
             Layout.bottomMargin: Kirigami.Units.largeSpacing
             Layout.rightMargin: Kirigami.Units.largeSpacing
-            text: root.items.length === 1 ? "Move 1 to trash" : "Move " + root.items.length + " to trash"
+            text: root.items.length === 1 ? "Move 1 to Trash" : "Move " + root.items.length + " to Trash"
             icon.name: "edit-delete"
             highlighted: true
             enabled: root.items.length > 0

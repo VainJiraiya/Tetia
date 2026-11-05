@@ -18,9 +18,20 @@ It is built with Python, Qt Quick and Kirigami.
   something inside it matches the current tab.
 - **Browsing** - a thumbnail grid in natural order ("Chapter 2" before "Chapter 10").
   Thumbnails use the shared freedesktop cache, so Dolphin and Gwenview reuse them.
-  Images open in a full-screen viewer; videos, manga archives (CBZ and friends), PDFs and
-  books open in your default application (there is no built-in player or reader yet).
+  Images open in a full-screen viewer. Comics (CBZ, CBR and friends), PDFs and
+  EPUBs made of page pictures open in the built-in reader (below); videos and text
+  EPUBs open in your default application (there is no built-in video player yet).
   PDFs show up in both the Manga and the Books tab, since both are common for manga.
+- **Reader** - paged or long-strip layout (webtoons), left-to-right or right-to-left,
+  mouse-wheel page turning, zoom by double-click or Ctrl + scroll, a page slider,
+  auto-scroll for strips, cards for the next and previous chapter, and your place
+  remembered per book. A series opens at the first chapter you have not finished.
+  The Help tab in the reader's side panel lists every key and gesture.
+- **Virtual folders** - sort a library without touching the disk: select files or
+  whole subfolders and put them in a named virtual folder inside the folder you are
+  in. Virtual folders nest, and a thing lives in one place at a time, like in a real
+  folder. Taking something out puts it back where it came from, and deleting a virtual
+  folder gives everything back. Files on disk never move.
 - **Tags** - five categories (creator, series, character, genre, content), a tag
   panel with suggestions, and bulk tagging. Select items by clicking, with Ctrl or
   Shift, or by dragging a rectangle.
@@ -33,7 +44,7 @@ It is built with Python, Qt Quick and Kirigami.
   library in the background. The (i) button in the search bar explains the syntax.
 - **Keeps track of your files** - move or rename a file and it keeps its tags and
   favorites; a file that disappears is marked missing rather than forgotten.
-  Deleting moves files to the system trash.
+  Trashing moves files to the system Trash.
 - **Private profiles** - a separate library, tags, covers and thumbnails that never
   touch your normal profile or the shared thumbnail cache. Encrypted in a KDE Plasma
   Vault if you have one (see below), or kept in a separate, unencrypted folder.

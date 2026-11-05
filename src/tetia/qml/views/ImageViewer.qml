@@ -34,7 +34,7 @@ ListView {
     signal tagExited()
 
     // The tag panel's Delete button; the host confirms and deletes.
-    signal deleteRequested(int mediaId)
+    signal trashRequested(int mediaId)
 
     orientation: ListView.Horizontal
     snapMode: ListView.SnapOneItem
@@ -457,6 +457,6 @@ ListView {
         currentMediaId: root.currentMediaId
         tagModel: root.tagBackend
         mediaModel: root.model
-        onDeleteRequested: root.deleteRequested(root.currentMediaId)
+        onTrashRequested: root.trashRequested(root.currentMediaId)
     }
 }

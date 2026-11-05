@@ -10,7 +10,7 @@ import org.kde.kirigami 2.20 as Kirigami
 //
 // Host contract (unchanged): set mediaIds (or currentMediaId), tagModel and
 // mediaModel. The host sizes the panel (Layout / anchors); by default it is
-// 320 px wide and as tall as its parent. Listen to deleteRequested().
+// 320 px wide and as tall as its parent. Listen to trashRequested().
 Rectangle {
     id: root
 
@@ -26,12 +26,12 @@ Rectangle {
     property string defaultCategory: "content"
 
     // Hosts that don't implement deletion can hide the button.
-    property bool showDelete: true
+    property bool showTrash: true
 
     // Which edge touches the content, so the divider line is drawn on it.
     property bool dockedRight: true
 
-    signal deleteRequested()
+    signal trashRequested()
 
     // Focus the tag input (e.g. when the host opens the panel from a shortcut).
     function focusInput() {
@@ -463,8 +463,8 @@ Rectangle {
           body: "The panel lists every tag found on any selected item. Faded tags with a count like 2/5 are on only some of them. Adding a tag adds it to all selected items. The x removes it from all of them." },
         { title: "Rating",
           body: "General, Suggestive, Mature or Explicit. Click the active one again to clear it. Rating is separate from tags." },
-        { title: "Favorite and Delete",
-          body: "Favorite adds the item to your Favorites tab. Delete moves the file to the system trash." }
+        { title: "Favorite and Trash",
+          body: "Favorite adds the item to your Favorites tab. Trash moves the file to the system Trash." }
     ]
 
     Popup {
@@ -867,14 +867,14 @@ Rectangle {
 
             DangerButton {
                 id: deleteButton
-                visible: root.showDelete
+                visible: root.showTrash
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
                 implicitHeight: favButton.implicitHeight
-                text: "Delete"
+                text: "Trash"
                 icon.name: "edit-delete-symbolic"
-                Accessible.name: root.targetCount > 1 ? "Delete " + root.targetCount + " items" : "Delete item"
-                onClicked: root.deleteRequested()
+                Accessible.name: root.targetCount > 1 ? "Trash " + root.targetCount + " items" : "Trash item"
+                onClicked: root.trashRequested()
             }
         }
     }

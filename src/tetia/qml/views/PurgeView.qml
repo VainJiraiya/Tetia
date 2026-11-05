@@ -95,7 +95,7 @@ Kirigami.Page {
 
     function openReview() {
         if (session.trashCount === 0 && session.pending === 0) {
-            root.finished("Nothing was marked for the trash")
+            root.finished("Nothing was marked for the Trash")
             return
         }
         review.open()
@@ -107,7 +107,7 @@ Kirigami.Page {
         if (session.trashCount === 0) {
             review.close()
             var n = removedIds.length
-            root.finished(n === 1 ? "Moved 1 image to the trash" : "Moved " + n + " images to the trash")
+            root.finished(n === 1 ? "Moved 1 image to the Trash" : "Moved " + n + " images to the Trash")
         }
     }
 
@@ -173,7 +173,7 @@ Kirigami.Page {
                 onClicked: root.requestCancel()
                 ToolTip.visible: hovered
                 ToolTip.delay: 600
-                ToolTip.text: "Stop purging. Nothing is moved to the trash. (Esc)"
+                ToolTip.text: "Stop purging. Nothing is moved to the Trash. (Esc)"
             }
             Item { Layout.fillWidth: true }
             Kirigami.Icon {
@@ -195,8 +195,8 @@ Kirigami.Page {
                 onClicked: root.openReview()
                 ToolTip.visible: hovered
                 ToolTip.delay: 600
-                ToolTip.text: session.trashCount > 0 ? "Stop here and review the images marked for the trash"
-                                                     : "Mark an image for the trash first"
+                ToolTip.text: session.trashCount > 0 ? "Stop here and review the images marked for the Trash"
+                                                     : "Mark an image for the Trash first"
             }
         }
     }
@@ -401,7 +401,7 @@ Kirigami.Page {
                 Label {
                     anchors.horizontalCenter: parent.horizontalCenter
                     visible: session.trashCount > 0
-                    text: session.trashCount + " to trash"
+                    text: session.trashCount + " to Trash"
                     color: Qt.lighter(Kirigami.Theme.negativeTextColor, 1.5)
                     font.pixelSize: 11
                 }
@@ -440,7 +440,7 @@ Kirigami.Page {
                 onClicked: root.flyOff("trash")
                 ToolTip.visible: hovered
                 ToolTip.delay: 600
-                ToolTip.text: "Mark for the trash (Left)"
+                ToolTip.text: "Mark for the Trash (Left)"
             }
             Button {
                 text: "Undo"
@@ -486,10 +486,10 @@ Kirigami.Page {
         id: cancelDialog
         title: "Stop purging?"
         subtitle: session.trashCount > 0
-                  ? (session.trashCount === 1 ? "The image you marked for the trash stays where it is."
-                                              : "The " + session.trashCount + " images you marked for the trash stay where they are.")
-                    + " Nothing is deleted."
-                  : "Nothing is deleted."
+                  ? (session.trashCount === 1 ? "The image you marked for the Trash stays where it is."
+                                              : "The " + session.trashCount + " images you marked for the Trash stay where they are.")
+                    + " Nothing is moved to the Trash."
+                  : "Nothing is moved to the Trash."
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {

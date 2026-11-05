@@ -98,9 +98,12 @@ Kirigami.ApplicationWindow {
         enabled: root.tileTarget !== ""
         onStepped: function(delta) { root.stepTileLevel(delta) }
     }
-    // Set while the folder picker opened by "Add Folder as Series" is up
-    property bool addingAsSeries: false
     property bool isTagMode: false
+    // Select mode: pick files and tiles to move into virtual folders (or to the Trash). Tag mode and select mode
+    // are two ways of selecting and never on at once.
+    property bool isSelectMode: false
+    onIsTagModeChanged: if (isTagMode) isSelectMode = false
+    onIsSelectModeChanged: if (isSelectMode) isTagMode = false
 
     // The search strip, and what the search page on the stack (if any) is showing
     property bool searchOpen: false
@@ -109,6 +112,8 @@ Kirigami.ApplicationWindow {
     // The folder whose contents mediaModel currently holds; reloaded after a
     // delete so removed items disappear from the grid and the viewer.
     property var currentFolder: null
+    // The virtual folder mediaModel holds instead (-1: none); see loadVirtual
+    property int currentVirtual: -1
 
     // Stack layout: 1 = folder grid (or the Favorites tab), 2 = folder contents
     // (or the viewer opened from Favorites), 3 = image viewer from a folder.
@@ -120,6 +125,7 @@ Kirigami.ApplicationWindow {
         target: pageStack
         function onDepthChanged() {
             root.isTagMode = false
+            root.isSelectMode = false
         }
     }
 
@@ -212,18 +218,6 @@ Kirigami.ApplicationWindow {
                             enabled: !root.onFavoritesTab
                             onTriggered: {
                                 root.isRemoveMode = false
-                                root.addingAsSeries = false
-                                filePicker.openFolderDialog()
-                            }
-                        }
-                        MenuItem {
-                            text: "Add Folder as Series"
-                            icon.name: "bookmarks-symbolic"
-                            // A series is a folder of chapter files, so only on the Manga tab
-                            enabled: folderModel.currentCategory === "manga"
-                            onTriggered: {
-                                root.isRemoveMode = false
-                                root.addingAsSeries = true
                                 filePicker.openFolderDialog()
                             }
                         }
@@ -375,7 +369,7 @@ Kirigami.ApplicationWindow {
                              && pageStack.currentItem.isSearch === false
                     ToolTip.visible: hovered
                     ToolTip.delay: 600
-                    ToolTip.text: "Purge: swipe through these pictures to keep or trash them"
+                    ToolTip.text: "Purge: swipe through these pictures to keep them or send them to the Trash"
                     onClicked: root.startPurge()
                 }
             }
@@ -436,7 +430,7 @@ Kirigami.ApplicationWindow {
 
             // Dynamic Right Button. One pill that changes with the mode:
             //   remove mode          -> "Done" (red), leaves remove mode
-            //   tag mode             -> "Done" (accent), leaves tag mode
+            //   tag mode, select mode -> "Done" (accent), leaves the mode
             //   anywhere but the viewer -> "Search", opens the search strip
             // (tag mode is entered from a tile's right-click menu)
             // Built from plain primitives (Rectangle/Icon/Label/MouseArea)
@@ -449,7 +443,7 @@ Kirigami.ApplicationWindow {
 
                 readonly property bool canSearch: !(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isPurge === true || pageStack.currentItem.isReader === true))
                 readonly property string mode: root.isRemoveMode ? "remove"
-                                             : (root.isTagMode ? "tag"
+                                             : (root.isTagMode || root.isSelectMode ? "tag"
                                              : (canSearch ? "idle" : ""))
                 readonly property color fg: mode === "remove" ? Kirigami.Theme.negativeTextColor
                                           : (mode === "tag" ? Kirigami.Theme.highlightedTextColor
@@ -498,6 +492,7 @@ Kirigami.ApplicationWindow {
                                 // The grid hides its panel and clears its selection
                                 // by itself; the viewer page watches isTagMode too.
                                 root.isTagMode = false
+                                root.isSelectMode = false
                             } else {
                                 root.toggleSearch()
                             }
@@ -534,6 +529,7 @@ Kirigami.ApplicationWindow {
     // What the media grid shows: subfolder tiles first, then the files
     GridModel {
         id: gridModel
+        objectName: "gridModel"
         media: mediaModel
         subfolders: subfolderModel
     }
@@ -626,7 +622,7 @@ Kirigami.ApplicationWindow {
 
         property int failed: 0
 
-        title: failed === 1 ? "Couldn't move 1 item to the trash" : "Couldn't move " + failed + " items to the trash"
+        title: failed === 1 ? "Couldn't move 1 item to the Trash" : "Couldn't move " + failed + " items to the Trash"
         subtitle: mediaActions.trashProblem
                   + (mediaActions.trashFixCommand !== "" ? "\n\n" + mediaActions.trashFixCommand : "")
         standardButtons: Kirigami.Dialog.Close
@@ -649,27 +645,79 @@ Kirigami.ApplicationWindow {
     TextEdit { id: clipboardHelper; visible: false }
 
     Kirigami.PromptDialog {
-        id: deleteDialog
+        id: trashDialog
 
         property var ids: []
         // Optional callback(removedIds), run after the delete finishes
-        property var afterDelete: null
+        property var afterTrash: null
 
-        title: ids.length === 1 ? "Move 1 item to the trash?"
-                                : "Move " + ids.length + " items to the trash?"
-        subtitle: "The files go to the system trash, so you can restore them from there. Their tags and favorites are removed."
+        title: ids.length === 1 ? "Move 1 item to the Trash?"
+                                : "Move " + ids.length + " items to the Trash?"
+        subtitle: "The files go to the system Trash, so you can restore them from there. Their tags and favorites are removed."
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {
                 text: "Move to Trash"
                 icon.name: "edit-delete"
                 onTriggered: {
-                    deleteDialog.close()
-                    root.performDelete(deleteDialog.ids, deleteDialog.afterDelete)
+                    trashDialog.close()
+                    root.performTrash(trashDialog.ids, trashDialog.afterTrash)
                 }
             }
         ]
     }
+
+    // Virtual folders: the service holds the rules; the dialogs below ask the user a name or a place.
+    VirtualFolderService {
+        id: virtualFolders
+        onChanged: root.reloadPage()
+    }
+
+    // A name for a new or renamed virtual folder
+    Kirigami.PromptDialog {
+        id: nameDialog
+        objectName: "nameDialog"
+        property var onNamed: null          // function(name): the error text, or "" when it worked
+        property string problem: ""
+        standardButtons: Kirigami.Dialog.Cancel
+        customFooterActions: [
+            Kirigami.Action {
+                text: nameDialog.title.indexOf("Rename") === 0 ? "Rename" : "Create"
+                icon.name: "dialog-ok-apply"
+                onTriggered: nameDialog.accept()
+            }
+        ]
+        function accept() {
+            var problem = nameDialog.onNamed ? nameDialog.onNamed(nameField.text) : ""
+            if (problem === "") {
+                nameDialog.close()
+            } else {
+                nameDialog.problem = problem
+            }
+        }
+        onOpened: { nameDialog.problem = ""; nameField.forceActiveFocus(); nameField.selectAll() }
+
+        ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+            TextField {
+                id: nameField
+                objectName: "nameField"
+                Layout.fillWidth: true
+                placeholderText: "Name"
+                maximumLength: 100
+                onAccepted: nameDialog.accept()
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: nameDialog.problem !== ""
+                text: nameDialog.problem
+                color: Kirigami.Theme.negativeTextColor
+                wrapMode: Text.WordWrap
+            }
+        }
+    }
+
+    VirtualPickerDialog { id: virtualPicker; objectName: "virtualPicker" }
 
     FilePicker {
         id: filePicker
@@ -677,8 +725,6 @@ Kirigami.ApplicationWindow {
             // Favorites is a virtual tab, not a folder category
             if (root.onFavoritesTab) return
             folderModel.addFolder(selectedFolder, folderModel.currentCategory)
-            if (root.addingAsSeries) folderModel.setSeries(selectedFolder, true)
-            root.addingAsSeries = false
             searchModel.indexLibrary()
         }
         onFolderRejected: function(problem) { showPassiveNotification(problem, 12000) }
@@ -727,11 +773,11 @@ Kirigami.ApplicationWindow {
         ]
     }
 
-    function requestDelete(ids, afterDelete) {
+    function requestTrash(ids, afterTrash) {
         if (!ids || ids.length === 0) return
-        deleteDialog.ids = ids
-        deleteDialog.afterDelete = afterDelete ? afterDelete : null
-        deleteDialog.open()
+        trashDialog.ids = ids
+        trashDialog.afterTrash = afterTrash ? afterTrash : null
+        trashDialog.open()
     }
 
     // Purge mode: swipe through the open folder's pictures; the marked ones go to the trash after a review.
@@ -753,7 +799,7 @@ Kirigami.ApplicationWindow {
 
             // The review was confirmed: the same code as Delete moves them (and explains a refusal)
             onTrashRequested: function(ids) {
-                root.performDelete(ids, function(removed) { purgePage.trashFinished(removed) })
+                root.performTrash(ids, function(removed) { purgePage.trashFinished(removed) })
             }
             onFinished: function(message) {
                 var popped = pageStack.pop()
@@ -835,20 +881,23 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    function performDelete(ids, afterDelete) {
+    function performTrash(ids, afterTrash) {
         var removed = mediaActions.moveToTrash(ids)
         // Reload so the model drops the removed items: the open folder, or
         // the Favorites lists when deleting from the viewer opened there
         if (root.currentFolder) {
             mediaModel.load_from_qurl(root.currentFolder)
+        } else if (root.currentVirtual >= 0) {
+            mediaModel.load_virtual_folder(root.currentVirtual)
+            subfolderModel.loadVirtual(root.currentVirtual)
         } else if (root.searchState) {
             root.refreshSearch()
         }
         if (root.onFavoritesTab) {
             favoritesView.refresh()
         }
-        if (afterDelete) {
-            afterDelete(removed)
+        if (afterTrash) {
+            afterTrash(removed)
         }
         if (removed.length < ids.length) {
             var failed = ids.length - removed.length
@@ -857,14 +906,123 @@ Kirigami.ApplicationWindow {
                 trashProblemDialog.failed = failed
                 trashProblemDialog.open()
             } else {
-                showPassiveNotification("Couldn't move " + failed + (failed === 1 ? " item" : " items") + " to the trash")
+                showPassiveNotification("Couldn't move " + failed + (failed === 1 ? " item" : " items") + " to the Trash")
             }
+        }
+    }
+
+    // ---- Virtual folders ----------------------------------------------------------------------------
+
+    function askName(title, initial, onNamed) {
+        nameDialog.title = title
+        nameDialog.onNamed = onNamed
+        nameField.text = initial
+        nameDialog.open()
+    }
+
+    function itemsText(count) {
+        return count === 1 ? "1 item" : count + " items"
+    }
+
+    // What a move said: a result {moved, skipped} or {error}
+    function reportMove(result, name) {
+        if (result.error !== undefined) {
+            showPassiveNotification(result.error)
+            return
+        }
+        root.isSelectMode = false          // done: the items are in their virtual folder
+        var text = "Moved " + itemsText(result.moved) + (name ? " to \u201C" + name + "\u201D" : "")
+        if (result.skipped > 0) text += " (" + itemsText(result.skipped) + " could not go there)"
+        showPassiveNotification(text)
+    }
+
+    // Put a selection in an existing virtual folder, or make one for it. `parent` is the virtual folder the
+    // new one goes inside (-1: at the top of `home`).
+    function addToVirtual(ids, tiles, createNew, parent) {
+        var options = virtualFolders.options(ids, tiles)
+        if (!options.canCreate && options.targets.length === 0) {
+            showPassiveNotification("These items are in different library folders, so they cannot go in one virtual folder.")
+            return
+        }
+        var makeNew = function() {
+            askName("New virtual folder", "", function(name) {
+                var result = virtualFolders.placeInNew(name, parent, options.home, ids, tiles)
+                if (result.error !== undefined) return result.error
+                root.reportMove(result, name.trim())
+                return ""
+            })
+        }
+        if (createNew) {
+            makeNew()
+            return
+        }
+        virtualPicker.targets = options.targets
+        virtualPicker.count = ids.length + tiles.length
+        virtualPicker.canCreate = options.canCreate
+        virtualPicker.onChosen = null
+        virtualPicker.openFor(function(id, name) {
+            root.reportMove(virtualFolders.place(id, ids, tiles), name)
+        }, makeNew)
+    }
+
+    function removeFromVirtual(ids, tiles) {
+        var count = virtualFolders.remove(ids, tiles)
+        showPassiveNotification(count === 0 ? "Nothing to move out" : "Moved " + itemsText(count) + " out of the virtual folder")
+    }
+
+    function gridCategory(category) {
+        if (category === "photos") mediaModel.filterMode = MediaModel.ImagesOnly
+        else if (category === "videos") mediaModel.filterMode = MediaModel.VideosOnly
+        else if (category === "manga") mediaModel.filterMode = MediaModel.MangaOnly
+        else if (category === "books") mediaModel.filterMode = MediaModel.BooksOnly
+        else mediaModel.filterMode = MediaModel.All
+    }
+
+    // Makes mediaModel and subfolderModel hold this virtual folder
+    function loadVirtual(virtualId, category) {
+        root.currentFolder = null
+        root.currentVirtual = virtualId
+        gridCategory(category)
+        mediaModel.load_virtual_folder(virtualId)
+        subfolderModel.loadVirtual(virtualId)
+    }
+
+    function openVirtualFolder(virtualId, name, category, parentCrumbs) {
+        loadVirtual(virtualId, category)
+        var info = virtualFolders.info(virtualId)
+        pageStack.push(mediaGridComponent, {
+            title: name,
+            virtualId: virtualId,
+            homePath: info.home,
+            filterCategory: category,
+            crumbs: (parentCrumbs || []).concat(["[" + name + "]"])
+        })
+    }
+
+    // Reloads what the page on top shows, after virtual folders changed or files were trashed
+    function reloadPage() {
+        var page = pageStack.currentItem
+        if (!page || page.isGridPage !== true) return
+        if (page.virtualId >= 0) {
+            if (virtualFolders.info(page.virtualId).name === undefined) {
+                // this virtual folder was deleted: step out of it
+                var popped = pageStack.pop()
+                if (popped) popped.destroy()
+                return
+            }
+            loadVirtual(page.virtualId, page.filterCategory)
+        } else if (page.isSearch) {
+            refreshSearch()
+        } else if (page.folderPath) {
+            loadFolder(page.folderPath, page.filterCategory)
         }
     }
 
     function switchTab(category) {
         folderModel.currentCategory = category
         root.currentFolder = null
+        root.currentVirtual = -1
+        root.isSelectMode = false
         root.isRemoveMode = false
         root.isTagMode = false
 
@@ -888,6 +1046,7 @@ Kirigami.ApplicationWindow {
     function currentSearchScope() {
         var page = pageStack.currentItem
         if (page && page.isSearch === true) return page.searchScope
+        if (page && page.isGridPage === true && page.virtualId >= 0) return page.homePath
         if (page && page.isGridPage === true && page.folderPath) return String(page.folderPath)
         return ""
     }
@@ -924,6 +1083,7 @@ Kirigami.ApplicationWindow {
             page.title = searchTitle(query, ids.length)
         } else {
             root.currentFolder = null
+            root.currentVirtual = -1
             mediaModel.filterMode = MediaModel.All   // results are never narrowed by a folder tab's filter
             mediaModel.load_media_ids(ids)
             pageStack.push(mediaGridComponent, {
@@ -984,19 +1144,9 @@ Kirigami.ApplicationWindow {
     // Makes mediaModel hold this folder, filtered for the category.
     function loadFolder(folderPath, category) {
         root.currentFolder = folderPath
+        root.currentVirtual = -1
         mediaModel.load_from_qurl(folderPath)
-
-        if (category === "photos") {
-            mediaModel.filterMode = MediaModel.ImagesOnly
-        } else if (category === "videos") {
-            mediaModel.filterMode = MediaModel.VideosOnly
-        } else if (category === "manga") {
-            mediaModel.filterMode = MediaModel.MangaOnly
-        } else if (category === "books") {
-            mediaModel.filterMode = MediaModel.BooksOnly
-        } else {
-            mediaModel.filterMode = MediaModel.All
-        }
+        gridCategory(category)
     }
 
     // parentCrumbs: the breadcrumb names of the folder this one is nested in
@@ -1026,10 +1176,7 @@ Kirigami.ApplicationWindow {
             coverRevision: root.coverRevision
             onCoverPickerRequested: function(filePath) { root.pickCoverOfFile(filePath) }
 
-            onAddFolderRequested: {
-                root.addingAsSeries = false
-                filePicker.openFolderDialog()
-            }
+            onAddFolderRequested: filePicker.openFolderDialog()
 
             onFolderClicked: function(folderPath) {
                 openMediaGrid(folderPath, folderModel.currentCategory)
@@ -1092,6 +1239,9 @@ Kirigami.ApplicationWindow {
             property var folderPath: null
             property string filterCategory: ""
             property var crumbs: []
+            // A virtual folder page: which one, and the real folder it was made in
+            property int virtualId: -1
+            property string homePath: ""
 
             // The file whose metadata panel is open (-1: none)
             property int metadataMediaId: -1
@@ -1112,8 +1262,12 @@ Kirigami.ApplicationWindow {
             Connections {
                 target: pageStack
                 function onCurrentItemChanged() {
-                    if (pageStack.currentItem === gridPage
-                            && String(root.currentFolder) !== String(gridPage.folderPath)) {
+                    if (pageStack.currentItem !== gridPage) return
+                    if (gridPage.virtualId >= 0) {
+                        if (root.currentVirtual !== gridPage.virtualId) {
+                            root.loadVirtual(gridPage.virtualId, gridPage.filterCategory)
+                        }
+                    } else if (String(root.currentFolder) !== String(gridPage.folderPath)) {
                         root.loadFolder(gridPage.folderPath, gridPage.filterCategory)
                     }
                 }
@@ -1123,8 +1277,14 @@ Kirigami.ApplicationWindow {
                 anchors.fill: parent
                 spacing: 0
 
+              ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 0
+
                 MediaGridView {
                     id: gridView
+                    objectName: "mediaGrid"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     model: gridModel
@@ -1137,7 +1297,47 @@ Kirigami.ApplicationWindow {
                     // Only this page reacts: while the image viewer is open on
                     // top, the grid underneath stays out of tag mode.
                     tagMode: root.isTagMode && pageStack.currentItem === gridPage
+                    selectMode: root.isSelectMode && pageStack.currentItem === gridPage
                     subfolderBackend: subfolderModel
+                    // Virtual folders: not in a search that spans every library folder; "Remove" inside one
+                    virtualAllowed: !(gridPage.isSearch && gridPage.searchScope === "")
+                    virtualPage: gridPage.virtualId >= 0
+                    canCreateHere: !gridPage.isSearch
+
+                    onVirtualFolderClicked: function(virtualId, name) {
+                        root.openVirtualFolder(virtualId, name, gridPage.filterCategory, gridPage.crumbs)
+                    }
+                    onSelectRequested: function(ids, tiles) {
+                        root.isTagMode = false
+                        root.isSelectMode = true
+                        gridView.selectedIds = ids
+                        gridView.setTiles(tiles)
+                    }
+                    onVirtualActionRequested: function(action, ids, tiles) {
+                        var parent = gridPage.virtualId
+                        if (action === "add") root.addToVirtual(ids, tiles, false, parent)
+                        else if (action === "addNew") root.addToVirtual(ids, tiles, true, parent)
+                        else if (action === "remove") root.removeFromVirtual(ids, tiles)
+                        gridView.clearSelection()
+                    }
+                    onNewVirtualFolderRequested: {
+                        var home = gridPage.virtualId >= 0 ? gridPage.homePath : String(gridPage.folderPath)
+                        root.askName("New virtual folder", "", function(name) {
+                            var result = virtualFolders.create(name, home, gridPage.virtualId)
+                            return result.error !== undefined ? result.error : ""
+                        })
+                    }
+                    onVirtualRenameRequested: function(virtualId, name) {
+                        root.askName("Rename virtual folder", name, function(newName) {
+                            var result = virtualFolders.rename(virtualId, newName)
+                            return result.error !== undefined ? result.error : ""
+                        })
+                    }
+                    onVirtualDeleteRequested: function(virtualId, name) {
+                        virtualFolders.deleteFolder(virtualId)
+                        showPassiveNotification("Deleted \u201C" + name + "\u201D: what was in it went back where it was")
+                    }
+                    onVirtualCoverResetRequested: function(virtualId) { virtualFolders.clearCover(virtualId) }
 
                     onSubfolderSingleFileRequested: function(subfolderPath) {
                         var file = subfolderModel.openSingleFile(subfolderPath)
@@ -1180,6 +1380,90 @@ Kirigami.ApplicationWindow {
                     onOpenExternallyRequested: function(index) { Qt.openUrlExternally(mediaModel.getFileUri(index)) }
                 }
 
+                // An empty virtual folder says how to fill it
+                // (a Label over the grid, not in it, so it never scrolls)
+                Label {
+                    objectName: "emptyVirtualHint"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? implicitHeight + Kirigami.Units.gridUnit * 3 : 0
+                    visible: gridPage.virtualId >= 0 && gridView.count === 0
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    wrapMode: Text.WordWrap
+                    opacity: 0.7
+                    text: "This virtual folder is empty.\nIn the folder it was made in, select items and choose \u201CAdd to virtual folder\u201D."
+                }
+
+                // Select mode's actions, under the grid
+                Rectangle {
+                    id: selectBar
+                    objectName: "selectBar"
+                    Layout.fillWidth: true
+                    visible: gridView.selectMode
+                    implicitHeight: barRow.implicitHeight + Kirigami.Units.largeSpacing * 2
+                    color: Kirigami.Theme.alternateBackgroundColor
+                    readonly property int fileCount: gridView.selectedIds.length
+                    readonly property int tileCount: gridView.selectedTiles.length
+                    readonly property int total: fileCount + tileCount
+
+                    Kirigami.Separator { anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right }
+
+                    RowLayout {
+                        id: barRow
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: Kirigami.Units.largeSpacing
+                        anchors.rightMargin: Kirigami.Units.largeSpacing
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Label {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: selectBar.total === 0 ? "Select items to move"
+                                  : selectBar.total + (selectBar.total === 1 ? " selected" : " selected")
+                            opacity: selectBar.total === 0 ? 0.65 : 1
+                        }
+                        Button {
+                            objectName: "selectAddButton"
+                            text: "Add to virtual folder\u2026"
+                            icon.name: "folder-add"
+                            enabled: selectBar.total > 0
+                            onClicked: gridView.virtualActionRequested("add", gridView.selectedIds.slice(), gridView.selectedTiles.slice())
+                        }
+                        Button {
+                            objectName: "selectNewButton"
+                            text: "New virtual folder\u2026"
+                            icon.name: "folder-new"
+                            enabled: selectBar.total > 0
+                            onClicked: gridView.virtualActionRequested("addNew", gridView.selectedIds.slice(), gridView.selectedTiles.slice())
+                        }
+                        Button {
+                            objectName: "selectRemoveButton"
+                            text: "Remove from virtual folder"
+                            icon.name: "go-up"
+                            visible: gridView.virtualPage
+                            enabled: selectBar.total > 0
+                            onClicked: gridView.virtualActionRequested("remove", gridView.selectedIds.slice(), gridView.selectedTiles.slice())
+                        }
+                        Item { Layout.preferredWidth: Kirigami.Units.largeSpacing }
+                        Button {
+                            objectName: "selectTrashButton"
+                            text: "Trash"
+                            icon.name: "edit-delete"
+                            // only files go to the Trash: a folder tile does not
+                            enabled: selectBar.fileCount > 0 && selectBar.tileCount === 0
+                            ToolTip.visible: hovered && selectBar.tileCount > 0
+                            ToolTip.delay: 400
+                            ToolTip.text: "Folders are not moved to the Trash from here. Select only files."
+                            onClicked: root.requestTrash(gridView.selectedIds.slice(), function(removed) {
+                                gridView.clearSelection()
+                            })
+                        }
+                    }
+                }
+              }
+
                 MetadataPanel {
                     Layout.fillHeight: true
                     Layout.preferredWidth: implicitWidth
@@ -1198,8 +1482,8 @@ Kirigami.ApplicationWindow {
                     tagModel: gridView.tagBackend
                     mediaModel: gridView.mediaBackend
 
-                    onDeleteRequested: {
-                        root.requestDelete(gridView.selectedIds.slice(), function(removed) {
+                    onTrashRequested: {
+                        root.requestTrash(gridView.selectedIds.slice(), function(removed) {
                             gridView.setSelection([])
                         })
                     }
@@ -1251,9 +1535,9 @@ Kirigami.ApplicationWindow {
                 onTagOpened: root.isTagMode = true
                 onTagExited: root.isTagMode = false
 
-                onDeleteRequested: function(mediaId) {
+                onTrashRequested: function(mediaId) {
                     var index = imageViewer.currentIndex
-                    root.requestDelete([mediaId], function(removed) {
+                    root.requestTrash([mediaId], function(removed) {
                         if (imageViewer.count === 0) {
                             // That was the last image: leave the viewer
                             var popped = pageStack.pop()
