@@ -18,6 +18,7 @@ GridView {
     signal videoClicked(int index)
     signal comicClicked(int index)
     signal bookClicked(int index)
+    signal openExternallyRequested(int index)   // "Open in system default" from the right-click menu
     signal selectionChanged()
 
     // A subfolder tile was tapped; folderPath is a file:// URI.
@@ -271,6 +272,14 @@ GridView {
         }
 
         MenuItem {
+            text: "Open in system default"
+            icon.name: "document-open"
+            visible: grid.contextMenuData.kind === "comic" || grid.contextMenuData.kind === "ebook"
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.openExternallyRequested(grid.contextMenuData.fileIndex)
+        }
+
+        MenuItem {
             text: "Metadata"
             icon.name: "help-about-symbolic"
             onTriggered: grid.metadataRequested(grid.contextMenuData.mediaId)
@@ -318,8 +327,8 @@ GridView {
     }
 
     // kind: "image", "video", "comic" or "ebook"
-    function openContextMenu(mediaId, kind) {
-        grid.contextMenuData = { mediaId: mediaId, kind: kind }
+    function openContextMenu(mediaId, kind, fileIndex) {
+        grid.contextMenuData = { mediaId: mediaId, kind: kind, fileIndex: fileIndex }
         var isFavorite = grid.mediaBackend ? !!grid.mediaBackend.getFavorite(mediaId) : false
         favoriteItem.text = isFavorite ? "Remove from favorites" : "Add to favorites"
         favoriteItem.icon.name = isFavorite ? "non-starred-symbolic" : "starred-symbolic"
@@ -717,7 +726,7 @@ GridView {
                             grid.openContextMenu(model.mediaId,
                                 model.isVideo ? "video"
                                 : (model.isComic ? "comic"
-                                : (model.isBook ? "ebook" : "image")))
+                                : (model.isBook ? "ebook" : "image")), tile.fileIndex)
                         } else if (grid.tagMode) {
                             if ((mouse.modifiers & Qt.ShiftModifier) && grid.selectedIds.length > 0) {
                                 // Range from the last selected item to this one

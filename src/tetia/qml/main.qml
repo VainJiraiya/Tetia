@@ -51,7 +51,7 @@ Kirigami.ApplicationWindow {
     // e.g. the image viewer or the Favorites tab)
     readonly property string tileTarget: {
         var page = pageStack.currentItem
-        if (page && page.isViewer === true) return ""
+        if (page && (page.isViewer === true || page.isReader === true)) return ""
         if (pageStack.depth <= 1) return root.onFavoritesTab ? "" : "top"
         if (page && page.filterCategory !== undefined)
             return (page.filterCategory || folderModel.currentCategory) + ".grid"
@@ -126,6 +126,7 @@ Kirigami.ApplicationWindow {
     // Persistent header defined at the ApplicationWindow level
     header: Column {
         id: headerColumn
+        visible: !root.immersive
 
         ToolBar {
             width: headerColumn.width
@@ -446,7 +447,7 @@ Kirigami.ApplicationWindow {
                 Layout.preferredWidth: headerRow.sideSlotWidth
                 Layout.preferredHeight: leftButton.height
 
-                readonly property bool canSearch: !(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isPurge === true))
+                readonly property bool canSearch: !(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isPurge === true || pageStack.currentItem.isReader === true))
                 readonly property string mode: root.isRemoveMode ? "remove"
                                              : (root.isTagMode ? "tag"
                                              : (canSearch ? "idle" : ""))
@@ -610,7 +611,7 @@ Kirigami.ApplicationWindow {
 
     Shortcut {
         sequence: StandardKey.Find
-        onActivated: if (!(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isPurge === true))) root.openSearch()
+        onActivated: if (!(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isPurge === true || pageStack.currentItem.isReader === true))) root.openSearch()
     }
 
     MediaActions {
@@ -689,7 +690,7 @@ Kirigami.ApplicationWindow {
         // mid-zoom doesn't make sense, and the viewer wants the full window
         // height anyway. (Tested by page rather than by depth: opened from
         // the Favorites tab the viewer is at depth 2, not 3.)
-        visible: !(pageStack.currentItem && pageStack.currentItem.isViewer === true)
+        visible: !(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isReader === true))
         actions: [
             Kirigami.Action {
                 // Not image-x-generic(-symbolic): in Breeze that falls back to a coloured
@@ -758,6 +759,78 @@ Kirigami.ApplicationWindow {
                 var popped = pageStack.pop()
                 if (popped) popped.destroy()
                 if (message !== "") showPassiveNotification(message)
+            }
+        }
+    }
+
+    // Opens a file: comics, PDFs and picture EPUBs in Tetia's reader (so progress and bookmarks are kept),
+    // everything else in the system's default app
+    ReaderSession { id: readerProbe }
+    function openFile(uri) {
+        if (uri === "") return
+        if (readerProbe.canRead(uri)) pageStack.push(readerComponent, { location: uri })
+        else Qt.openUrlExternally(uri)
+    }
+    // Fullscreen remembers what it came from, so a maximized window comes back maximized. A window manager can drop
+    // a maximize request made in the very moment fullscreen ends (and fall back to the size from before maximizing),
+    // so the request is repeated once the change has settled. "Maximized" is also recognised by size, since not
+    // every desktop reports the state.
+    property bool maximizedBeforeFullscreen: false
+    function looksMaximized() {
+        if (root.visibility === Window.Maximized) return true
+        if (root.visibility !== Window.Windowed || !root.screen) return false
+        return root.width >= root.screen.desktopAvailableWidth - 4 && root.height >= root.screen.desktopAvailableHeight - 4
+    }
+    function leaveReaderFullscreen() {
+        if (root.visibility !== Window.FullScreen) return
+        root.visibility = root.maximizedBeforeFullscreen ? Window.Maximized : Window.Windowed
+        if (root.maximizedBeforeFullscreen) {
+            root.restoringMaximized = true
+            restoreMaximizedTimer.restart()
+        }
+    }
+    // The desktop may first show the window at its old size; ask again the moment it says so (a timer alone
+    // leaves that size on screen for a moment), and stop asking once it is maximized or the wait is over.
+    property bool restoringMaximized: false
+    onVisibilityChanged: {
+        if (!restoringMaximized) return
+        if (root.visibility === Window.Windowed) root.visibility = Window.Maximized
+        else if (root.visibility === Window.Maximized) restoringMaximized = false
+    }
+    function toggleReaderFullscreen() {
+        if (root.visibility === Window.FullScreen) {
+            leaveReaderFullscreen()
+        } else {
+            root.maximizedBeforeFullscreen = looksMaximized()
+            root.visibility = Window.FullScreen
+        }
+    }
+    Timer {
+        id: restoreMaximizedTimer
+        interval: 600
+        onTriggered: {
+            root.restoringMaximized = false
+            if (root.visibility === Window.Windowed) root.visibility = Window.Maximized
+        }
+    }
+    readonly property bool immersive: pageStack.currentItem !== null && pageStack.currentItem.isReader === true
+                                      && root.visibility === Window.FullScreen
+
+    Component {
+        id: readerComponent
+
+        ReaderView {
+            id: readerPage
+            fullscreen: root.visibility === Window.FullScreen
+            onFullscreenToggled: root.toggleReaderFullscreen()
+            onLeaveRequested: {
+                root.leaveReaderFullscreen()
+                var popped = pageStack.pop()
+                if (popped) popped.destroy()
+            }
+            onOpenSystemRequested: function(location) {
+                Qt.openUrlExternally(location.indexOf("file:") === 0 ? location : "file://" + encodeURI(location))
+                leaveRequested()
             }
         }
     }
@@ -964,13 +1037,13 @@ Kirigami.ApplicationWindow {
 
             onSingleFileRequested: function(folderPath) {
                 var file = folderModel.openSingleFile(folderPath)
-                if (file !== "") Qt.openUrlExternally(file)
+                if (file !== "") root.openFile(file)
                 else openMediaGrid(folderPath, folderModel.currentCategory)   // it has gained files since: just browse it
             }
 
             onSeriesRequested: function(folderPath, which) {
                 var chapter = folderModel.openSeries(folderPath, which)
-                if (chapter !== "") Qt.openUrlExternally(chapter)
+                if (chapter !== "") root.openFile(chapter)
                 else openMediaGrid(folderPath, folderModel.currentCategory)   // no chapter files: just browse it
             }
         }
@@ -994,7 +1067,7 @@ Kirigami.ApplicationWindow {
             })
         }
         onOpenExternally: function(fileUri) {
-            Qt.openUrlExternally(fileUri)
+            root.openFile(fileUri)
         }
         onCollectionClicked: function(folderUri) {
             openMediaGrid(folderUri, folderModel.currentCategory)
@@ -1068,12 +1141,12 @@ Kirigami.ApplicationWindow {
 
                     onSubfolderSingleFileRequested: function(subfolderPath) {
                         var file = subfolderModel.openSingleFile(subfolderPath)
-                        if (file !== "") Qt.openUrlExternally(file)
+                        if (file !== "") root.openFile(file)
                         else root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
                     }
                     onSubfolderSeriesRequested: function(subfolderPath, which) {
                         var chapter = subfolderModel.openSeries(subfolderPath, which)
-                        if (chapter !== "") Qt.openUrlExternally(chapter)
+                        if (chapter !== "") root.openFile(chapter)
                         else root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
                     }
                     onSubfolderClicked: function(subfolderPath) {
@@ -1102,12 +1175,9 @@ Kirigami.ApplicationWindow {
                     onVideoClicked: function(index) {
                         Qt.openUrlExternally(mediaModel.getFileUri(index))
                     }
-                    onComicClicked: function(index) {
-                        Qt.openUrlExternally(mediaModel.getFileUri(index))
-                    }
-                    onBookClicked: function(index) {
-                        Qt.openUrlExternally(mediaModel.getFileUri(index))
-                    }
+                    onComicClicked: function(index) { root.openFile(mediaModel.getFileUri(index)) }
+                    onBookClicked: function(index) { root.openFile(mediaModel.getFileUri(index)) }
+                    onOpenExternallyRequested: function(index) { Qt.openUrlExternally(mediaModel.getFileUri(index)) }
                 }
 
                 MetadataPanel {
