@@ -23,7 +23,7 @@ def _register_qml_types():
     (module "Tetia"). Must run after the profile has been chosen."""
     from tetia.models import (  # noqa: F401
         coverPicker, favoritesModel, file_picker, folderModel, gridModel, mediaActions,
-        mediaModel, metadataModel, profileModel, purgeSession, searchModel, subfolderModel, tagModel, uiSettings, wheelZoom,
+        mediaModel, metadataModel, profileModel, purgeSession, readerSession, searchModel, subfolderModel, tagModel, uiSettings, wheelZoom,
     )
 
 
@@ -58,6 +58,7 @@ def main(argv=None) -> int:
 
     _register_qml_types()
     from tetia.models.bookpages import BookPageProvider
+    from tetia.models.readerSession import ReaderPageProvider
     from tetia.models.thumbModel import ThumbnailProvider
 
     app = QApplication(argv)
@@ -71,6 +72,7 @@ def main(argv=None) -> int:
     engine = QQmlApplicationEngine()
     engine.addImageProvider("thumbnail", ThumbnailProvider())
     engine.addImageProvider("bookpage", BookPageProvider())
+    engine.addImageProvider("readerpage", ReaderPageProvider())
     engine.load(str(qml_main_file()))
 
     # Exit if the QML engine fails to load the file

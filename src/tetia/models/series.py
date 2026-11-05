@@ -158,6 +158,22 @@ def set_series(db, folder: str, is_series: bool):
     covers.notifier.changed.emit(key)
 
 
+def skip_finished(db, folder: str, chapter: str) -> str:
+    """The chapter to resume: `chapter`, or the first unfinished one after it (the last chapter stays
+    put when everything up to it is read)."""
+    files = chapters(folder)
+    if chapter not in files:
+        return chapter
+    index = files.index(chapter)
+    while index < len(files) - 1:
+        found = db.get_media_by_path(os.path.realpath(files[index]))
+        progress = db.get_progress(found[0]) if found else None
+        if not (progress and progress["finished"]):
+            break
+        index += 1
+    return files[index]
+
+
 def open_series(db, folder: str, which: str) -> str:
     """The file:// URI of the chapter a series tile should open ('' if the
     folder has no chapter files), remembered as the last one read."""
@@ -165,6 +181,8 @@ def open_series(db, folder: str, which: str) -> str:
     chapter = chapter_to_open(key, db.get_collection_meta(key)["last_read"] or "", which)
     if not chapter:
         return ""
+    if which == RESUME:
+        chapter = skip_finished(db, key, chapter)
     try:
         db.set_collection_last_read(key, chapter)
     except sqlite3.Error as e:

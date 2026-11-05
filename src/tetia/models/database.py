@@ -121,6 +121,7 @@ class Database:
             (5, self._migrate_v5),
             (6, self._migrate_v6),
             (7, self._migrate_v7),
+            (8, self._migrate_v8),
         )
         for target, step in steps:
             if version < target:
@@ -252,6 +253,28 @@ class Database:
             );
         """)
 
+    def _migrate_v8(self):
+        # The reader's memory: where you stopped in each book, and the pages you starred. Both belong to
+        # the media row, so they go with it if the file is trashed.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS reading_progress (
+                media_id INTEGER PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+                page     INTEGER NOT NULL DEFAULT 0,
+                offset   REAL    NOT NULL DEFAULT 0,
+                total    INTEGER NOT NULL DEFAULT 0,
+                finished INTEGER NOT NULL DEFAULT 0,
+                updated  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS bookmark (
+                media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                page     INTEGER NOT NULL,
+                created  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (media_id, page)
+            );
+        """)
+
     def close(self):
         self.conn.close()
 
@@ -290,6 +313,51 @@ class Database:
             "INSERT INTO setting (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value)))
 
+    # --- Reading progress and bookmarks (the reader) ---
+
+    def get_progress(self, media_id: int):
+        """{'page', 'offset', 'total', 'finished'} for a book, or None if it was never opened."""
+        row = self.conn.execute(
+            "SELECT page, offset, total, finished FROM reading_progress WHERE media_id = ?", (int(media_id),)).fetchone()
+        return {"page": row["page"], "offset": row["offset"], "total": row["total"], "finished": bool(row["finished"])} if row else None
+
+    def get_progress_many(self, media_ids) -> dict:
+        """{media_id: progress} for the books that have one."""
+        ids = [int(i) for i in media_ids]
+        out = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            for row in self.conn.execute(
+                    f"SELECT media_id, page, offset, total, finished FROM reading_progress WHERE media_id IN ({marks})", chunk):
+                out[row["media_id"]] = {"page": row["page"], "offset": row["offset"], "total": row["total"],
+                                        "finished": bool(row["finished"])}
+        return out
+
+    def set_progress(self, media_id: int, page: int, offset: float, total: int, finished: bool):
+        """Remember where the reader stopped. Finished stays set once a book has been read to the end."""
+        self._write(lambda: self.conn.execute(
+            "INSERT INTO reading_progress (media_id, page, offset, total, finished, updated) "
+            "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(media_id) DO UPDATE SET page = excluded.page, offset = excluded.offset, "
+            "total = excluded.total, finished = MAX(finished, excluded.finished), updated = CURRENT_TIMESTAMP",
+            (int(media_id), int(page), float(offset), int(total), 1 if finished else 0)))
+
+    def clear_progress(self, media_id: int):
+        self._write(lambda: self.conn.execute("DELETE FROM reading_progress WHERE media_id = ?", (int(media_id),)))
+
+    def get_bookmarks(self, media_id: int) -> list:
+        return [row["page"] for row in self.conn.execute(
+            "SELECT page FROM bookmark WHERE media_id = ? ORDER BY page", (int(media_id),))]
+
+    def add_bookmark(self, media_id: int, page: int):
+        self._write(lambda: self.conn.execute(
+            "INSERT OR IGNORE INTO bookmark (media_id, page) VALUES (?, ?)", (int(media_id), int(page))))
+
+    def remove_bookmark(self, media_id: int, page: int):
+        self._write(lambda: self.conn.execute(
+            "DELETE FROM bookmark WHERE media_id = ? AND page = ?", (int(media_id), int(page))))
+
     # --- Book covers: the page picked as a file's cover ---
 
     def get_book_cover(self, path: str):
@@ -303,6 +371,9 @@ class Database:
 
     def clear_book_cover(self, path: str):
         self._write(lambda: self.conn.execute("DELETE FROM book_cover WHERE path = ?", (path,)))
+
+    def delete_setting(self, key: str):
+        self._write(lambda: self.conn.execute("DELETE FROM setting WHERE key = ?", (key,)))
 
     # --- Collections: cover image + favorite per folder ---
     # Each commits on its own. Rows with no cover and no favorite are dropped.
