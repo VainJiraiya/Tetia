@@ -347,9 +347,14 @@ Kirigami.Page {
                     property bool relayout: false
                     // Everything below depends on this one item's own size, never on another item's that resizes
                     // a moment apart (the strip's geometry would flicker, and the position with it)
-                    readonly property real minZoom: Math.max(0.15, Math.min(1, height / (3 * Math.max(1, width))))
-                    readonly property real defaultZoom: Math.max(minZoom, Math.min(1, height / (Math.min(page.pageRatio, 1.5) * Math.max(1, width))))
-                    readonly property real stripW: width * defaultZoom * page.stripZoom
+                    // The width is ONE calculation from this item's own size: a chain of bindings (width -> default ->
+                    // strip width) is evaluated in steps, and for an instant the strip had a wrong width, which moved
+                    // the scroll position whenever the window changed size (opening the panel)
+                    function minWidth() { return Math.max(0.15 * width, Math.min(width, height / 3)) }
+                    function defaultWidth() { return Math.max(minWidth(), Math.min(width, height / Math.min(page.pageRatio, 1.5))) }
+                    readonly property real stripW: defaultWidth() * page.stripZoom
+                    readonly property real minZoom: width > 0 ? minWidth() / width : 0.15
+                    readonly property real defaultZoom: width > 0 ? defaultWidth() / width : 1
                     property bool settling: false      // the strip's height has just changed
                     property bool pinnedEnd: false     // the window was at the very end
                     property bool resizing: false
