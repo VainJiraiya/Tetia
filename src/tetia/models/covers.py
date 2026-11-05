@@ -94,31 +94,51 @@ def _new_cover_path(key: str, suffix: str) -> str:
 
 # ---- What a folder tile shows ---------------------------------------------
 
-def first_media_file(local_dir: str, extensions=None, seen=None, depth: int = 0) -> str:
-    """The picture for a folder with no cover: the first matching file in
-    natural name order, else the first one found inside its subfolders (same
-    order), so a folder holding only subfolders borrows a child's picture.
-    `seen` (resolved paths) breaks symlink loops; the walk is depth-capped."""
-    extensions = extensions or MEDIA_EXTENSIONS
+# What a folder tile may show when nothing narrows it to one category (Favorites)
+ANY_PICTURE_EXTENSIONS = MEDIA_EXTENSIONS | {".cbz", ".cbr", ".cb7", ".cbt", ".pdf", ".epub"}
+
+
+def tile_picture(directory: str, extensions, meta_for, seen=None, depth: int = 0) -> str:
+    """The picture on a folder's tile, the same wherever the folder is shown.
+
+    In order: the cover the user chose; a loose picture named cover, folder,
+    poster... lying in it; for a series its first chapter; the first file with one
+    of `extensions` in natural name order; else whatever the first subfolder shows
+    for itself (so a folder of series borrows the first series' cover, and a
+    subfolder's own cover, series flag and loose picture all count). `meta_for(path)`
+    gives a folder's {cover_path, is_series, ...}. `seen` (resolved paths) breaks
+    symlink loops and the walk is depth-capped."""
     seen = set() if seen is None else seen
     try:
-        real = os.path.realpath(local_dir)
-        if real in seen or depth > 8 or not os.path.isdir(local_dir):
+        real = os.path.realpath(directory)
+        if real in seen or depth > 8 or not os.path.isdir(directory):
             return ""
         seen.add(real)
+        meta = meta_for(directory) or {}
+        cover = meta.get("cover_path")
+        if cover and os.path.exists(cover):
+            return cover
+        from tetia.models import series        # series imports this module
+        loose = series.loose_cover(directory)
+        if loose:
+            return loose
+        if meta.get("is_series"):
+            chapters = series.chapters(directory)
+            if chapters:
+                return chapters[0]
         files, dirs = [], []
-        for entry in os.listdir(local_dir):
+        for entry in os.listdir(directory):
             if entry.startswith("."):
                 continue
-            full_path = os.path.join(local_dir, entry)
+            full_path = os.path.join(directory, entry)
             if os.path.isdir(full_path):
                 dirs.append(entry)
             elif os.path.isfile(full_path) and Path(entry).suffix.lower() in extensions:
                 files.append(entry)
         if files:
-            return os.path.join(local_dir, min(files, key=natural_key))
+            return os.path.join(directory, min(files, key=natural_key))
         for entry in sorted(dirs, key=natural_key):
-            found = first_media_file(os.path.join(local_dir, entry), extensions, seen, depth + 1)
+            found = tile_picture(os.path.join(directory, entry), extensions, meta_for, seen, depth + 1)
             if found:
                 return found
     except OSError:
@@ -126,21 +146,16 @@ def first_media_file(local_dir: str, extensions=None, seen=None, depth: int = 0)
     return ""
 
 
-def hero_path(key: str, cover_path=None, is_series: bool = False) -> str:
-    """The picture for a folder tile: its cover if one is set and still on
-    disk, else a loose picture named cover/folder/poster/... lying in it, else
-    (for a series) its first chapter, else the first media file inside."""
-    if cover_path and os.path.exists(cover_path):
-        return cover_path
-    from tetia.models import series        # series imports this module
-    loose = series.loose_cover(key)
-    if loose:
-        return loose
-    if is_series:
-        chapters = series.chapters(key)
-        if chapters:
-            return chapters[0]
-    return first_media_file(key)
+def hero_path(key: str, cover_path=None, is_series: bool = False, extensions=None, db=None) -> str:
+    """tile_picture for the folder `key`, whose own cover and series flag are given
+    (the folders inside it are looked up in the database)."""
+    db = db or get_database()
+    own = {"cover_path": cover_path, "is_series": is_series}
+
+    def meta_for(path):
+        return own if path == key else db.get_collection_meta(path)
+
+    return tile_picture(key, extensions or ANY_PICTURE_EXTENSIONS, meta_for)
 
 
 # ---- Setting and clearing -------------------------------------------------

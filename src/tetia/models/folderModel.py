@@ -10,6 +10,7 @@ from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QUrl, Signal, Sl
 from PySide6.QtQml import QmlElement
 
 from tetia.models import covers, series
+from tetia.models.scanner import ALL_MEDIA_EXTENSIONS as _EVERYTHING, CATEGORY_EXTENSIONS
 from tetia.models.covers import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from tetia.models.database import Database
 
@@ -66,7 +67,8 @@ class FolderModel(QAbstractListModel):
         elif role == self.Roles.HeroPathRole:
             meta = self._meta_for(folder)
             return covers.hero_path(covers.folder_key(folder["path"]), meta.get("cover_path"),
-                                    bool(meta.get("is_series")))
+                                    bool(meta.get("is_series")),
+                                    CATEGORY_EXTENSIONS.get(folder["category"], _EVERYTHING), self.db)
         elif role == self.Roles.ItemCountRole:
             if self._meta_for(folder).get("is_series"):
                 return len(series.chapters(covers.folder_key(folder["path"])))
@@ -95,9 +97,6 @@ class FolderModel(QAbstractListModel):
     def _uri_to_local_path(self, uri: str) -> str:
         """Convert a file:// URI to a local filesystem path (decoding %XX)."""
         return QUrl(uri).toLocalFile() or uri
-
-    def _find_first_media(self, folder_path: str) -> str:
-        return covers.first_media_file(self._uri_to_local_path(folder_path))
 
     def _count_media(self, folder_path: str) -> int:
         local_path = self._uri_to_local_path(folder_path)
@@ -172,21 +171,24 @@ class FolderModel(QAbstractListModel):
 
     def _on_collection_changed(self, key: str):
         for row, folder in enumerate(self._folders):
-            if covers.folder_key(folder["path"]) != key:
-                continue
-            try:
-                self._meta[key] = self.db.get_collection_meta(key)
-            except sqlite3.Error:
-                return
-            idx = self.index(row)
-            self.dataChanged.emit(idx, idx, [
-                self.Roles.HeroPathRole,
-                self.Roles.IsFavoriteRole,
-                self.Roles.HasCustomCoverRole,
-                self.Roles.IsSeriesRole,
-                self.Roles.ItemCountRole,
-            ])
-            return
+            own = covers.folder_key(folder["path"])
+            if key == own:
+                try:
+                    self._meta[key] = self.db.get_collection_meta(key)
+                except sqlite3.Error:
+                    return
+                idx = self.index(row)
+                self.dataChanged.emit(idx, idx, [
+                    self.Roles.HeroPathRole,
+                    self.Roles.IsFavoriteRole,
+                    self.Roles.HasCustomCoverRole,
+                    self.Roles.IsSeriesRole,
+                    self.Roles.ItemCountRole,
+                ])
+            elif key.startswith(own + os.sep):
+                # a folder inside this one changed (a cover, or made a series): the tile may borrow its picture
+                idx = self.index(row)
+                self.dataChanged.emit(idx, idx, [self.Roles.HeroPathRole])
 
     @Property(str, notify=categoryChanged)
     def currentCategory(self):

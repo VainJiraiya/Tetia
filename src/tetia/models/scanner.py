@@ -25,6 +25,14 @@ EBOOK_EXTENSIONS = {".epub", ".pdf", ".mobi", ".azw", ".azw3", ".fb2", ".djvu"}
 MANGA_TAB_EXTENSIONS = COMIC_EXTENSIONS | {".pdf"}
 ALL_MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | COMIC_EXTENSIONS | EBOOK_EXTENSIONS
 
+# The files each category (tab) of a folder lists, for the picture on a folder tile
+CATEGORY_EXTENSIONS = {
+    "photos": IMAGE_EXTENSIONS,
+    "videos": VIDEO_EXTENSIONS,
+    "manga": MANGA_TAB_EXTENSIONS,
+    "books": EBOOK_EXTENSIONS,
+}
+
 
 def kind_from_ext(ext: str) -> str:
     if ext in IMAGE_EXTENSIONS:

@@ -40,7 +40,7 @@ _MODE_EXTENSIONS = {
     MediaModel.FilterMode.BooksOnly: EBOOK_EXTENSIONS,
 }
 # Files the thumbnail provider can draw, for tile pictures
-_PICTURE_EXTENSIONS = covers.MEDIA_EXTENSIONS | COMIC_EXTENSIONS
+_PICTURE_EXTENSIONS = covers.ANY_PICTURE_EXTENSIONS
 
 
 def _scan(directory: str):
@@ -118,19 +118,14 @@ class SubfolderModel(QAbstractListModel):
         return cover if cover and os.path.exists(cover) else None
 
     def _hero(self, entry: dict) -> str:
-        """Own cover, else a loose cover picture, else (a series) its first
-        chapter, else the first matching picture inside (any depth). The same
-        lookup as the Favorites tab, so both show the same picture."""
-        cover = self._cover(entry) or series.loose_cover(entry["path"])
-        if cover:
-            return cover
-        if self._is_series(entry):
-            chapters = series.chapters(entry["path"])
-            if chapters:
-                return chapters[0]
-        return covers.first_media_file(
-            entry["path"], self._extensions() & _PICTURE_EXTENSIONS,
-            {os.path.realpath(self._parent_dir)})
+        """The picture on the tile: the same lookup as the Favorites tab and the
+        collections grid (see covers.tile_picture), limited to what this tab lists."""
+        def meta_for(path):
+            key = covers.folder_key(path)
+            return self._meta.get(key) or self._db.get_collection_meta(key)
+
+        return covers.tile_picture(entry["path"], self._extensions() & _PICTURE_EXTENSIONS, meta_for,
+                                   {os.path.realpath(self._parent_dir)})
 
     def data(self, index, role):
         if not index.isValid() or not (0 <= index.row() < len(self._dirs)):
@@ -202,21 +197,23 @@ class SubfolderModel(QAbstractListModel):
 
     def _on_collection_changed(self, key: str):
         for row, entry in enumerate(self._dirs):
-            if covers.folder_key(entry["path"]) != key:
-                continue
-            try:
-                self._meta[key] = self._db.get_collection_meta(key)
-            except sqlite3.Error:
-                return
-            idx = self.index(row)
-            self.dataChanged.emit(idx, idx, [
-                self.Roles.HeroPathRole,
-                self.Roles.IsFavoriteRole,
-                self.Roles.HasCustomCoverRole,
-                self.Roles.IsSeriesRole,
-                self.Roles.ItemCountRole,
-            ])
-            return
+            own = covers.folder_key(entry["path"])
+            if key == own:
+                try:
+                    self._meta[key] = self._db.get_collection_meta(key)
+                except sqlite3.Error:
+                    return
+                idx = self.index(row)
+                self.dataChanged.emit(idx, idx, [
+                    self.Roles.HeroPathRole,
+                    self.Roles.IsFavoriteRole,
+                    self.Roles.HasCustomCoverRole,
+                    self.Roles.IsSeriesRole,
+                    self.Roles.ItemCountRole,
+                ])
+            elif key.startswith(own + os.sep):
+                idx = self.index(row)
+                self.dataChanged.emit(idx, idx, [self.Roles.HeroPathRole])
 
     # ---- favorites and covers (same slots as FolderModel) ------------------
 

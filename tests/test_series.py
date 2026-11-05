@@ -239,3 +239,95 @@ def test_sort_mode_does_not_reorder_search_results(tmp_path, qapp):
     model.sortMode = MediaModel.SortMode.NameDescending
     model.load_media_ids(list(reversed(ids)))                           # ranked order from a search
     assert [model.data(model.index(i), MediaModel.Roles.MediaIdRole) for i in range(model.rowCount())] == list(reversed(ids))
+
+
+# ---- the picture on a folder tile --------------------------------------------------------------------
+
+def _folder_model(category, *folders):
+    from tetia.models.folderModel import FolderModel
+    model = FolderModel()
+    model.currentCategory = category
+    for folder in folders:
+        model.addFolder(covers.folder_uri(str(folder)), category)
+    return model
+
+
+def _hero(model, row=0):
+    return model.data(model.index(row), model.Roles.HeroPathRole)
+
+
+def test_a_top_level_folder_shows_its_first_loose_cbz(tmp_path, qapp):
+    manga = tmp_path / "Manga"
+    _touch(manga, "ch 10.cbz", "ch 2.cbz", "notes.txt")
+    model = _folder_model("manga", manga)
+    assert _hero(model) == str(manga / "ch 2.cbz")                       # natural order, the file itself
+
+
+def test_a_top_level_folder_borrows_the_picture_of_a_series_inside_it(tmp_path, qapp):
+    library = tmp_path / "Library"
+    _touch(library / "Dragon", "Vol.1 Ch.2.cbz", "Vol.1 Ch.1.cbz")
+    _touch(library / "Other", "x.cbz")
+    model = _folder_model("manga", library)
+    assert _hero(model) == str(library / "Dragon" / "Vol.1 Ch.1.cbz")    # first folder, first chapter
+    series.set_series(get_database(), str(library / "Dragon"), True)
+    assert _hero(model) == str(library / "Dragon" / "Vol.1 Ch.1.cbz")    # same, now as a series
+    _touch(library / "Dragon", "cover.png")                              # a loose cover on the series
+    assert _hero(model) == str(library / "Dragon" / "cover.png")
+
+
+def test_the_picture_of_a_folder_inside_counts_whatever_it_is(tmp_path, qapp):
+    library = tmp_path / "Library"
+    _touch(library / "A", "a2.cbz", "a1.cbz")
+    _touch(library / "B", "b1.cbz")
+    chosen = tmp_path / "mine.png"
+    chosen.write_bytes(b"x")
+    covers.set_cover_from_file(str(library / "A"), str(chosen))          # the user chose A's cover
+    model = _folder_model("manga", library)
+    assert os.path.basename(_hero(model)).endswith(".png") and "covers" in _hero(model)
+
+
+def test_the_tile_updates_when_a_folder_inside_it_becomes_a_series(tmp_path, qapp):
+    library = tmp_path / "Library"
+    _touch(library / "Dragon", "c1.cbz")
+    model = _folder_model("manga", library)
+    changed = []
+    model.dataChanged.connect(lambda top, bottom, roles: changed.append(list(roles)))
+    series.set_series(get_database(), str(library / "Dragon"), True)     # a folder inside, not the tile itself
+    assert any(model.Roles.HeroPathRole in roles for roles in changed)
+
+
+def test_each_tab_only_shows_its_own_kind_of_file(tmp_path, qapp):
+    mixed = tmp_path / "Mixed"
+    _touch(mixed, "a_clip.mp4", "b_pic.png", "c_book.epub", "d_scan.pdf", "e_comic.cbz")
+    assert _hero(_folder_model("photos", mixed)) == str(mixed / "b_pic.png")      # not the earlier video
+    assert _hero(_folder_model("videos", mixed)) == str(mixed / "a_clip.mp4")
+    assert _hero(_folder_model("manga", mixed)) in (str(mixed / "d_scan.pdf"), str(mixed / "e_comic.cbz"))
+    assert _hero(_folder_model("books", mixed)) == str(mixed / "c_book.epub")
+
+
+def test_the_subfolder_grid_uses_the_same_rule(tmp_path, qapp):
+    from tetia.models.mediaModel import MediaModel
+    from tetia.models.subfolderModel import SubfolderModel
+    parent = tmp_path / "Parent"
+    _touch(parent / "Group" / "Title", "Vol.1 Ch.2.cbz", "Vol.1 Ch.1.cbz")     # a series, one level further down
+    series.set_series(get_database(), str(parent / "Group" / "Title"), True)
+    model = SubfolderModel()
+    model.filterMode = int(MediaModel.FilterMode.MangaOnly)
+    model.load(str(parent))
+    assert model.data(model.index(0), model.Roles.HeroPathRole) == str(parent / "Group" / "Title" / "Vol.1 Ch.1.cbz")
+
+
+def test_a_loose_pdf_and_epub_give_a_tile_picture(tmp_path, qapp):
+    books = tmp_path / "Books"
+    _touch(books, "novel.epub")
+    assert _hero(_folder_model("books", books)) == str(books / "novel.epub")
+    docs = tmp_path / "Docs"
+    _touch(docs, "paper.pdf")
+    assert _hero(_folder_model("manga", docs)) == str(docs / "paper.pdf")      # PDFs show in the Manga tab too
+
+
+def test_symlink_loops_do_not_hang_the_picture_lookup(tmp_path, qapp):
+    loop = tmp_path / "Loop"
+    (loop / "inner").mkdir(parents=True)
+    os.symlink(str(loop), str(loop / "inner" / "back"))
+    assert covers.hero_path(str(loop), extensions={".cbz"}) == ""
