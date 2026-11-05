@@ -411,3 +411,49 @@ def test_the_subfolder_grid_flattens_too(tmp_path, qapp):
     assert model.openSingleFile(covers.folder_uri(str(parent / "Solo"))).endswith("/Solo/only.cbz")
     model.filterMode = int(MediaModel.FilterMode.ImagesOnly)                       # photos: never
     assert model.openSingleFile(covers.folder_uri(str(parent / "Solo"))) == ""
+
+
+# ---- the Favorites tab: one click for a series or a one-file folder -----------------------------------------
+
+def _favorites_collections(tmp_path, *folders):
+    from tetia.models.favoritesModel import FavoritesModel
+    db = get_database()
+    db.add_folder(covers.folder_uri(str(tmp_path)), "manga")        # the library root holding them
+    for folder in folders:
+        db.set_collection_favorite(covers.folder_key(str(folder)), True)
+    model = FavoritesModel()
+    tiles = [t for row in model.layoutRows(8) if row["type"] == "tiles" and row["kind"] == "collection"
+             for t in row["items"]]
+    return model, {t["fileName"]: t for t in tiles}
+
+
+def test_a_favorited_one_file_folder_opens_its_file_in_one_click(tmp_path, qapp):
+    _touch(tmp_path / "Solo", "only.cbz", "readme.txt")
+    _touch(tmp_path / "Pair", "a.cbz", "b.cbz")
+    _touch(tmp_path / "Clip", "movie.mkv")
+    _touch(tmp_path / "Photo", "pic.png")
+    model, tiles = _favorites_collections(tmp_path, tmp_path / "Solo", tmp_path / "Pair",
+                                          tmp_path / "Clip", tmp_path / "Photo")
+    assert model.openCollection(tiles["Solo"]["folderUri"]).endswith("/Solo/only.cbz")
+    assert model.openCollection(tiles["Clip"]["folderUri"]).endswith("/Clip/movie.mkv")
+    assert model.openCollection(tiles["Pair"]["folderUri"]) == ""             # a real folder: browse it
+    assert model.openCollection(tiles["Photo"]["folderUri"]) == ""            # photos open in the viewer
+    assert tiles["Solo"]["opensFile"] and tiles["Clip"]["opensFile"]
+    assert not tiles["Pair"]["opensFile"] and not tiles["Photo"]["opensFile"]
+
+
+def test_a_favorited_series_opens_the_chapter_to_resume(tmp_path, qapp):
+    _touch(tmp_path / "Dragon", "Vol.1 Ch.1.cbz", "Vol.1 Ch.2.cbz", "Vol.1 Ch.3.cbz")
+    series.set_series(get_database(), str(tmp_path / "Dragon"), True)
+    model, tiles = _favorites_collections(tmp_path, tmp_path / "Dragon")
+    assert tiles["Dragon"]["opensFile"]
+    assert model.openCollection(tiles["Dragon"]["folderUri"]).endswith("Ch.1.cbz")       # nothing read yet
+    series.open_series(get_database(), str(tmp_path / "Dragon"), "next")                   # chapter 2 was opened
+    assert model.openCollection(tiles["Dragon"]["folderUri"]).endswith("Ch.2.cbz")        # resumes there
+
+
+def test_a_series_without_chapters_falls_back_to_the_folder(tmp_path, qapp):
+    (tmp_path / "Empty").mkdir()
+    series.set_series(get_database(), str(tmp_path / "Empty"), True)
+    model, tiles = _favorites_collections(tmp_path, tmp_path / "Empty")
+    assert model.openCollection(tiles["Empty"]["folderUri"]) == "" and not tiles["Empty"]["opensFile"]

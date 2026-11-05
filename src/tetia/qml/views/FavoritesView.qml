@@ -88,7 +88,16 @@ Rectangle {
         id: contextMenu
         property int mediaId: -1
         property string folderUri: ""   // set instead of mediaId for a folder tile
+        property bool opensFile: false  // the folder tile opens a file, so the folder needs its own way in
 
+        MenuItem {
+            text: "Browse folder"
+            icon.name: "folder-open"
+            visible: contextMenu.opensFile
+            height: visible ? implicitHeight : 0
+            onTriggered: root.collectionClicked(contextMenu.folderUri)
+        }
+        MenuSeparator { visible: contextMenu.opensFile }
         MenuItem {
             text: "Remove from favorites"
             icon.name: "non-starred-symbolic"
@@ -232,9 +241,14 @@ Rectangle {
                                         contextMenu.mediaId = tile.modelData.mediaId
                                         contextMenu.folderUri = tile.modelData.kind === "collection"
                                                                 ? tile.modelData.folderUri : ""
+                                        contextMenu.opensFile = tile.modelData.kind === "collection"
+                                                                && !!tile.modelData.opensFile
                                         contextMenu.popup()
                                     } else if (tile.modelData.kind === "collection") {
-                                        root.collectionClicked(tile.modelData.folderUri)
+                                        // A series or a one-file folder opens its file in one click
+                                        var target = allModel.openCollection(tile.modelData.folderUri)
+                                        if (target !== "") root.openExternally(target)
+                                        else root.collectionClicked(tile.modelData.folderUri)
                                     } else if (tile.modelData.kind === "image") {
                                         root.imageClicked(tile.modelData.kindIndex)
                                     } else {

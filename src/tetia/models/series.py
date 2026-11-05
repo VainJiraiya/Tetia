@@ -17,7 +17,7 @@ from pathlib import Path
 from PySide6.QtCore import QUrl
 
 from tetia.models import covers
-from tetia.models.scanner import MANGA_TAB_EXTENSIONS
+from tetia.models.scanner import EBOOK_EXTENSIONS, MANGA_TAB_EXTENSIONS, VIDEO_EXTENSIONS
 
 # A loose picture with one of these names (any common image extension) is the
 # folder's cover; checked in this order.
@@ -96,6 +96,8 @@ def loose_cover(folder: str) -> str:
 # Categories whose one-file folders are shown as the file itself. Photos are left out:
 # a photo opens in Tetia's own viewer, which works on a whole folder of pictures.
 FLATTEN_CATEGORIES = ("manga", "books", "videos")
+# For a folder met outside any one tab (the Favorites tab): a file of any of those kinds
+FLATTEN_EXTENSIONS = MANGA_TAB_EXTENSIONS | EBOOK_EXTENSIONS | VIDEO_EXTENSIONS
 
 
 def single_file(directory: str, extensions) -> str:
@@ -168,3 +170,23 @@ def open_series(db, folder: str, which: str) -> str:
     except sqlite3.Error as e:
         logger.error("Failed to remember the chapter for %s: %s", key, e)
     return QUrl.fromLocalFile(chapter).toString(QUrl.FullyEncoded)
+
+
+def direct_target(db, folder: str) -> str:
+    """The file:// URI a tile for `folder` opens instead of the folder, for a place that
+    knows no tab (the Favorites tab): the chapter to resume if it is a series, else the one
+    file of a one-file folder, else '' (it opens as a folder)."""
+    key = covers.folder_key(folder)
+    if db.get_collection_meta(key)["is_series"]:
+        uri = open_series(db, key, RESUME)
+        if uri:
+            return uri
+    return open_single_file(key, FLATTEN_EXTENSIONS)
+
+
+def opens_directly(db, folder: str) -> bool:
+    """Whether direct_target would open a file (without remembering anything)."""
+    key = covers.folder_key(folder)
+    if db.get_collection_meta(key)["is_series"] and chapters(key):
+        return True
+    return bool(single_file(key, FLATTEN_EXTENSIONS))

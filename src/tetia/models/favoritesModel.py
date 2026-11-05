@@ -9,7 +9,7 @@ from PySide6.QtCore import (QAbstractListModel, QModelIndex, Property, QUrl, Qt,
                             Signal, Slot)
 from PySide6.QtQml import QmlElement
 
-from tetia.models import covers
+from tetia.models import covers, series
 from tetia.models.database import get_database
 
 logger = logging.getLogger(__name__)
@@ -97,9 +97,17 @@ class FavoritesModel(QAbstractListModel):
                 "name": os.path.basename(key) or key,
                 "hero": covers.hero_path(key, row["cover_path"], bool(row["is_series"])),
                 "uri": covers.folder_uri(key),
+                # a series, or a folder holding one file, opens that file instead of the folder
+                "opensFile": series.opens_directly(self._db, key),
             })
         out.sort(key=lambda c: c["name"].lower())
         self._collections = out
+
+    @Slot(str, result=str)
+    def openCollection(self, folder_uri: str) -> str:
+        """The URI of the file a favorited folder's tile opens (the chapter to resume for a
+        series, the only file of a one-file folder), or '' when it opens as a folder."""
+        return series.direct_target(self._db, folder_uri)
 
     def _apply_filter(self):
         self._rows = [r for r in self._all if not self._kind or r["kind"] == self._kind]
@@ -243,6 +251,7 @@ class FavoritesModel(QAbstractListModel):
                 "kind": "collection",
                 "kindIndex": i,
                 "folderUri": c["uri"],
+                "opensFile": c["opensFile"],
             } for i, c in enumerate(self._collections)]
             for start in range(0, len(tiles), columns):
                 out.append({"type": "tiles", "kind": "collection", "items": tiles[start:start + columns]})
