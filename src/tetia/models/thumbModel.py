@@ -3,6 +3,7 @@
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -163,6 +164,18 @@ def _save_thumbnail(base: Path, uri: str, uri_md5: str, img: QImage, local_path:
 _TIERS = (("normal", 128), ("large", 256), ("x-large", 512))
 
 
+def forget_thumbnails(local_path: str):
+    """Delete every cached thumbnail of a file, so the next request makes a fresh one
+    (used when its cover is changed by hand)."""
+    name = hashlib.md5(_local_path_to_thumb_uri(local_path).encode("utf-8")).hexdigest() + ".png"
+    base = profiles.thumbnail_base()
+    for tier in [t for t, _ in _TIERS] + ["xx-large"]:
+        try:
+            (base / tier / name).unlink()
+        except OSError:
+            pass
+
+
 class ThumbnailProvider(QQuickImageProvider):
     def __init__(self):
         super().__init__(QQuickImageProvider.Image)
@@ -232,6 +245,9 @@ class ThumbnailProvider(QQuickImageProvider):
             return True
 
     def requestImage(self, id_string: str, requested_size: QSize, size: QSize):
+        # QML adds "?v=<n>" after a cover is changed by hand, so its image cache reloads
+        # the picture; the number is not part of the file's name
+        id_string = re.sub(r"\?v=\d+$", "", id_string)
         # id_string may arrive either as a plain local path or as a file:// URI
         # depending on how QML built the "image://provider/..." source string.
         q = QUrl(id_string)

@@ -72,6 +72,22 @@ Kirigami.ApplicationWindow {
 
     UiSettings { id: uiSettings }
 
+    // Picking a cover page by hand. A change bumps coverRevision, which the grids add to their
+    // picture URLs so the tile reloads (an image whose URL is unchanged keeps the old picture).
+    property int coverRevision: 0
+    CoverPicker {
+        id: coverPicker
+        onCoverChanged: root.coverRevision++
+    }
+    CoverPickerDialog {
+        id: coverDialog
+        picker: coverPicker
+        onApplied: showPassiveNotification("Cover updated")
+        onFailed: showPassiveNotification("That page could not be used as the cover")
+    }
+    function pickCoverOfMedia(mediaId) { if (coverPicker.open(mediaId)) coverDialog.open() }
+    function pickCoverOfFile(path) { if (coverPicker.openPath(path)) coverDialog.open() }
+
     Shortcut { sequences: ["Ctrl++", "Ctrl+="]; enabled: root.tileTarget !== ""; onActivated: root.stepTileLevel(1) }
     Shortcut { sequence: "Ctrl+-"; enabled: root.tileTarget !== ""; onActivated: root.stepTileLevel(-1) }
     Shortcut { sequence: "Ctrl+0"; enabled: root.tileTarget !== ""; onActivated: root.setTileLevel(root.tileTarget, 0) }
@@ -848,6 +864,8 @@ Kirigami.ApplicationWindow {
             removeMode: root.isRemoveMode
             onRemoveModeExitRequested: root.isRemoveMode = false
             tileLevel: root.topTileLevel
+            coverRevision: root.coverRevision
+            onCoverPickerRequested: function(filePath) { root.pickCoverOfFile(filePath) }
 
             onAddFolderRequested: {
                 root.addingAsSeries = false
@@ -881,6 +899,7 @@ Kirigami.ApplicationWindow {
         z: 1
         anchors.fill: parent
         visible: root.onFavoritesTab && pageStack.depth === 1
+        coverRevision: root.coverRevision
 
         onImageClicked: function(index) {
             pageStack.push(imageViewerComponent, {
@@ -951,6 +970,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillHeight: true
                     model: gridModel
                     tileLevel: root.levelFor((gridPage.filterCategory || folderModel.currentCategory) + ".grid")
+                    coverRevision: root.coverRevision
+                    onCoverPickerRequested: function(mediaId) { root.pickCoverOfMedia(mediaId) }
+                    onSubfolderCoverPickerRequested: function(filePath) { root.pickCoverOfFile(filePath) }
                     mediaBackend: mediaModel
                     tagBackend: tagModel
                     // Only this page reacts: while the image viewer is open on

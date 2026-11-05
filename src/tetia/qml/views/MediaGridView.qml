@@ -33,6 +33,14 @@ GridView {
     // The context menu's "Metadata" asks the host to show this item's metadata panel.
     signal metadataRequested(int mediaId)
 
+    // "Choose cover page..." on a comic or book (by id) or on a one-file subfolder (by the file's path)
+    signal coverPickerRequested(int mediaId)
+    signal subfolderCoverPickerRequested(string filePath)
+
+    // A cover changed by hand: this number is added to the pictures' URLs so they reload
+    property int coverRevision: 0
+    readonly property string revisionSuffix: coverRevision > 0 ? "?v=" + coverRevision : ""
+
     // Tile size: -2 .. +2, 0 being the size the grid always had. The scale is
     // applied to the cell; thumbHint is the thumbnail size to ask for (0: no
     // preference, so the biggest cached one). -2 and -1 are the normal (128 px)
@@ -268,6 +276,16 @@ GridView {
         }
 
         MenuItem {
+            id: pickCoverItem
+            text: "Choose cover page\u2026"
+            icon.name: "view-preview"
+            // only a comic or a book has pages to pick from
+            visible: grid.contextMenuData.kind === "comic" || grid.contextMenuData.kind === "ebook"
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.coverPickerRequested(grid.contextMenuData.mediaId)
+        }
+
+        MenuItem {
             id: favoriteItem
             enabled: grid.mediaBackend !== null
             onTriggered: {
@@ -317,7 +335,15 @@ GridView {
         property bool hasCustomCover: false
         property bool isSeries: false
         property bool isSingle: false
+        property string singleFile: ""
 
+        MenuItem {
+            text: "Choose cover page\u2026"
+            icon.name: "view-preview"
+            visible: subfolderMenu.isSingle
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderCoverPickerRequested(subfolderMenu.singleFile)
+        }
         MenuItem {
             text: "Browse folder"
             icon.name: "folder-open"
@@ -489,7 +515,7 @@ GridView {
                     anchors.margins: 4
                     anchors.bottomMargin: 6
                     source: model.subfolderHero && model.subfolderHero.length > 0
-                            ? "image://thumbnail/" + model.subfolderHero : ""
+                            ? "image://thumbnail/" + model.subfolderHero + grid.revisionSuffix : ""
                     sourceSize: grid.thumbHint > 0 ? Qt.size(grid.thumbHint, grid.thumbHint) : Qt.size(0, 0)
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
@@ -552,6 +578,7 @@ GridView {
                             subfolderMenu.isFavorite = model.subfolderFavorite
                             subfolderMenu.isSeries = !!model.subfolderIsSeries
                             subfolderMenu.isSingle = !!model.subfolderSingleFile
+                            subfolderMenu.singleFile = model.subfolderSingleFile || ""
                             subfolderMenu.hasCustomCover = grid.subfolderBackend
                                 ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
                             subfolderMenu.popup()
@@ -609,7 +636,7 @@ GridView {
                     anchors.margins: 4
                     anchors.bottomMargin: 6
 
-                    source: model.isFolder ? "" : "image://thumbnail/" + model.fileUri
+                    source: model.isFolder ? "" : "image://thumbnail/" + model.fileUri + grid.revisionSuffix
                     sourceSize: grid.thumbHint > 0 ? Qt.size(grid.thumbHint, grid.thumbHint) : Qt.size(0, 0)
 
                     // Scale down so the entire picture fits without cropping

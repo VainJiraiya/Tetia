@@ -33,6 +33,10 @@ Rectangle {
     // form FolderGridView's folderClicked carries.
     signal collectionClicked(string folderUri)
 
+    // A cover changed by hand: this number is added to the pictures' URLs so they reload
+    property int coverRevision: 0
+    readonly property string revisionSuffix: coverRevision > 0 ? "?v=" + coverRevision : ""
+
     readonly property int cellWidth: 160
     readonly property int cellHeight: 185
 
@@ -202,7 +206,7 @@ Rectangle {
                                 anchors.bottomMargin: 6
                                 // A folder with no picture has an empty fileUri
                                 source: tile.modelData.fileUri !== ""
-                                        ? "image://thumbnail/" + tile.modelData.fileUri : ""
+                                        ? "image://thumbnail/" + tile.modelData.fileUri + root.revisionSuffix : ""
                                 fillMode: Image.PreserveAspectFit
                                 asynchronous: true
                             }

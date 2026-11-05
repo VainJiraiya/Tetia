@@ -11,8 +11,10 @@ webtoon strip) is cut to a portrait piece from its top. cbr and cb7 archives nee
 an external tool and are not read.
 """
 import logging
+import os
 import posixpath
 import re
+import sqlite3
 import zipfile
 from pathlib import Path
 from urllib.parse import unquote
@@ -22,6 +24,7 @@ from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt
 from PySide6.QtGui import QImage, QImageReader, QPainter
 
 from tetia.models import covers
+from tetia.models.database import app_data_dir
 from tetia.models.metadata import _local, _read_member
 
 logger = logging.getLogger(__name__)
@@ -136,11 +139,11 @@ def _cbz_pages(path: str, edge: int, limit: int) -> list:
 
 def _epub_candidates(path: str) -> list:
     """Member names of pictures that could be the cover, best first."""
-    with zipfile.ZipFile(path) as archive:
-        container = ElementTree.fromstring(_read_member(archive, "META-INF/container.xml"))
+    with zipfile.ZipFile(path) as package:
+        container = ElementTree.fromstring(_read_member(package, "META-INF/container.xml"))
         rootfile = next(el.get("full-path") for el in container.iter() if _local(el.tag) == "rootfile")
-        opf = ElementTree.fromstring(_read_member(archive, rootfile))
-        names = set(archive.namelist())
+        opf = ElementTree.fromstring(_read_member(package, rootfile))
+        names = set(package.namelist())
     base = posixpath.dirname(rootfile)
     manifest = {}          # id -> (member name, properties)
     cover_id = ""
@@ -168,11 +171,11 @@ def _epub_pages(path: str, edge: int, limit: int) -> list:
     pages = []
     try:
         candidates = _epub_candidates(path)
-        with zipfile.ZipFile(path) as archive:
+        with zipfile.ZipFile(path) as package:
             for member in candidates[:limit]:
-                if archive.getinfo(member).file_size > MAX_PAGE_BYTES:
+                if package.getinfo(member).file_size > MAX_PAGE_BYTES:
                     continue
-                image = decode(archive.read(member), edge)
+                image = decode(package.read(member), edge)
                 if not image.isNull():
                     pages.append(image)
                     if len(pages) == 1 and content(image) >= LOW_BELOW:
@@ -183,7 +186,8 @@ def _epub_pages(path: str, edge: int, limit: int) -> list:
     return pages
 
 
-def _pdf_pages(path: str, edge: int, limit: int) -> list:
+def _pdf_pages_at(path: str, indexes: list, edge: int) -> list:
+    """The listed pages of a PDF rendered on white paper, no bigger than `edge` pixels."""
     try:
         from PySide6.QtPdf import QPdfDocument
     except ImportError:
@@ -193,7 +197,9 @@ def _pdf_pages(path: str, edge: int, limit: int) -> list:
         return []
     pages = []
     try:
-        for index in range(min(limit, document.pageCount())):
+        for index in indexes:
+            if not 0 <= index < document.pageCount():
+                continue
             points = document.pagePointSize(index)
             scale = edge / max(points.width(), points.height(), 1.0)
             size = QSize(max(1, round(points.width() * scale)), max(1, round(points.height() * scale)))
@@ -212,11 +218,52 @@ def _pdf_pages(path: str, edge: int, limit: int) -> list:
     return pages
 
 
+def _pdf_pages(path: str, edge: int, limit: int) -> list:
+    try:
+        from PySide6.QtPdf import QPdfDocument
+    except ImportError:
+        return []
+    document = QPdfDocument()
+    if document.load(path) != QPdfDocument.Error.None_:
+        return []
+    count = document.pageCount()
+    document.close()
+    return _pdf_pages_at(path, list(range(min(limit, count))), edge)
+
+
 # ---- Entry point ------------------------------------------------------------------------
 
-def make_cover(path: str, edge: int) -> QImage:
+def chosen_cover(path: str) -> str:
+    """The image the user picked as this file's cover ('' if none or it is gone).
+
+    Read with a connection that lives for this one lookup: the thumbnail provider runs
+    on worker threads, and a connection kept open there could not be closed before a
+    vault is locked."""
+    try:
+        connection = sqlite3.connect(f"file:{app_data_dir() / 'gallery.db'}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error:
+        return ""
+    try:
+        row = connection.execute("SELECT image_path FROM book_cover WHERE path = ?", (path,)).fetchone()
+    except sqlite3.Error:           # an older database without the table
+        return ""
+    finally:
+        connection.close()
+    return row[0] if row and os.path.isfile(row[0]) else ""
+
+
+def make_cover(path: str, edge: int, use_choice: bool = True) -> QImage:
     """The cover of the comic, EPUB or PDF at `path`, no bigger than `edge` pixels
-    (a null image if it cannot be read)."""
+    (a null image if it cannot be read). The page the user picked wins over the automatic one."""
+    if use_choice:
+        picked = chosen_cover(path)
+        if picked:
+            try:
+                image = decode(Path(picked).read_bytes(), edge)
+            except OSError:
+                image = QImage()
+            if not image.isNull():
+                return image
     suffix = Path(path).suffix.lower()
     source = {".cbz": _cbz_pages, ".epub": _epub_pages, ".pdf": _pdf_pages}.get(suffix)
     if source is None:

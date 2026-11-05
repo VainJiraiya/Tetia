@@ -120,6 +120,7 @@ class Database:
             (4, self._migrate_v4),
             (5, self._migrate_v5),
             (6, self._migrate_v6),
+            (7, self._migrate_v7),
         )
         for target, step in steps:
             if version < target:
@@ -241,6 +242,16 @@ class Database:
             );
         """)
 
+    def _migrate_v7(self):
+        # The page a user picked as the cover of a comic, EPUB or PDF: an image kept in the
+        # profile's covers folder. The thumbnail cache is disposable, so the choice lives here.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS book_cover (
+                path       TEXT PRIMARY KEY,
+                image_path TEXT NOT NULL
+            );
+        """)
+
     def close(self):
         self.conn.close()
 
@@ -278,6 +289,20 @@ class Database:
         self._write(lambda: self.conn.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value)))
+
+    # --- Book covers: the page picked as a file's cover ---
+
+    def get_book_cover(self, path: str):
+        row = self.conn.execute("SELECT image_path FROM book_cover WHERE path = ?", (path,)).fetchone()
+        return row["image_path"] if row else None
+
+    def set_book_cover(self, path: str, image_path: str):
+        self._write(lambda: self.conn.execute(
+            "INSERT INTO book_cover (path, image_path) VALUES (?, ?) "
+            "ON CONFLICT(path) DO UPDATE SET image_path = excluded.image_path", (path, image_path)))
+
+    def clear_book_cover(self, path: str):
+        self._write(lambda: self.conn.execute("DELETE FROM book_cover WHERE path = ?", (path,)))
 
     # --- Collections: cover image + favorite per folder ---
     # Each commits on its own. Rows with no cover and no favorite are dropped.

@@ -22,7 +22,7 @@ def _register_qml_types():
     """Import every model so its @QmlElement decorator registers it with QML
     (module "Tetia"). Must run after the profile has been chosen."""
     from tetia.models import (  # noqa: F401
-        favoritesModel, file_picker, folderModel, gridModel, mediaActions,
+        coverPicker, favoritesModel, file_picker, folderModel, gridModel, mediaActions,
         mediaModel, metadataModel, profileModel, searchModel, subfolderModel, tagModel, uiSettings, wheelZoom,
     )
 
@@ -57,6 +57,7 @@ def main(argv=None) -> int:
     from PySide6.QtWidgets import QApplication
 
     _register_qml_types()
+    from tetia.models.bookpages import BookPageProvider
     from tetia.models.thumbModel import ThumbnailProvider
 
     app = QApplication(argv)
@@ -69,6 +70,7 @@ def main(argv=None) -> int:
 
     engine = QQmlApplicationEngine()
     engine.addImageProvider("thumbnail", ThumbnailProvider())
+    engine.addImageProvider("bookpage", BookPageProvider())
     engine.load(str(qml_main_file()))
 
     # Exit if the QML engine fails to load the file

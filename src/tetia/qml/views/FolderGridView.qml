@@ -25,6 +25,12 @@ Item {
     signal seriesRequested(string folderPath, string which)
     // A one-file folder was opened: it shows as that file, so open the file
     signal singleFileRequested(string folderPath)
+    // "Choose cover page..." on a one-file folder: the path of its file
+    signal coverPickerRequested(string filePath)
+
+    // A cover changed by hand: this number is added to the pictures' URLs so they reload
+    property int coverRevision: 0
+    readonly property string revisionSuffix: coverRevision > 0 ? "?v=" + coverRevision : ""
     signal addFolderRequested()
     signal removeModeExitRequested()
 
@@ -68,7 +74,15 @@ Item {
         property bool hasCustomCover: false
         property bool isSeries: false
         property bool isSingle: false
+        property string singleFile: ""
 
+        MenuItem {
+            text: "Choose cover page\u2026"
+            icon.name: "view-preview"
+            visible: folderMenu.isSingle
+            height: visible ? implicitHeight : 0
+            onTriggered: root.coverPickerRequested(folderMenu.singleFile)
+        }
         MenuItem {
             text: "Browse folder"
             icon.name: "folder-open"
@@ -213,7 +227,7 @@ Item {
                                     // is what caused the persistent stretching.
                                     layer.enabled: true
                                     source: model.heroPath && model.heroPath.length > 0
-                                            ? "image://thumbnail/" + model.heroPath
+                                            ? "image://thumbnail/" + model.heroPath + root.revisionSuffix
                                             : ""
                                     sourceSize: Qt.size(root.thumbHint, root.thumbHint)
                                     fillMode: Image.PreserveAspectFit
@@ -374,6 +388,7 @@ Item {
                             folderMenu.hasCustomCover = !!model.hasCustomCover
                             folderMenu.isSeries = !!model.isSeries
                             folderMenu.isSingle = !!model.singleFile
+                            folderMenu.singleFile = model.singleFile || ""
                             folderMenu.popup()
                             return
                         }
