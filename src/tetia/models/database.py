@@ -122,6 +122,7 @@ class Database:
             (6, self._migrate_v6),
             (7, self._migrate_v7),
             (8, self._migrate_v8),
+            (9, self._migrate_v9),
         )
         for target, step in steps:
             if version < target:
@@ -274,6 +275,39 @@ class Database:
                 PRIMARY KEY (media_id, page)
             );
         """)
+
+    def _migrate_v9(self):
+        # Virtual folders: a place inside a library folder that only exists in Tetia. Where a thing lives is
+        # exclusive (one row per item, like a file in a real folder), and everything in a virtual folder
+        # belongs to the real folder `home` or below it. A file placed here is moved out of its real folder's
+        # grid without touching the disk; deleting the virtual folder gives everything back (see virtualfolders.py).
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS virtual_folder (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                name           TEXT    NOT NULL,
+                home           TEXT    NOT NULL,
+                parent_id      INTEGER REFERENCES virtual_folder(id) ON DELETE CASCADE,
+                cover_media_id INTEGER REFERENCES media(id) ON DELETE SET NULL,
+                created        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS media_placement (
+                media_id   INTEGER PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+                vfolder_id INTEGER NOT NULL REFERENCES virtual_folder(id) ON DELETE CASCADE
+            );
+        """)
+        # a real folder (a subfolder tile, a series, a one-file folder) placed in a virtual folder
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS folder_placement (
+                folder     TEXT PRIMARY KEY,
+                vfolder_id INTEGER NOT NULL REFERENCES virtual_folder(id) ON DELETE CASCADE
+            );
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_vfolder_parent ON virtual_folder(parent_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_vfolder_home ON virtual_folder(home)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_media_placement_folder ON media_placement(vfolder_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_folder_placement_folder ON folder_placement(vfolder_id)")
 
     def close(self):
         self.conn.close()

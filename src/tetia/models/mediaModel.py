@@ -22,7 +22,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtQml import QmlElement
 
-from tetia.models import covers, profiles, series
+from tetia.models import covers, profiles, series, virtualfolders
 from tetia.models.database import get_database
 from tetia.models.scanner import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
@@ -90,6 +90,7 @@ class MediaModel(QAbstractListModel):
 
         # Internal state tracking variables
         self._current_folder_path: str = ""
+        self._virtual_id: int = -1      # the virtual folder shown, if the grid shows one
         self._sort_mode = MediaModel.SortMode.Default
         self._filter_mode: MediaModel.FilterMode = MediaModel.FilterMode.All
 
@@ -225,6 +226,7 @@ class MediaModel(QAbstractListModel):
 
         # Kept exactly as chosen, since QML reads it back through folderPath
         self._current_folder_path = str(folder_directory)
+        self._virtual_id = -1
 
         # Stored media paths are resolved (symlinks followed), so database
         # comparisons for this folder must use the resolved form as well
@@ -245,14 +247,24 @@ class MediaModel(QAbstractListModel):
             temporary_books_list,
         ) = scan_folder(self._db, folder_directory, self._compute_content_hash)
 
-        self._all_images = temporary_images_list
-        self._all_videos = temporary_videos_list
-        self._all_comics = temporary_comics_list
-        self._all_books = temporary_books_list
+        # What was put in a virtual folder is shown there, no longer here
+        self._all_images, self._all_videos, self._all_comics, self._all_books = self._without_placed(
+            temporary_images_list, temporary_videos_list, temporary_comics_list, temporary_books_list)
 
         # Refreshes the active grid display list and notifies QML of path changes
         self._update_visible_items()
         self.folderPathChanged.emit()
+
+    def _without_placed(self, *lists):
+        ids = [item["media_id"] for items in lists for item in items if item.get("media_id") is not None]
+        try:
+            placed = virtualfolders.placed_media_ids(self._db, ids) if ids else set()
+        except sqlite3.Error as e:
+            logger.error("Failed to look up virtual folder placements: %s", e)
+            placed = set()
+        if not placed:
+            return lists
+        return tuple([item for item in items if item.get("media_id") not in placed] for items in lists)
 
     def _kind_from_ext(self, ext: str) -> str:
         return kind_from_ext(ext)
@@ -276,7 +288,7 @@ class MediaModel(QAbstractListModel):
         """`items` in the chosen sort order. Only for an open folder (search
         results keep their ranking); ties fall back to natural name order."""
         mode = self._sort_mode
-        if mode == MediaModel.SortMode.Default or not self._current_folder_path:
+        if mode == MediaModel.SortMode.Default or not (self._current_folder_path or self._virtual_id >= 0):
             return items
         name = lambda item: covers.natural_key(item["file_name"])
         if mode == MediaModel.SortMode.NameDescending:
@@ -362,6 +374,7 @@ class MediaModel(QAbstractListModel):
         if existing_watched:
             self._file_system_watcher.removePaths(existing_watched)
         self._current_folder_path = ""
+        self._virtual_id = -1
 
         images, videos, comics, books = [], [], [], []
         for media_id in ids:
@@ -385,6 +398,47 @@ class MediaModel(QAbstractListModel):
         self._all_comics, self._all_books = comics, books
         self._update_visible_items()
         self.folderPathChanged.emit()
+
+    @Slot(int)
+    def load_virtual_folder(self, vfolder_id: int):
+        """Show the files placed directly in a virtual folder (they can come from anywhere below its home
+        folder), in the usual folder order. Like search results it has no real folder behind it, so nothing
+        is watched; the folder tiles come from SubfolderModel.loadVirtual."""
+        existing_watched = self._file_system_watcher.directories()
+        if existing_watched:
+            self._file_system_watcher.removePaths(existing_watched)
+        self._current_folder_path = ""
+        self._virtual_id = int(vfolder_id)
+
+        images, videos, comics, books = [], [], [], []
+        for row in virtualfolders.member_rows(self._db, self._virtual_id):
+            kind = row["kind"]
+            item = {
+                "media_id": row["id"],
+                "uniform_resource_identifier": Path(row["path"]).as_uri(),
+                "file_name": row["name"],
+                "is_video": kind == "video",
+                "is_comic": kind == "comic",
+                "is_book": kind == "ebook",
+                "is_favorite": row["favorite"],
+                "rating": row["rating"],
+            }
+            try:
+                info = Path(row["path"]).stat()
+                item["size"], item["mtime"] = info.st_size, int(info.st_mtime)
+            except OSError:
+                pass
+            {"image": images, "video": videos, "comic": comics, "ebook": books}[kind].append(item)
+
+        self._all_images, self._all_videos = images, videos
+        self._all_comics, self._all_books = comics, books
+        self._update_visible_items()
+        self.folderPathChanged.emit()
+
+    @Property(int, notify=folderPathChanged)
+    def virtualId(self) -> int:
+        """The virtual folder shown now, or -1."""
+        return self._virtual_id
 
     @Slot(int, bool)
     def setFavorite(self, media_id: int, favorite: bool):
@@ -437,6 +491,15 @@ class MediaModel(QAbstractListModel):
         """Use this item as the cover of the folder being shown. An image is
         used as is, a video gives a full-size frame (ffmpeg), a manga/book uses
         its own first page. Returns False if it could not be done."""
+        if self._virtual_id >= 0:
+            # a virtual folder's picture is one of its own files
+            try:
+                self._db._write(lambda: self._db.conn.execute(
+                    "UPDATE virtual_folder SET cover_media_id = ? WHERE id = ?", (int(media_id), self._virtual_id)))
+            except sqlite3.Error as e:
+                logger.error("Failed to set the virtual folder cover: %s", e)
+                return False
+            return True
         if not self._current_folder_path:
             return False
         try:
