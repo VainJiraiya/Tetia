@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QColor, QImage
 
-from tetia.models import bookcovers, bookpages, covers, thumbModel
+from tetia.models import archive, bookcovers, bookpages, covers, thumbModel
 from tetia.models.coverPicker import CoverPicker
 from tetia.models.database import get_database
 from tetia.models.thumbModel import ThumbnailProvider
@@ -50,15 +50,19 @@ def test_the_page_list_is_capped(tmp_path, monkeypatch):
     assert len(bookpages.list_pages(path)[0]) == 3
 
 
-def test_pages_of_other_formats_and_bad_files(tmp_path):
-    for name, content in (("a.cbz", b"junk"), ("b.cbr", b"Rar!"), ("c.cb7", b"7z"), ("d.mobi", b"x")):
+def test_pages_of_other_formats_and_bad_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(archive, "find_tools", lambda kind: [])
+    for name, content in (("a.cbz", b"junk"), ("c.cb7", b"7z"), ("d.mobi", b"x")):
         (tmp_path / name).write_bytes(content)
         refs, message = bookpages.list_pages(str(tmp_path / name))
         assert refs == [] and message
+    (tmp_path / "b.cbr").write_bytes(b"Rar!\x1a\x07\x00 something")          # a real RAR header, no tool installed
+    refs, message = bookpages.list_pages(str(tmp_path / "b.cbr"))
+    assert refs == [] and "RAR comics need bsdtar" in message
     empty = tmp_path / "empty.cbz"
     zipfile.ZipFile(empty, "w").close()
     assert bookpages.list_pages(str(empty)) == ([], "There are no pictures in this archive.")
-    assert "works for" in bookpages.list_pages(str(tmp_path / "b.cbr"))[1]
+    assert "works for" in bookpages.list_pages(str(tmp_path / "d.mobi"))[1]
 
 
 def test_epub_pages_start_with_the_cover(tmp_path):
@@ -179,7 +183,7 @@ def test_open_and_choose_fail_cleanly(tmp_path, qapp):
     assert not picker.choose(0) and not picker.useAutomatic()
     rar = tmp_path / "old.cbr"
     rar.write_bytes(b"Rar!")
-    assert picker.open(media_id(rar)) and picker.count == 0 and "works for" in picker.message
+    assert picker.open(media_id(rar)) and picker.count == 0 and picker.message
     assert not picker.choose(0)
     path = five_pages(tmp_path)
     picker.open(media_id(path))

@@ -3,12 +3,11 @@
 
 """The pages of a comic, EPUB or PDF, for choosing a cover by hand.
 
-Pages are read straight out of the archive into memory; nothing is unpacked to disk.
-A page is named by a `ref`: the member name inside a .cbz or EPUB, the page number
-in a PDF. cbr, cb7 and cbt are not opened (they need an external tool).
+A page is named by a `ref`: the member name inside the archive, the page number in a PDF.
+Pages are read into memory. A RAR or 7z comic, which only an external tool can read, is
+unpacked once for as long as the picker is open (see release()), not once per page.
 """
 import logging
-import posixpath
 import threading
 import uuid
 import zipfile
@@ -18,7 +17,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QImage
 from PySide6.QtQuick import QQuickImageProvider
 
-from tetia.models import bookcovers, covers
+from tetia.models import archive, bookcovers
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +25,42 @@ PAGE_LIMIT = 150           # how many pages the picker offers (the cover is near
 GRID_EDGE = 220            # size of a page in the picker's grid
 CHOSEN_EDGE = 1024         # the picked page is kept at most this big
 
+# Comic archives read with an external tool stay open (and unpacked) while the picker shows
+# them: path -> (archive, lock). Zip and tar are cheap to reopen and are not kept.
+_kept = {}
+_kept_lock = threading.Lock()
+
+
+def _keep(path: str, comic: "archive.Archive"):
+    with _kept_lock:
+        _kept[path] = (comic, threading.Lock())
+
+
+def release(path: str):
+    """Close and delete the unpacked pages of a comic the picker was showing."""
+    with _kept_lock:
+        entry = _kept.pop(path, None)
+    if entry:
+        entry[0].close()
+
 
 def list_pages(path: str):
     """([refs], message): the pages that can be offered, and why there are none ('' if there are)."""
     suffix = Path(path).suffix.lower()
     try:
-        if suffix == ".cbz":
-            if not zipfile.is_zipfile(path):
-                return [], "This archive cannot be opened."
-            with zipfile.ZipFile(path) as archive:
-                names = [i.filename for i in archive.infolist()
-                         if not i.is_dir() and i.filename.lower().endswith(bookcovers.PAGE_SUFFIXES)
-                         and not i.filename.startswith("__MACOSX")
-                         and not posixpath.basename(i.filename).startswith(".")]
-            names.sort(key=covers.natural_key)
-            return names[:PAGE_LIMIT], "" if names else "There are no pictures in this archive."
+        if suffix in bookcovers.COMIC_SUFFIXES:
+            comic = archive.open_archive(path)
+            try:
+                names = comic.image_names()[:PAGE_LIMIT]
+                if isinstance(comic, archive.ToolArchive):
+                    comic.prefetch(names)           # one unpacking for the whole grid
+                    release(path)
+                    _keep(path, comic)
+                    comic = None                    # kept open for read_page
+            finally:
+                if comic is not None:
+                    comic.close()
+            return names, "" if names else "There are no pictures in this archive."
         if suffix == ".epub":
             refs = bookcovers._epub_candidates(path)[:PAGE_LIMIT]
             return refs, "" if refs else "There are no pictures in this book."
@@ -54,25 +74,35 @@ def list_pages(path: str):
             finally:
                 document.close()
             return [str(i) for i in range(min(count, PAGE_LIMIT))], "" if count else "The PDF has no pages."
+    except archive.ArchiveError as e:
+        return [], str(e)
     except (zipfile.BadZipFile, OSError, KeyError, StopIteration, ImportError, RuntimeError) as e:
         logger.warning("Could not list the pages of %s: %s", path, e)
         return [], "The file could not be read."
-    return [], "Choosing a cover page works for .cbz, EPUB and PDF files."
+    return [], "Choosing a cover page works for comic archives (cbz, cbr, cb7, cbt), EPUB and PDF files."
 
 
 def read_page(path: str, ref: str, edge: int) -> QImage:
     """One page, no bigger than `edge` pixels on its longer side (null if it cannot be read)."""
     suffix = Path(path).suffix.lower()
     try:
-        if suffix in (".cbz", ".epub"):
-            with zipfile.ZipFile(path) as archive:
-                if archive.getinfo(ref).file_size > bookcovers.MAX_PAGE_BYTES:
+        if suffix in bookcovers.COMIC_SUFFIXES:
+            with _kept_lock:
+                kept = _kept.get(path)
+            if kept:                                   # a tool-read comic, already unpacked
+                with kept[1]:
+                    return bookcovers.decode(kept[0].read(ref, bookcovers.MAX_PAGE_BYTES), edge)
+            with archive.open_archive(path) as comic:
+                return bookcovers.decode(comic.read(ref, bookcovers.MAX_PAGE_BYTES), edge)
+        if suffix == ".epub":
+            with zipfile.ZipFile(path) as package:
+                if package.getinfo(ref).file_size > bookcovers.MAX_PAGE_BYTES:
                     return QImage()
-                return bookcovers.decode(archive.read(ref), edge)
+                return bookcovers.decode(package.read(ref), edge)
         if suffix == ".pdf":
             pages = bookcovers._pdf_pages_at(path, [int(ref)], edge)
             return pages[0] if pages else QImage()
-    except (zipfile.BadZipFile, OSError, KeyError, ValueError, RuntimeError) as e:
+    except (archive.ArchiveError, zipfile.BadZipFile, OSError, KeyError, ValueError, RuntimeError) as e:
         logger.warning("Could not read page %s of %s: %s", ref, path, e)
     return QImage()
 

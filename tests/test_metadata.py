@@ -184,15 +184,17 @@ def test_cbz_pages_and_comicinfo(tmp_path):
     assert details["Manga"] == "YesAndRightToLeft"
 
 
-def test_cbz_without_comicinfo_and_non_zip_comics(tmp_path):
+def test_cbz_without_comicinfo_and_non_zip_comics(tmp_path, monkeypatch):
     plain = tmp_path / "plain.cbz"
     with zipfile.ZipFile(plain, "w") as z:
         z.writestr("1.jpg", b"x")
     sections = metadata.read_metadata(str(plain), "comic")
     assert [s["title"] for s in sections] == ["File", "Comic"]
+    from tetia.models import archive
+    monkeypatch.setattr(archive, "find_tools", lambda kind: [])
     rar = tmp_path / "old.cbr"
     rar.write_bytes(b"Rar!\x1a\x07\x00 not a zip")
-    assert "Only .cbz" in rows(metadata.read_metadata(str(rar), "comic"), "Comic")["Archive"]
+    assert "RAR comics need bsdtar" in rows(metadata.read_metadata(str(rar), "comic"), "Comic")["Archive"]
     broken = tmp_path / "broken.cbz"
     broken.write_bytes(b"PK\x03\x04 truncated")
     metadata.read_metadata(str(broken), "comic")           # must not raise

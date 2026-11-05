@@ -321,17 +321,18 @@ def _local(tag: str) -> str:
 
 
 def comic_sections(path: str) -> list:
-    if not zipfile.is_zipfile(path):
-        return [_section("Comic", [("Archive", "Only .cbz (zip) archives are opened for details")])]
+    from tetia.models import archive
     try:
-        with zipfile.ZipFile(path) as archive:
-            names = archive.namelist()
-            pages = [n for n in names if n.lower().endswith(_IMAGE_SUFFIXES) and not n.startswith("__MACOSX")]
+        with archive.open_archive(path) as comic:
+            names = comic.names()
+            pages = [n for n in names if archive.is_image(n)]
             info_name = next((n for n in names if n.rsplit("/", 1)[-1].lower() == "comicinfo.xml"), None)
-            xml = _read_member(archive, info_name) if info_name else b""
-    except (zipfile.BadZipFile, OSError, KeyError) as e:
-        logger.warning("Could not read %s: %s", path, e)
-        return [_section("Comic", [("Archive", "The archive could not be read")])]
+            try:
+                xml = comic.read(info_name, MAX_XML_BYTES) if info_name else b""
+            except archive.ArchiveError:
+                xml = b""
+    except archive.ArchiveError as e:
+        return [_section("Comic", [("Archive", str(e))])]
     sections = [_section("Comic", [("Pages", len(pages))])]
     if xml:
         try:

@@ -23,14 +23,15 @@ from xml.etree import ElementTree
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt
 from PySide6.QtGui import QImage, QImageReader, QPainter
 
-from tetia.models import covers
+from tetia.models import archive, covers
 from tetia.models.database import app_data_dir
 from tetia.models.metadata import _local, _read_member
 
 logger = logging.getLogger(__name__)
 
-PAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bmp", ".jxl", ".heic")
-BOOK_SUFFIXES = {".cbz", ".epub", ".pdf"}
+PAGE_SUFFIXES = archive.IMAGE_SUFFIXES
+COMIC_SUFFIXES = (".cbz", ".cbr", ".cb7", ".cbt")
+BOOK_SUFFIXES = {".cbz", ".cbr", ".cb7", ".cbt", ".epub", ".pdf"}
 
 SCAN_PAGES = 6               # how many pages are tried before settling for the best one
 MAX_PAGE_BYTES = 64 * 1024 * 1024   # a page larger than this is skipped (damaged or hostile archive)
@@ -116,23 +117,21 @@ def decode(data: bytes, edge: int) -> QImage:
 
 # ---- Sources ---------------------------------------------------------------------------
 
-def _cbz_pages(path: str, edge: int, limit: int) -> list:
+def _archive_pages(path: str, edge: int, limit: int) -> list:
+    """The first pages of a comic archive (zip, tar, RAR or 7z, by what the file really is)."""
     pages = []
     try:
-        with zipfile.ZipFile(path) as archive:
-            names = [info for info in archive.infolist()
-                     if not info.is_dir()
-                     and info.filename.lower().endswith(PAGE_SUFFIXES)
-                     and not info.filename.startswith("__MACOSX")
-                     and not posixpath.basename(info.filename).startswith(".")]
-            names.sort(key=lambda info: covers.natural_key(info.filename))
-            for info in names[:limit]:
-                if info.file_size > MAX_PAGE_BYTES:
+        with archive.open_archive(path) as comic:
+            names = comic.image_names()[:limit]
+            comic.prefetch(names)
+            for name in names:
+                try:
+                    image = decode(comic.read(name, MAX_PAGE_BYTES), edge)
+                except archive.ArchiveError:
                     continue
-                image = decode(archive.read(info), edge)
                 if not image.isNull():
                     pages.append(image)
-    except (zipfile.BadZipFile, OSError, KeyError, RuntimeError, NotImplementedError) as e:
+    except archive.ArchiveError as e:
         logger.warning("Could not read the pages of %s: %s", path, e)
     return pages
 
@@ -265,7 +264,7 @@ def make_cover(path: str, edge: int, use_choice: bool = True) -> QImage:
             if not image.isNull():
                 return image
     suffix = Path(path).suffix.lower()
-    source = {".cbz": _cbz_pages, ".epub": _epub_pages, ".pdf": _pdf_pages}.get(suffix)
+    source = {**{suffix: _archive_pages for suffix in COMIC_SUFFIXES}, ".epub": _epub_pages, ".pdf": _pdf_pages}.get(suffix)
     if source is None:
         return QImage()
     pages = source(path, edge, SCAN_PAGES)

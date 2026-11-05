@@ -112,6 +112,8 @@ class CoverPicker(QObject):
     def close(self):
         if self._token:
             bookpages.unregister(self._token)
+        if self._path:
+            bookpages.release(self._path)       # delete the pages a RAR/7z comic was unpacked into
         self._path, self._refs, self._token, self._title, self._message = "", [], "", "", ""
         self._custom = False
         self.stateChanged.emit()
