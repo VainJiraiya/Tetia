@@ -450,6 +450,25 @@ class MediaModel(QAbstractListModel):
             self._current_folder_path, info["path"], info["kind"], db=self._db
         )
 
+    @Slot(str, result=bool)
+    def setFolderCoverFromPath(self, path: str) -> bool:
+        """Use the picture a subfolder tile shows (a file inside it, which is not one of this
+        folder's own files) as the cover of the folder being shown. Same rules as setFolderCover."""
+        if not self._current_folder_path or not path:
+            return False
+        suffix = Path(path).suffix.lower()
+        if suffix in covers.IMAGE_EXTENSIONS:
+            kind = "image"
+        elif suffix in VIDEO_EXTENSIONS:
+            kind = "video"
+        elif suffix in COMIC_EXTENSIONS:
+            kind = "comic"
+        elif suffix in EBOOK_EXTENSIONS:
+            kind = "ebook"
+        else:
+            return False
+        return covers.set_cover_from_media(self._current_folder_path, path, kind, db=self._db)
+
     # --- Properties exposed to QML ---
 
     # Exposes the current filter mode value to QML as a readable property

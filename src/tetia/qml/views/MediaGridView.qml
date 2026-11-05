@@ -336,6 +336,7 @@ GridView {
         property bool isSeries: false
         property bool isSingle: false
         property string singleFile: ""
+        property string heroPath: ""     // the picture this tile shows
 
         MenuItem {
             text: "Choose cover page\u2026"
@@ -394,6 +395,25 @@ GridView {
                      && !subfolderMenu.isSingle
             height: visible ? implicitHeight : 0
             onTriggered: grid.subfolderBackend.setSeries(subfolderMenu.folderPath, !subfolderMenu.isSeries)
+        }
+        // A tile drawn as a file (a series, or a folder holding one file) can lend its picture
+        // to the folder you are in, like a loose file's "Use as folder cover"
+        MenuItem {
+            text: "Use as folder cover"
+            icon.name: "image-x-generic"
+            visible: (subfolderMenu.isSingle || subfolderMenu.isSeries) && subfolderMenu.heroPath !== ""
+                     && grid.mediaBackend !== null && grid.mediaBackend.folderPath !== ""   // not in search results
+            height: visible ? implicitHeight : 0
+            ToolTip.visible: hovered
+            ToolTip.delay: 600
+            ToolTip.text: "Use this picture as the cover of the folder you are in"
+            onTriggered: {
+                if (grid.mediaBackend.setFolderCoverFromPath(subfolderMenu.heroPath)) {
+                    toast.show("Folder cover updated")
+                } else {
+                    toast.show("Couldn't set the folder cover (a video needs ffmpeg)")
+                }
+            }
         }
         MenuItem {
             text: "Choose cover image\u2026"
@@ -539,7 +559,8 @@ GridView {
                     radius: height / 2
                     color: Qt.rgba(0, 0, 0, 0.65)
                     // A series shows its chapter count only on hover: the one tell that it is not a single file
-                    visible: model.subfolderCount > 0 && grid.showLabels && (!folderTile.asFile || folderHover.hovered)
+                    visible: model.subfolderCount > 0 && grid.showLabels && !model.subfolderSingleFile
+                             && (!folderTile.asFile || folderHover.hovered)
 
                     Text {
                         id: folderCountText
@@ -579,6 +600,7 @@ GridView {
                             subfolderMenu.isSeries = !!model.subfolderIsSeries
                             subfolderMenu.isSingle = !!model.subfolderSingleFile
                             subfolderMenu.singleFile = model.subfolderSingleFile || ""
+                            subfolderMenu.heroPath = model.subfolderHero || ""
                             subfolderMenu.hasCustomCover = grid.subfolderBackend
                                 ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
                             subfolderMenu.popup()
