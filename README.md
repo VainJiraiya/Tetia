@@ -6,7 +6,7 @@ Tetia keeps your manga, pictures and videos in one place on KDE Plasma: browse
 collections, tag and rate what is in them, and find anything with one search box.
 It is built with Python, Qt Quick and Kirigami.
 
-> **Status: early (0.1.0).** It is in daily use by its author, but expect rough
+> **Status: early (0.2.0).** It is in daily use by its author, but expect rough
 > edges. Developed and tested on NixOS with Plasma 6, PySide6 6.11 and Python 3.14;
 > other setups are untested.
 

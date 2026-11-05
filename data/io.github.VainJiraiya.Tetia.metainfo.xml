@@ -81,6 +81,19 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.0" date="2026-11-04">
+      <description>
+        <p>Tidying up and finding things:</p>
+        <ul>
+          <li>Purge mode: swipe through a folder of pictures to keep them or send them to the Trash, with a review first</li>
+          <li>Folders of chapter files can be shown as one series that opens where you left off, and a folder holding one file shows as that file</li>
+          <li>Covers for comics, EPUBs and PDFs, and a picker to choose the cover page by hand</li>
+          <li>RAR, 7z and tar comics are read whatever their file extension says</li>
+          <li>A metadata panel, sort options, and five tile sizes remembered per category</li>
+          <li>Moving files to the Trash now works correctly in the Flatpak</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-11-03">
       <description>
         <p>First public release.</p>
