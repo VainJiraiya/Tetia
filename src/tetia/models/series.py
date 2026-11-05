@@ -93,6 +93,37 @@ def loose_cover(folder: str) -> str:
     return ""
 
 
+# Categories whose one-file folders are shown as the file itself. Photos are left out:
+# a photo opens in Tetia's own viewer, which works on a whole folder of pictures.
+FLATTEN_CATEGORIES = ("manga", "books", "videos")
+
+
+def single_file(directory: str, extensions) -> str:
+    """The one file of a folder that holds exactly one file the tab lists and no
+    subfolders ('' if it holds none, several, or any subfolder). Hidden files and
+    files of other kinds (a .txt, a cover picture, subtitles) are not counted."""
+    try:
+        entries = [e for e in os.listdir(directory) if not e.startswith(".")]
+    except OSError:
+        return ""
+    found = ""
+    for entry in entries:
+        full_path = os.path.join(directory, entry)
+        if os.path.isdir(full_path):
+            return ""
+        if Path(entry).suffix.lower() in extensions and os.path.isfile(full_path):
+            if found:
+                return ""
+            found = full_path
+    return found
+
+
+def open_single_file(folder: str, extensions) -> str:
+    """The file:// URI of the one file in `folder` ('' if it is not a one-file folder)."""
+    path = single_file(covers.folder_key(folder), extensions)
+    return QUrl.fromLocalFile(path).toString(QUrl.FullyEncoded) if path else ""
+
+
 def chapter_to_open(folder: str, last_read: str, which: str = RESUME) -> str:
     """The chapter a series tile should open, or '' if the folder has none.
 

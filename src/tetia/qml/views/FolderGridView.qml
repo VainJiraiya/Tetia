@@ -23,6 +23,8 @@ Item {
     signal folderClicked(string folderPath)
     // A series tile was opened: which chapter to open is "resume", "first" or "next"
     signal seriesRequested(string folderPath, string which)
+    // A one-file folder was opened: it shows as that file, so open the file
+    signal singleFileRequested(string folderPath)
     signal addFolderRequested()
     signal removeModeExitRequested()
 
@@ -65,7 +67,16 @@ Item {
         property bool isFavorite: false
         property bool hasCustomCover: false
         property bool isSeries: false
+        property bool isSingle: false
 
+        MenuItem {
+            text: "Browse folder"
+            icon.name: "folder-open"
+            visible: folderMenu.isSingle
+            height: visible ? implicitHeight : 0
+            onTriggered: root.folderClicked(folderMenu.folderPath)
+        }
+        MenuSeparator { visible: folderMenu.isSingle }
         MenuItem {
             text: "Open next chapter"
             icon.name: "go-next"
@@ -104,7 +115,7 @@ Item {
                           : "Treat this folder's chapter files as one manga: one tile that opens where you left off"
             icon.name: "bookmarks-symbolic"
             // Only manga folders hold chapters
-            visible: root.model && root.model.currentCategory === "manga"
+            visible: root.model && root.model.currentCategory === "manga" && !folderMenu.isSingle
             height: visible ? implicitHeight : 0
             onTriggered: root.model.setSeries(folderMenu.folderPath, !folderMenu.isSeries)
         }
@@ -287,7 +298,7 @@ Item {
                                 radius: height / 2
                                 color: Qt.rgba(0, 0, 0, 0.65)
                                 visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode && root.showLabels
-                                         && (!model.isSeries || hoverArea.containsMouse)
+                                         && !model.singleFile && (!model.isSeries || hoverArea.containsMouse)
     
                                 Label {
                                     id: countBadgeText
@@ -362,6 +373,7 @@ Item {
                             folderMenu.isFavorite = !!model.isFavorite
                             folderMenu.hasCustomCover = !!model.hasCustomCover
                             folderMenu.isSeries = !!model.isSeries
+                            folderMenu.isSingle = !!model.singleFile
                             folderMenu.popup()
                             return
                         }
@@ -369,6 +381,8 @@ Item {
                             root.model.removeFolder(model.folderPath)
                         } else if (model.isSeries) {
                             root.seriesRequested(model.folderPath, "resume")
+                        } else if (model.singleFile) {
+                            root.singleFileRequested(model.folderPath)
                         } else {
                             root.folderClicked(model.folderPath)
                         }

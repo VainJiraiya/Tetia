@@ -33,6 +33,7 @@ class FolderModel(QAbstractListModel):
         IsFavoriteRole = Qt.UserRole + 6
         HasCustomCoverRole = Qt.UserRole + 7
         IsSeriesRole = Qt.UserRole + 8
+        SingleFileRole = Qt.UserRole + 9
 
     categoryChanged = Signal()
 
@@ -75,6 +76,8 @@ class FolderModel(QAbstractListModel):
             return self._count_media(folder["path"])
         elif role == self.Roles.IsSeriesRole:
             return bool(self._meta_for(folder).get("is_series"))
+        elif role == self.Roles.SingleFileRole:
+            return self._single_file(folder)
         elif role == self.Roles.IsFavoriteRole:
             return bool(self._meta_for(folder).get("favorite"))
         elif role == self.Roles.HasCustomCoverRole:
@@ -92,6 +95,7 @@ class FolderModel(QAbstractListModel):
             self.Roles.IsFavoriteRole: b"isFavorite",
             self.Roles.HasCustomCoverRole: b"hasCustomCover",
             self.Roles.IsSeriesRole: b"isSeries",
+            self.Roles.SingleFileRole: b"singleFile",
         }
 
     def _uri_to_local_path(self, uri: str) -> str:
@@ -116,6 +120,24 @@ class FolderModel(QAbstractListModel):
     def addFolder(self, path: str, category: str):
         self.db.add_folder(path, category)
         self.refresh()
+
+    def _single_extensions(self, folder: dict):
+        """What counts as the one file in this folder's category (None: not flattened)."""
+        if folder["category"] not in series.FLATTEN_CATEGORIES or self._meta_for(folder).get("is_series"):
+            return None
+        return CATEGORY_EXTENSIONS.get(folder["category"])
+
+    def _single_file(self, folder: dict) -> str:
+        extensions = self._single_extensions(folder)
+        return series.single_file(covers.folder_key(folder["path"]), extensions) if extensions else ""
+
+    @Slot(str, result=str)
+    def openSingleFile(self, folder_path: str) -> str:
+        """The URI of the only file in a one-file folder ('' if it has since gained more)."""
+        category = next((f["category"] for f in self._folders
+                         if covers.folder_key(f["path"]) == covers.folder_key(folder_path)), "")
+        extensions = CATEGORY_EXTENSIONS.get(category) if category in series.FLATTEN_CATEGORIES else None
+        return series.open_single_file(folder_path, extensions) if extensions else ""
 
     @Slot(str, bool)
     def setSeries(self, folder_path: str, is_series: bool):

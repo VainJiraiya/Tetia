@@ -858,6 +858,12 @@ Kirigami.ApplicationWindow {
                 openMediaGrid(folderPath, folderModel.currentCategory)
             }
 
+            onSingleFileRequested: function(folderPath) {
+                var file = folderModel.openSingleFile(folderPath)
+                if (file !== "") Qt.openUrlExternally(file)
+                else openMediaGrid(folderPath, folderModel.currentCategory)   // it has gained files since: just browse it
+            }
+
             onSeriesRequested: function(folderPath, which) {
                 var chapter = folderModel.openSeries(folderPath, which)
                 if (chapter !== "") Qt.openUrlExternally(chapter)
@@ -952,6 +958,11 @@ Kirigami.ApplicationWindow {
                     tagMode: root.isTagMode && pageStack.currentItem === gridPage
                     subfolderBackend: subfolderModel
 
+                    onSubfolderSingleFileRequested: function(subfolderPath) {
+                        var file = subfolderModel.openSingleFile(subfolderPath)
+                        if (file !== "") Qt.openUrlExternally(file)
+                        else root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
+                    }
                     onSubfolderSeriesRequested: function(subfolderPath, which) {
                         var chapter = subfolderModel.openSeries(subfolderPath, which)
                         if (chapter !== "") Qt.openUrlExternally(chapter)

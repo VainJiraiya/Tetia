@@ -23,6 +23,8 @@ GridView {
     signal subfolderClicked(string subfolderPath)
     // A series tile was opened: which chapter is "resume", "first", "next" or "previous"
     signal subfolderSeriesRequested(string subfolderPath, string which)
+    // A one-file subfolder was opened: it shows as that file, so open the file
+    signal subfolderSingleFileRequested(string subfolderPath)
 
     // The context menu's "Edit tags" asks the host to enter tag mode with this
     // item selected (the host owns the tag-mode flag).
@@ -314,7 +316,16 @@ GridView {
         property bool isFavorite: false
         property bool hasCustomCover: false
         property bool isSeries: false
+        property bool isSingle: false
 
+        MenuItem {
+            text: "Browse folder"
+            icon.name: "folder-open"
+            visible: subfolderMenu.isSingle
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderClicked(subfolderMenu.folderPath)
+        }
+        MenuSeparator { visible: subfolderMenu.isSingle }
         MenuItem {
             text: "Open next chapter"
             icon.name: "go-next"
@@ -354,6 +365,7 @@ GridView {
             icon.name: "bookmarks-symbolic"
             // Only manga folders hold chapters
             visible: grid.subfolderBackend !== null && grid.subfolderBackend.filterMode === MediaModel.MangaOnly
+                     && !subfolderMenu.isSingle
             height: visible ? implicitHeight : 0
             onTriggered: grid.subfolderBackend.setSeries(subfolderMenu.folderPath, !subfolderMenu.isSeries)
         }
@@ -451,9 +463,9 @@ GridView {
 
             Rectangle {
                 id: folderTile
-                // A series (a folder of chapters) is drawn exactly like a single file:
-                // no outline, no bold name, and the count badge only on hover
-                readonly property bool asFile: model.subfolderIsSeries === true
+                // A series (a folder of chapters) or a folder holding one file is drawn exactly
+                // like a single file: no outline, no bold name, and (series) the count badge only on hover
+                readonly property bool asFile: model.subfolderIsSeries === true || !!model.subfolderSingleFile
                 radius: 6
                 color: Qt.alpha(palette.text, folderHover.hovered ? 0.07 : (asFile ? 0 : 0.03))
                 border.width: asFile ? 0 : 1
@@ -539,11 +551,13 @@ GridView {
                             subfolderMenu.folderPath = model.subfolderPath
                             subfolderMenu.isFavorite = model.subfolderFavorite
                             subfolderMenu.isSeries = !!model.subfolderIsSeries
+                            subfolderMenu.isSingle = !!model.subfolderSingleFile
                             subfolderMenu.hasCustomCover = grid.subfolderBackend
                                 ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
                             subfolderMenu.popup()
                         } else if (!grid.tagMode) {
                             if (model.subfolderIsSeries) grid.subfolderSeriesRequested(model.subfolderPath, "resume")
+                            else if (model.subfolderSingleFile) grid.subfolderSingleFileRequested(model.subfolderPath)
                             else grid.subfolderClicked(model.subfolderPath)
                         }
                     }

@@ -331,3 +331,83 @@ def test_symlink_loops_do_not_hang_the_picture_lookup(tmp_path, qapp):
     (loop / "inner").mkdir(parents=True)
     os.symlink(str(loop), str(loop / "inner" / "back"))
     assert covers.hero_path(str(loop), extensions={".cbz"}) == ""
+
+
+# ---- a folder holding one file shows as that file --------------------------------------------------------
+
+MANGA = {".cbz", ".pdf"}
+
+
+def test_single_file_rule(tmp_path):
+    folder = tmp_path / "Title"
+    _touch(folder, "vol1.cbz")
+    assert series.single_file(str(folder), MANGA) == str(folder / "vol1.cbz")
+    _touch(folder, "notes.txt", "cover.jpg", ".hidden.cbz", "subs.srt")        # not counted
+    assert series.single_file(str(folder), MANGA) == str(folder / "vol1.cbz")
+    _touch(folder, "vol2.cbz")                                                   # a second one
+    assert series.single_file(str(folder), MANGA) == ""
+    (folder / "vol2.cbz").unlink()
+    (folder / "extras").mkdir()                                                  # any subfolder
+    assert series.single_file(str(folder), MANGA) == ""
+    assert series.single_file(str(tmp_path / "empty"), MANGA) == ""
+    assert series.single_file(str(tmp_path / "missing"), MANGA) == ""
+
+
+def test_the_collections_grid_flattens_one_file_folders(tmp_path, qapp):
+    root = tmp_path
+    _touch(root / "One", "only.cbz", "readme.txt")
+    _touch(root / "Two", "a.cbz", "b.cbz")
+    model = _folder_model("manga", root / "One", root / "Two")
+    rows = {os.path.basename(model.getFolderPath(i).rstrip("/")): i for i in range(model.rowCount())}
+    assert model.data(model.index(rows["One"]), model.Roles.SingleFileRole) == str(root / "One" / "only.cbz")
+    assert model.data(model.index(rows["Two"]), model.Roles.SingleFileRole) == ""
+    uri = model.openSingleFile(covers.folder_uri(str(root / "One")))
+    assert uri.endswith("/One/only.cbz") and uri.startswith("file://")
+    assert model.openSingleFile(covers.folder_uri(str(root / "Two"))) == ""
+
+
+def test_one_file_folders_follow_the_tab_and_exclude_photos(tmp_path, qapp):
+    pic = tmp_path / "Pic"
+    _touch(pic, "photo.png")
+    photos = _folder_model("photos", pic)
+    assert photos.data(photos.index(0), photos.Roles.SingleFileRole) == ""        # photos are not flattened
+    clip = tmp_path / "Clip"
+    _touch(clip, "movie.mkv")
+    videos = _folder_model("videos", clip)
+    assert videos.data(videos.index(0), videos.Roles.SingleFileRole) == str(clip / "movie.mkv")
+    book = tmp_path / "Book"
+    _touch(book, "novel.epub")
+    books = _folder_model("books", book)
+    assert books.data(books.index(0), books.Roles.SingleFileRole) == str(book / "novel.epub")
+    # a video folder filed under Manga has nothing the Manga tab lists
+    wrong = _folder_model("manga", clip)
+    assert wrong.data(wrong.index(0), wrong.Roles.SingleFileRole) == ""
+
+
+def test_a_series_is_not_also_flattened_and_a_new_file_unflattens(tmp_path, qapp):
+    folder = tmp_path / "Title"
+    _touch(folder, "ch1.cbz")
+    model = _folder_model("manga", folder)
+    assert model.data(model.index(0), model.Roles.SingleFileRole) != ""
+    series.set_series(get_database(), str(folder), True)
+    assert model.data(model.index(0), model.Roles.SingleFileRole) == ""           # the series path handles it
+    series.set_series(get_database(), str(folder), False)
+    _touch(folder, "ch2.cbz")
+    assert model.data(model.index(0), model.Roles.SingleFileRole) == ""           # now an ordinary folder
+
+
+def test_the_subfolder_grid_flattens_too(tmp_path, qapp):
+    from tetia.models.mediaModel import MediaModel
+    from tetia.models.subfolderModel import SubfolderModel
+    parent = tmp_path / "Parent"
+    _touch(parent / "Solo", "only.cbz")
+    _touch(parent / "Pair", "a.cbz", "b.cbz")
+    model = SubfolderModel()
+    model.filterMode = int(MediaModel.FilterMode.MangaOnly)
+    model.load(str(parent))
+    by_name = {model.data(model.index(i), model.Roles.NameRole): i for i in range(model.rowCount())}
+    assert model.data(model.index(by_name["Solo"]), model.Roles.SingleFileRole) == str(parent / "Solo" / "only.cbz")
+    assert model.data(model.index(by_name["Pair"]), model.Roles.SingleFileRole) == ""
+    assert model.openSingleFile(covers.folder_uri(str(parent / "Solo"))).endswith("/Solo/only.cbz")
+    model.filterMode = int(MediaModel.FilterMode.ImagesOnly)                       # photos: never
+    assert model.openSingleFile(covers.folder_uri(str(parent / "Solo"))) == ""

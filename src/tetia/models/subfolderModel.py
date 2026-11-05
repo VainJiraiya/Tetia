@@ -93,6 +93,7 @@ class SubfolderModel(QAbstractListModel):
         IsFavoriteRole = Qt.UserRole + 5
         HasCustomCoverRole = Qt.UserRole + 6
         IsSeriesRole = Qt.UserRole + 7
+        SingleFileRole = Qt.UserRole + 8
 
     filterModeChanged = Signal()
 
@@ -109,6 +110,21 @@ class SubfolderModel(QAbstractListModel):
 
     def rowCount(self, parent=QModelIndex()):
         return len(self._dirs)
+
+    # The tabs whose one-file folders are shown as the file (see series.FLATTEN_CATEGORIES)
+    _FLATTEN_MODES = (MediaModel.FilterMode.MangaOnly, MediaModel.FilterMode.BooksOnly,
+                      MediaModel.FilterMode.VideosOnly)
+
+    def _single_file(self, entry: dict) -> str:
+        if self._filter_mode not in self._FLATTEN_MODES or self._is_series(entry):
+            return ""
+        return series.single_file(entry["path"], self._extensions())
+
+    @Slot(str, result=str)
+    def openSingleFile(self, folder_path: str) -> str:
+        if self._filter_mode not in self._FLATTEN_MODES:
+            return ""
+        return series.open_single_file(folder_path, self._extensions())
 
     def _is_series(self, entry: dict) -> bool:
         return bool(self._meta.get(covers.folder_key(entry["path"]), {}).get("is_series"))
@@ -141,6 +157,8 @@ class SubfolderModel(QAbstractListModel):
             return len(series.chapters(entry["path"])) if self._is_series(entry) else entry["count"]
         if role == self.Roles.IsSeriesRole:
             return self._is_series(entry)
+        if role == self.Roles.SingleFileRole:
+            return self._single_file(entry)
         if role == self.Roles.IsFavoriteRole:
             return bool(self._meta.get(covers.folder_key(entry["path"]), {}).get("favorite"))
         if role == self.Roles.HasCustomCoverRole:
@@ -156,6 +174,7 @@ class SubfolderModel(QAbstractListModel):
             self.Roles.IsFavoriteRole: b"isFavorite",
             self.Roles.HasCustomCoverRole: b"hasCustomCover",
             self.Roles.IsSeriesRole: b"isSeries",
+            self.Roles.SingleFileRole: b"singleFile",
         }
 
     # ---- loading ----------------------------------------------------------
