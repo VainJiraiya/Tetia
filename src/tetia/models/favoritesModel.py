@@ -246,7 +246,7 @@ class FavoritesModel(QAbstractListModel):
                         "count": len(self._collections)})
             tiles = [{
                 "mediaId": -1,
-                "fileUri": c["hero"],
+                "fileUri": self._uri(c["hero"]) if c["hero"] else "",
                 "fileName": c["name"],
                 "kind": "collection",
                 "kindIndex": i,

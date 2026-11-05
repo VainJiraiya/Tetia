@@ -6,6 +6,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami 2.20 as Kirigami
 import Tetia 1.0
+import "thumbUri.js" as ThumbUri
 
 Item {
     id: root
@@ -227,7 +228,7 @@ Item {
                                     // is what caused the persistent stretching.
                                     layer.enabled: true
                                     source: model.heroPath && model.heroPath.length > 0
-                                            ? "image://thumbnail/" + model.heroPath + root.revisionSuffix
+                                            ? "image://thumbnail/" + ThumbUri.fromPath(model.heroPath) + root.revisionSuffix
                                             : ""
                                     sourceSize: Qt.size(root.thumbHint, root.thumbHint)
                                     fillMode: Image.PreserveAspectFit

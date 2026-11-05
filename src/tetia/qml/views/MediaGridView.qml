@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls
 import org.kde.kirigami 2.20 as Kirigami
 import Tetia 1.0
+import "thumbUri.js" as ThumbUri
 
 // The grid of media tiles. It is only the grid: the tag panel lives next to it
 // in main.qml, so it never ends up inside this Flickable's scrolling content.
@@ -535,7 +536,7 @@ GridView {
                     anchors.margins: 4
                     anchors.bottomMargin: 6
                     source: model.subfolderHero && model.subfolderHero.length > 0
-                            ? "image://thumbnail/" + model.subfolderHero + grid.revisionSuffix : ""
+                            ? "image://thumbnail/" + ThumbUri.fromPath(model.subfolderHero) + grid.revisionSuffix : ""
                     sourceSize: grid.thumbHint > 0 ? Qt.size(grid.thumbHint, grid.thumbHint) : Qt.size(0, 0)
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true

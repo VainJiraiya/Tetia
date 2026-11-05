@@ -44,7 +44,7 @@ zip-safe = false
 where = ["src"]
 
 [tool.setuptools.package-data]
-tetia = ["qml/*.qml", "qml/views/*.qml"]
+tetia = ["qml/*.qml", "qml/views/*.qml", "qml/views/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
