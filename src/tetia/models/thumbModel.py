@@ -12,7 +12,7 @@ from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtGui import QImage, QImageReader
 from PySide6.QtQuick import QQuickImageProvider
 
-from tetia.models import profiles
+from tetia.models import bookcovers, profiles
 
 # Characters left unescaped when building the thumbnail-cache URI. The MD5 of
 # this URI is the cache filename, so it has to match what Dolphin/KDE hashes
@@ -168,6 +168,9 @@ class ThumbnailProvider(QQuickImageProvider):
         super().__init__(QQuickImageProvider.Image)
         # General shares the system cache; a private profile only ever uses its own
         self.thumbnails_base = profiles.thumbnail_base()
+        # comics, EPUBs and PDFs that could not be read, {path: mtime}: not tried again
+        # while the file is unchanged, so scrolling past a damaged one stays cheap
+        self._unreadable = {}
 
     def _lookup_dirs(self, hint: int) -> list:
         """Cache folders to try, best first, as (folder, edge). With no size hint:
@@ -183,9 +186,11 @@ class ThumbnailProvider(QQuickImageProvider):
 
     @staticmethod
     def _generate(local_path: str, target_size: QSize) -> QImage:
-        """Make a thumbnail of an image or a video (null for anything else)."""
+        """Make a thumbnail of an image, a video, a comic, an EPUB or a PDF (null for anything else)."""
         if _is_video(local_path):
             return _extract_video_frame(local_path, target_size)
+        if bookcovers.is_book(local_path):
+            return bookcovers.make_cover(local_path, max(target_size.width(), target_size.height()))
         reader = QImageReader(local_path)
         orig_size = reader.size()
         if orig_size.isValid():
@@ -198,11 +203,33 @@ class ThumbnailProvider(QQuickImageProvider):
     def _big_enough(img: QImage, wanted_edge: int, local_path: str) -> bool:
         """Whether a cached thumbnail is as big as its tier promises. Older
         versions saved smaller pictures (320 pixels) in the x-large folder, which
-        look blurry on a big tile. Videos (the real size is unknowable) and files
-        Tetia cannot draw itself (comics, PDFs) are always accepted."""
+        look blurry on a big tile. Only files Tetia can draw itself are worth
+        making again: pictures, comics, EPUBs and PDFs. A video is accepted as it
+        is (its real size is unknowable) and so is anything else (Dolphin's)."""
         if max(img.width(), img.height()) >= 0.9 * wanted_edge:
             return True
-        return _is_video(local_path) or not QImageReader(local_path).canRead()
+        if _is_video(local_path):
+            return True
+        return not (bookcovers.is_book(local_path) or QImageReader(local_path).canRead())
+
+    @staticmethod
+    def _mtime(local_path: str):
+        try:
+            return int(os.stat(local_path).st_mtime)
+        except OSError:
+            return None
+
+    def _fresh(self, img: QImage, local_path: str) -> bool:
+        """The spec's staleness test: a thumbnail made from an older version of the file
+        carries its Thumb::MTime and is not used (it is made again)."""
+        recorded = img.text("Thumb::MTime")
+        current = self._mtime(local_path)
+        if not recorded or current is None:
+            return True
+        try:
+            return int(recorded) == current
+        except ValueError:
+            return True
 
     def requestImage(self, id_string: str, requested_size: QSize, size: QSize):
         # id_string may arrive either as a plain local path or as a file:// URI
@@ -235,7 +262,7 @@ class ThumbnailProvider(QQuickImageProvider):
             if not thumb_file.exists():
                 continue
             img = QImage(str(thumb_file))
-            if img.isNull():
+            if img.isNull() or not self._fresh(img, local_path):
                 continue
             if hint <= 0 or (edge >= wanted_edge and self._big_enough(img, wanted_edge, local_path)):
                 size.setWidth(img.width())
@@ -247,7 +274,13 @@ class ThumbnailProvider(QQuickImageProvider):
         # 2. Generate (preserve aspect ratio). A hint asks for the whole tier size, so
         # the file lands in the right freedesktop folder for other apps to reuse.
         target_size = QSize(wanted_edge, wanted_edge) if hint > 0 else QSize(256, 256)
-        img = self._generate(local_path, target_size)
+        modified = self._mtime(local_path)
+        if bookcovers.is_book(local_path) and self._unreadable.get(local_path) == modified:
+            img = QImage()
+        else:
+            img = self._generate(local_path, target_size)
+            if img.isNull() and bookcovers.is_book(local_path):
+                self._unreadable[local_path] = modified
 
         if not img.isNull() and max(img.width(), img.height()) >= max(fallback.width(), fallback.height()):
             size.setWidth(img.width())
