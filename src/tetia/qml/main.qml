@@ -146,6 +146,7 @@ Kirigami.ApplicationWindow {
             // The sort button sits just left of the mode button. Its slot is also
             // reserved on the left (and when the button is hidden) so the title stays centred.
             readonly property real sortSlotWidth: 40
+            readonly property int toolButtonCount: 2     // purge and sort sit left of the mode button
 
             TextMetrics {
                 id: doneMetrics
@@ -155,7 +156,7 @@ Kirigami.ApplicationWindow {
 
             // Dynamic Left Button (Menu vs. Back)
             Item {
-                Layout.preferredWidth: headerRow.sideSlotWidth + headerRow.sortSlotWidth
+                Layout.preferredWidth: headerRow.sideSlotWidth + headerRow.sortSlotWidth * headerRow.toolButtonCount
                 Layout.preferredHeight: leftButton.height
 
                 ToolButton {
@@ -168,7 +169,9 @@ Kirigami.ApplicationWindow {
                     property double lastClosedTime: 0
 
                     onClicked: {
-                        if (pageStack.depth > 1) {
+                        if (pageStack.depth > 1 && pageStack.currentItem && pageStack.currentItem.isPurge === true) {
+                            pageStack.currentItem.cancelRequested()    // the purge page decides (it asks first if needed)
+                        } else if (pageStack.depth > 1) {
                             // Explicitly destroy the popped page rather than
                             // relying only on Kirigami's exit-transition-
                             // triggered cleanup. That cleanup is gated on the
@@ -357,6 +360,25 @@ Kirigami.ApplicationWindow {
                 }
             }
 
+            // Purge button: only on a folder of photos. Swipe through its pictures to keep or trash them.
+            Item {
+                Layout.preferredWidth: headerRow.sortSlotWidth
+                Layout.preferredHeight: leftButton.height
+
+                ToolButton {
+                    anchors.centerIn: parent
+                    icon.name: "edit-clear-all"
+                    display: AbstractButton.IconOnly
+                    visible: pageStack.currentItem !== null
+                             && pageStack.currentItem.filterCategory === "photos"
+                             && pageStack.currentItem.isSearch === false
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: "Purge: swipe through these pictures to keep or trash them"
+                    onClicked: root.startPurge()
+                }
+            }
+
             // Sort button: only on a folder's (or subfolder's) page. Search results
             // keep their ranking and the top-level tab lists folders, so neither has it.
             Item {
@@ -424,7 +446,7 @@ Kirigami.ApplicationWindow {
                 Layout.preferredWidth: headerRow.sideSlotWidth
                 Layout.preferredHeight: leftButton.height
 
-                readonly property bool canSearch: !(pageStack.currentItem && pageStack.currentItem.isViewer === true)
+                readonly property bool canSearch: !(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isPurge === true))
                 readonly property string mode: root.isRemoveMode ? "remove"
                                              : (root.isTagMode ? "tag"
                                              : (canSearch ? "idle" : ""))
@@ -588,7 +610,7 @@ Kirigami.ApplicationWindow {
 
     Shortcut {
         sequence: StandardKey.Find
-        onActivated: if (!(pageStack.currentItem && pageStack.currentItem.isViewer === true)) root.openSearch()
+        onActivated: if (!(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isPurge === true))) root.openSearch()
     }
 
     MediaActions {
@@ -596,6 +618,35 @@ Kirigami.ApplicationWindow {
     }
 
     // Shared by the grid's tag panel and the image viewer's.
+    // Shown when files could not be moved to the Trash and there is something to tell the user
+    // (see trash.py). Nothing was lost: the files are where they were.
+    Kirigami.PromptDialog {
+        id: trashProblemDialog
+
+        property int failed: 0
+
+        title: failed === 1 ? "Couldn't move 1 item to the trash" : "Couldn't move " + failed + " items to the trash"
+        subtitle: mediaActions.trashProblem
+                  + (mediaActions.trashFixCommand !== "" ? "\n\n" + mediaActions.trashFixCommand : "")
+        standardButtons: Kirigami.Dialog.Close
+        customFooterActions: [
+            Kirigami.Action {
+                text: "Copy command"
+                icon.name: "edit-copy"
+                visible: mediaActions.trashFixCommand !== ""
+                onTriggered: {
+                    clipboardHelper.text = mediaActions.trashFixCommand
+                    clipboardHelper.selectAll()
+                    clipboardHelper.copy()
+                    showPassiveNotification("Command copied")
+                }
+            }
+        ]
+    }
+
+    // QML has no clipboard of its own: a hidden TextEdit can copy its text
+    TextEdit { id: clipboardHelper; visible: false }
+
     Kirigami.PromptDialog {
         id: deleteDialog
 
@@ -682,6 +733,35 @@ Kirigami.ApplicationWindow {
         deleteDialog.open()
     }
 
+    // Purge mode: swipe through the open folder's pictures; the marked ones go to the trash after a review.
+    function startPurge() {
+        var ids = mediaModel.imageIds()
+        if (ids.length === 0) {
+            showPassiveNotification("There are no pictures to purge here")
+            return
+        }
+        root.isTagMode = false
+        pageStack.push(purgeComponent, { mediaIds: ids, folderName: pageStack.currentItem.title })
+    }
+
+    Component {
+        id: purgeComponent
+
+        PurgeView {
+            id: purgePage
+
+            // The review was confirmed: the same code as Delete moves them (and explains a refusal)
+            onTrashRequested: function(ids) {
+                root.performDelete(ids, function(removed) { purgePage.trashFinished(removed) })
+            }
+            onFinished: function(message) {
+                var popped = pageStack.pop()
+                if (popped) popped.destroy()
+                if (message !== "") showPassiveNotification(message)
+            }
+        }
+    }
+
     function performDelete(ids, afterDelete) {
         var removed = mediaActions.moveToTrash(ids)
         // Reload so the model drops the removed items: the open folder, or
@@ -699,7 +779,13 @@ Kirigami.ApplicationWindow {
         }
         if (removed.length < ids.length) {
             var failed = ids.length - removed.length
-            showPassiveNotification("Couldn't move " + failed + (failed === 1 ? " item" : " items") + " to the trash")
+            if (mediaActions.trashProblem !== "") {
+                // a reason worth explaining (in the Flatpak: the Trash portal said no)
+                trashProblemDialog.failed = failed
+                trashProblemDialog.open()
+            } else {
+                showPassiveNotification("Couldn't move " + failed + (failed === 1 ? " item" : " items") + " to the trash")
+            }
         }
     }
 

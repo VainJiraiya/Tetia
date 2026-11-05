@@ -450,6 +450,12 @@ class MediaModel(QAbstractListModel):
             self._current_folder_path, info["path"], info["kind"], db=self._db
         )
 
+    @Slot(result=list)
+    def imageIds(self) -> list:
+        """The media ids of the pictures shown now (no videos, comics or books), in the order shown."""
+        return [item["media_id"] for item in self._visible_items
+                if not (item.get("is_video") or item.get("is_comic") or item.get("is_book"))]
+
     @Slot(str, result=bool)
     def setFolderCoverFromPath(self, path: str) -> bool:
         """Use the picture a subfolder tile shows (a file inside it, which is not one of this
