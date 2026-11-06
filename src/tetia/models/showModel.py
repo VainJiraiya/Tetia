@@ -160,7 +160,8 @@ class ShowModel(QObject):
         e = self._resume_episode()
         if e is None:
             return ""
-        return "S%02dE%02d" % (e["season"], e["number"]) if e["season"] >= 0 else "E%02d" % e["number"]
+        number = "%02d" % e["number"] if e["number"] == int(e["number"]) else "%04.1f" % e["number"]    # 3 -> 03, 9.5 -> 09.5
+        return "S%02dE%s" % (e["season"], number) if e["season"] >= 0 else "E" + number
 
     @Property(str, notify=changed)
     def resumeAt(self):

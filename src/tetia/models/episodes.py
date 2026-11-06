@@ -15,10 +15,13 @@ from pathlib import Path
 from tetia.models import covers
 from tetia.models.scanner import VIDEO_EXTENSIONS
 
-_SXXEXX = re.compile(r"(?<![a-z0-9])s(\d{1,3})\s*[ ._-]?\s*e(\d{1,4})(?!\d)", re.IGNORECASE)
-_LONG = re.compile(r"season\s*(\d{1,3})\W{0,4}(?:episode|ep)\.?\s*(\d{1,4})", re.IGNORECASE)
+# An episode number is whole, or ends in .5 (9.5 is a recap or special between episodes 9 and 10). Only .5: other
+# decimals in a name are things like the 5.1 of an audio track.
+_NUM = r"\d{1,4}(?:\.5)?"
+_SXXEXX = re.compile(r"(?<![a-z0-9])s(\d{1,3})\s*[ ._-]?\s*e(%s)(?![\d])" % _NUM, re.IGNORECASE)
+_LONG = re.compile(r"season\s*(\d{1,3})\W{0,4}(?:episode|ep)\.?\s*(%s)" % _NUM, re.IGNORECASE)
 _NXNN = re.compile(r"(?<![\dxX])(\d{1,2})x(\d{2,3})(?!\d)")
-_EPISODE = re.compile(r"(?<![a-z])e(?:p(?:isode)?)?\.?\s*(\d{1,4})(?!\d)", re.IGNORECASE)
+_EPISODE = re.compile(r"(?<![a-z])e(?:p(?:isode)?)?\.?\s*(%s)(?!\d)" % _NUM, re.IGNORECASE)
 _SEASON_FOLDER = re.compile(r"^(?:season|series|staffel|saison)[\s._-]*(\d{1,3})\b|^s[\s._-]*(\d{1,3})$", re.IGNORECASE)
 # what is not a number of the episode: [groups], (years), resolutions, codecs
 _NOISE = re.compile(r"\[[^\]]*\]|\([^)]*\)|\b\d{3,4}p\b|\b[xh]\.?26[45]\b|\b\d{1,2}[- ]?bit\b|\b(?:hevc|flac|aac|ac3|dts|web|bd|dvd)\w*\b",
@@ -29,22 +32,33 @@ _RELEASE = re.compile(r"\b(?:web[-. ]?dl|web[-. ]?rip|blu[-. ]?ray|bd[-. ]?rip|d
                       r"dsnp|disney|hmax|atvp|pcok|repack|proper|remux|dual[-. ]?audio|multi|ddp?[0-9][. ]?[0-9]|aac[0-9. ]*|opus)\b",
                       re.IGNORECASE)
 _SEASON_IN_NAME = re.compile(r"[\s._-]*\b(?:season|series|s)[\s._-]*\d+\b.*$", re.IGNORECASE)
-_STANDALONE = re.compile(r"(?<![\w.])(\d{1,4})(?![\w])")
+_STANDALONE = re.compile(r"(?<![\w.])(%s)(?![\w])" % _NUM)
 _SPECIALS = {"specials", "special", "extras", "ova", "ovas"}
 
 
+def _number(text: str):
+    """"9" -> 9, "9.5" -> 9.5"""
+    return float(text) if "." in text else int(text)
+
+
+def number_text(number) -> str:
+    """9 -> "9", 9.5 -> "9.5" """
+    return "%g" % number
+
+
 def parse_episode(name: str) -> tuple:
-    """(season, episode) of a file name; either is None when the name does not say."""
+    """(season, episode) of a file name; either is None when the name does not say. The episode is a whole number,
+    or one and a half (9.5) for a recap or special between two episodes."""
     stem = Path(name).stem
     for pattern in (_SXXEXX, _LONG, _NXNN):
         found = pattern.search(stem)
         if found:
-            return int(found.group(1)), int(found.group(2))
+            return int(found.group(1)), _number(found.group(2))
     found = _EPISODE.search(_NOISE.sub(" ", stem))
     if found:
-        return None, int(found.group(1))
+        return None, _number(found.group(1))
     numbers = _STANDALONE.findall(_NOISE.sub(" ", stem))
-    return (None, int(numbers[-1])) if numbers else (None, None)
+    return (None, _number(numbers[-1])) if numbers else (None, None)
 
 
 def parse_season_folder(name: str):
@@ -75,15 +89,15 @@ def episode_title(name: str, number, show: str = "") -> str:
     stem = _NOISE.sub(" ", stem)
     for pattern in (_SXXEXX, _LONG, _NXNN, _EPISODE):
         stem = pattern.sub(" ", stem)
+    if number is not None:       # before the dots become spaces: "9.5" is one number
+        stem = re.sub(r"(?<![\w.])0*%s(?![\w])" % re.escape(number_text(number)), " ", stem, count=1)
     stem = re.sub(r"[._]+", " ", stem)
-    if number is not None:
-        stem = re.sub(r"(?<![\w.])0*%d(?![\w])" % number, " ", stem, count=1)
     wanted = re.sub(r"[\W_]+", " ", show).strip().casefold()
     if wanted and re.sub(r"[\W_]+", " ", stem).strip().casefold().startswith(wanted):
         stem = re.sub(r"^\W*" + r"[\W_]+".join(re.escape(w) for w in wanted.split()), "", stem, flags=re.IGNORECASE)
     stem = re.sub(r"\s+", " ", stem)
     stem = re.sub(r"^[\s\-–:]+|[\s\-–:]+$", "", stem)
-    return stem.strip() or ("Episode %d" % number if number is not None else Path(name).stem)
+    return stem.strip() or ("Episode %s" % number_text(number) if number is not None else Path(name).stem)
 
 
 def _videos(folder: str) -> list[str]:

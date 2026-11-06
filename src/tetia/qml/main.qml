@@ -127,6 +127,8 @@ Kirigami.ApplicationWindow {
             var page = pageStack.currentItem
             if (page && page.isViewer === true && page.needsRestore === true) root.restoreViewerSource(page)
             root.refreshViewerTags()
+            // back from the player: the bars and marks on the videos follow what was watched
+            if (page && page.isGridPage === true) mediaModel.refreshPlayback()
         }
     }
     Connections {
@@ -911,6 +913,16 @@ Kirigami.ApplicationWindow {
     }
 
     Player { id: playerProbe }
+    PlaybackStore { id: playbackStore }
+
+    // A video of the page in the player, with the others of the page to step through
+    function playVideoAt(index) {
+        var videos = mediaModel.videoList()
+        var at = -1
+        for (var i = 0; i < videos.length; i++) if (videos[i].row === index) at = i
+        if (at < 0 || !playerProbe.canPlay(videos[at].uri)) Qt.openUrlExternally(mediaModel.getFileUri(index))
+        else root.playVideos(videos, at, "", "")
+    }
 
     // The player, over the videos to step through: [{uri, name}] and the one to start with. A show gives its title and
     // folder (its episodes, and the arrows seek); anything else is browsed like the photo viewer.
@@ -1692,12 +1704,11 @@ Kirigami.ApplicationWindow {
                     // readers are deliberately staying out of scope), so for
                     // now they open in whatever the system's default handler
                     // is for that file type.
-                    onVideoClicked: function(index) {
-                        var videos = mediaModel.videoList()
-                        var at = -1
-                        for (var i = 0; i < videos.length; i++) if (videos[i].row === index) at = i
-                        if (at < 0 || !playerProbe.canPlay(videos[at].uri)) Qt.openUrlExternally(mediaModel.getFileUri(index))
-                        else root.playVideos(videos, at, "", "")
+                    onVideoClicked: function(index) { root.playVideoAt(index) }
+                    // from the start: forget where it was stopped (its length stays), then play it
+                    onPlayFromStartRequested: function(index) {
+                        playbackStore.restart(mediaModel.getFileUri(index))
+                        root.playVideoAt(index)
                     }
                     onComicClicked: function(index) { root.openFile(mediaModel.getFileUri(index)) }
                     onBookClicked: function(index) { root.openFile(mediaModel.getFileUri(index)) }

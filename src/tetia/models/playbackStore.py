@@ -46,6 +46,15 @@ def resume_position(position: float, duration: float, finished: bool) -> float:
     return max(0.0, position - REWIND)
 
 
+def progress_fraction(position: float, duration: float, finished: bool) -> float:
+    """How much of a video was watched, for a bar: 1 once watched, 0 when not started (or stopped at the very start)."""
+    if finished:
+        return 1.0
+    if duration <= 0 or position < RESUME_FROM:
+        return 0.0
+    return min(1.0, position / duration)
+
+
 def _path(location: str) -> str:
     return QUrl(location).toLocalFile() if location.startswith("file:") else location
 
@@ -110,6 +119,22 @@ class PlaybackStore(QObject):
         except sqlite3.Error as e:
             logger.error("Failed to mark %s watched: %s", location, e)
 
+    @Slot(str)
+    def restart(self, location: str):
+        """Start over (the "Play from beginning" of a video stopped partway): the position goes, the length stays."""
+        media_id = self._media_id(location)
+        if media_id is None:
+            return
+        record = self._db.get_playback(media_id)
+        try:
+            self._db.clear_playback(media_id)
+            if record and record["duration"] > 0:
+                self._db.set_duration(media_id, record["duration"])
+                if record["finished"]:
+                    self._db.set_playback(media_id, 0, record["duration"], True)    # watching again does not unwatch it
+        except sqlite3.Error as e:
+            logger.error("Failed to restart %s: %s", location, e)
+
     @Slot(str, bool)
     def setWatched(self, location: str, watched: bool):
         """By hand: mark a video watched (whatever its length), or unwatched. A length already known is kept."""
@@ -147,7 +172,7 @@ class PlaybackStore(QObject):
             position = record["position"] if record else 0.0
             duration = record["duration"] if record else 0.0
             finished = bool(record and record["finished"])
-            fraction = 1.0 if finished else (min(1.0, position / duration) if duration > 0 and position >= RESUME_FROM else 0.0)
+            fraction = progress_fraction(position, duration, finished)
             out.append({"uri": loc, "position": position, "duration": duration, "finished": finished,
                         "fraction": fraction})
         return out

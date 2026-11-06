@@ -149,6 +149,8 @@ class GridModel(QAbstractListModel):
             R.IsBookRole: b"isBook",
             R.IsFavoriteRole: b"isFavorite",
             R.RatingRole: b"rating",
+            R.WatchFractionRole: b"watchFraction",
+            R.IsWatchedRole: b"isWatched",
         }
         for role, (name, _) in _SUB_ROLES.items():
             names[role] = name

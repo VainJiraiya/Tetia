@@ -24,6 +24,7 @@ from PySide6.QtQml import QmlElement
 
 from tetia.models import covers, profiles, series, virtualfolders
 from tetia.models.database import get_database
+from tetia.models.playbackStore import progress_fraction
 from tetia.models.scanner import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
     VIDEO_EXTENSIONS, kind_from_ext, scan_folder,
@@ -48,6 +49,8 @@ class MediaModel(QAbstractListModel):
         IsBookRole = Qt.UserRole + 6
         IsFavoriteRole = Qt.UserRole + 7
         RatingRole = Qt.UserRole + 8
+        WatchFractionRole = Qt.UserRole + 9    # how much of a video was watched, 0..1 (0: not started)
+        IsWatchedRole = Qt.UserRole + 10       # a video watched to the end
 
     # Defines the available view filtering modes
     class FilterMode(IntEnum):
@@ -153,6 +156,12 @@ class MediaModel(QAbstractListModel):
         elif data_role == MediaModel.Roles.IsFavoriteRole:
             return current_item.get("is_favorite", 0)
 
+        elif data_role == MediaModel.Roles.WatchFractionRole:
+            return current_item.get("watch_fraction", 0.0)
+
+        elif data_role == MediaModel.Roles.IsWatchedRole:
+            return current_item.get("watched", False)
+
         # Returns rating (-1 means NULL/unrated in QML)
         elif data_role == MediaModel.Roles.RatingRole:
             rating = current_item.get("rating")
@@ -171,6 +180,8 @@ class MediaModel(QAbstractListModel):
             MediaModel.Roles.IsBookRole: b"isBook",
             MediaModel.Roles.IsFavoriteRole: b"isFavorite",
             MediaModel.Roles.RatingRole: b"rating",
+            MediaModel.Roles.WatchFractionRole: b"watchFraction",
+            MediaModel.Roles.IsWatchedRole: b"isWatched",
         }
 
     # --- Hashing ---
@@ -351,9 +362,33 @@ class MediaModel(QAbstractListModel):
             )
 
         self._visible_items = self._sorted(self._visible_items)
+        self._attach_playback()
 
         # Unfreezes Qt UI updates and tells QML to redraw the grid view
         self.endResetModel()
+
+    def _attach_playback(self):
+        """Put how far each video was watched next to it (one query for the page)."""
+        videos = [item for item in self._visible_items if item.get("is_video") and item.get("media_id") is not None]
+        try:
+            records = self._db.get_playback_many([item["media_id"] for item in videos]) if videos else {}
+        except sqlite3.Error as e:
+            logger.error("Failed to read playback progress: %s", e)
+            records = {}
+        for item in videos:
+            record = records.get(item["media_id"])
+            item["watched"] = bool(record and record["finished"])
+            item["watch_fraction"] = (progress_fraction(record["position"], record["duration"], record["finished"])
+                                      if record else 0.0)
+
+    @Slot()
+    def refreshPlayback(self):
+        """After watching: update the bars and marks of the videos on the page (no reset, so the grid keeps its place)."""
+        self._attach_playback()
+        videos = [row for row, item in enumerate(self._visible_items) if item.get("is_video")]
+        if videos:
+            self.dataChanged.emit(self.index(videos[0]), self.index(videos[-1]),
+                                  [MediaModel.Roles.WatchFractionRole, MediaModel.Roles.IsWatchedRole])
 
     # --- Favorite and Rating operations (keyed by media_id, emit dataChanged for single row) ---
 

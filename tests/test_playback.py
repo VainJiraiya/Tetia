@@ -125,3 +125,40 @@ def test_the_background_probe_learns_how_long_videos_are(tmp_path, qapp):
     assert [round(r["duration"]) for r in rows] == [2, 3]
     store.probe(uris)                                                     # known now: nothing more to do
     store.stop_probe()
+
+
+def test_video_tiles_know_how_far_they_were_watched(library):
+    store, (one, two, three) = library["store"], library["uris"]
+    store.markFinished(one, LONG)
+    store.save(two, 1350, LONG)
+    media = MediaModel()
+    media.load_from_qurl(str(library["folder"]))
+    by_name = {i["file_name"]: i for i in media._visible_items}
+    first, second, third = (by_name["Show S01E0%d.mkv" % n] for n in (1, 2, 3))
+    assert first["watched"] is True and first["watch_fraction"] == 1.0
+    assert second["watched"] is False and abs(second["watch_fraction"] - 0.5) < 0.001
+    assert third["watched"] is False and third["watch_fraction"] == 0.0
+    # the roles QML reads
+    rows = {media.data(media.index(r), MediaModel.Roles.FileNameRole): r for r in range(media.rowCount())}
+    r2 = media.index(rows["Show S01E02.mkv"])
+    assert abs(media.data(r2, MediaModel.Roles.WatchFractionRole) - 0.5) < 0.001
+    assert media.data(media.index(rows["Show S01E01.mkv"]), MediaModel.Roles.IsWatchedRole) is True
+    # after watching more, a refresh updates the page without reloading it
+    changed = []
+    media.dataChanged.connect(lambda *a: changed.append(1))
+    store.save(two, 2000, LONG)
+    media.refreshPlayback()
+    assert changed and media.data(r2, MediaModel.Roles.WatchFractionRole) > 0.7
+
+
+def test_play_from_beginning_forgets_the_position_but_keeps_the_length(library):
+    store, (one, two, _) = library["store"], library["uris"]
+    store.save(one, 1350, LONG)
+    assert store.resumeFor(one) > 0
+    store.restart(one)
+    row = store.episodes([one])[0]
+    assert store.resumeFor(one) == 0 and row["position"] == 0 and row["duration"] == LONG and not row["finished"]
+    store.markFinished(two, LONG)
+    store.save(two, 900, LONG)
+    store.restart(two)                                                    # watching again does not unwatch it
+    assert store.episodes([two])[0]["finished"] is True

@@ -536,3 +536,22 @@ def test_titles_lose_the_release_junk_and_the_show_name():
     # a real title with a dash in it is left alone, and so is a name that does not look like a release
     assert ep.episode_title("Show S01E04 - Spider-Man.mkv", 4, "Show") == "Spider-Man"
     assert ep.episode_title("Show S01E04 - Amazon Women.mkv", 4, "Show") == "Amazon Women"
+
+
+def test_a_half_episode_sits_between_two_episodes(tmp_path):
+    from tetia.models import episodes as ep
+    assert ep.parse_episode("Chobits - 9.5.mp4") == (None, 9.5)
+    assert ep.parse_episode("Chobits - 9.mp4") == (None, 9)
+    assert ep.parse_episode("Show S01E09.5.mkv") == (1, 9.5)
+    assert ep.parse_episode("Show - Ep 12.5 [1080p].mkv") == (None, 12.5)
+    assert ep.parse_episode("Show - 05 AAC 5.1.mkv") == (None, 5)          # an audio layout is not an episode
+    assert ep.parse_episode("Show - 7.25.mkv") == (None, 7)                # only .5 counts as part of a number
+    assert ep.episode_title("Chobits - 9.5.mp4", 9.5, "Chobits") == "Episode 9.5"
+    assert ep.episode_title("Chobits - 9.mp4", 9, "Chobits") == "Episode 9"
+    show = tmp_path / "Chobits"
+    show.mkdir()
+    for name in ("Chobits - 10.mp4", "Chobits - 9.5.mp4", "Chobits - 9.mp4", "Chobits - 8.mp4"):
+        (show / name).write_bytes(b"x")
+    (group,) = ep.seasons(str(show))
+    assert [(e["number"], e["title"]) for e in group["episodes"]] == [
+        (8, "Episode 8"), (9, "Episode 9"), (9.5, "Episode 9.5"), (10, "Episode 10")]

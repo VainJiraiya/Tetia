@@ -19,6 +19,8 @@ GridView {
     signal comicClicked(int index)
     signal bookClicked(int index)
     signal openExternallyRequested(int index)   // "Open in system default" from the right-click menu
+    // "Play from beginning" on a video that was stopped partway
+    signal playFromStartRequested(int index)
     signal selectionChanged()
 
     // A subfolder tile was tapped; folderPath is a file:// URI.
@@ -394,6 +396,14 @@ GridView {
         }
 
         MenuItem {
+            text: "Play from beginning"
+            icon.name: "media-skip-backward"
+            visible: grid.contextMenuData.kind === "video" && grid.contextMenuData.resumable === true
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.playFromStartRequested(grid.contextMenuData.fileIndex)
+        }
+
+        MenuItem {
             text: "Open in system default"
             icon.name: "document-open"
             visible: grid.contextMenuData.kind === "comic" || grid.contextMenuData.kind === "ebook"
@@ -480,8 +490,8 @@ GridView {
     }
 
     // kind: "image", "video", "comic" or "ebook"
-    function openContextMenu(mediaId, kind, fileIndex) {
-        grid.contextMenuData = { mediaId: mediaId, kind: kind, fileIndex: fileIndex }
+    function openContextMenu(mediaId, kind, fileIndex, resumable) {
+        grid.contextMenuData = { mediaId: mediaId, kind: kind, fileIndex: fileIndex, resumable: resumable === true }
         var isFavorite = grid.mediaBackend ? !!grid.mediaBackend.getFavorite(mediaId) : false
         favoriteItem.text = isFavorite ? "Remove from favorites" : "Add to favorites"
         favoriteItem.icon.name = isFavorite ? "non-starred-symbolic" : "starred-symbolic"
@@ -1063,6 +1073,42 @@ GridView {
                     height: grid.showLabels ? implicitHeight : 0
                 }
 
+                // How far a video was watched: a bar along the bottom edge of its picture
+                Rectangle {
+                    readonly property bool partway: model.isVideo === true && model.watchFraction > 0 && !model.isWatched
+                    visible: partway && thumbnail.paintedWidth > 0
+                    x: thumbnail.x + (thumbnail.width - thumbnail.paintedWidth) / 2
+                    y: thumbnail.y + (thumbnail.height + thumbnail.paintedHeight) / 2 - height
+                    width: thumbnail.paintedWidth
+                    height: 4
+                    color: Qt.rgba(0, 0, 0, 0.55)
+                    Rectangle {
+                        width: parent.width * (model.watchFraction || 0)
+                        height: parent.height
+                        color: palette.highlight
+                    }
+                }
+
+                // A video watched to the end (top-left, in the badge strip)
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.margins: grid.badgeMargin
+                    width: grid.badgeHeight
+                    height: grid.badgeHeight
+                    radius: height / 2
+                    color: grid.badgeColor
+                    visible: model.isVideo === true && model.isWatched === true
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2713"
+                        color: "white"
+                        font.pixelSize: grid.badgeFont
+                        font.bold: true
+                    }
+                }
+
                 // Selection check badge (top-right)
                 Rectangle {
                     anchors.top: parent.top
@@ -1095,7 +1141,8 @@ GridView {
                             grid.openContextMenu(model.mediaId,
                                 model.isVideo ? "video"
                                 : (model.isComic ? "comic"
-                                : (model.isBook ? "ebook" : "image")), tile.fileIndex)
+                                : (model.isBook ? "ebook" : "image")), tile.fileIndex,
+                                model.isVideo && model.watchFraction > 0 && !model.isWatched)
                         } else if (grid.selecting) {
                             if ((mouse.modifiers & Qt.ShiftModifier) && grid.selectedIds.length > 0) {
                                 // Range from the last selected item to this one
