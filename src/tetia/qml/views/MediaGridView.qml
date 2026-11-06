@@ -48,6 +48,8 @@ GridView {
     // "Select" in a menu: enter select mode with this selected
     signal selectRequested(var ids, var tiles)
     signal newVirtualFolderRequested()
+    // The T key: open or close the tag browser
+    signal browseTagsRequested()
     signal virtualRenameRequested(int virtualId, string name)
     signal virtualDeleteRequested(int virtualId, string name)
     signal virtualCoverResetRequested(int virtualId)
@@ -345,6 +347,11 @@ GridView {
 
     activeFocusOnTab: true
     Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_T && event.modifiers === Qt.NoModifier) {
+            grid.browseTagsRequested()
+            event.accepted = true
+            return
+        }
         if (!grid.selecting) return
         if (event.matches(StandardKey.SelectAll)) {
             grid.selectAll()

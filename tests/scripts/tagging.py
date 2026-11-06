@@ -161,9 +161,8 @@ check("tag exists before remove", len(tm.tagsFor(media_id3)) == 1)
 tm.removeTag(media_id3, tm.tagsFor(media_id3)[0]["id"])
 check("removeTag removes link", len(tm.tagsFor(media_id3)) == 0)
 
-# Verify the tag still exists in the DB
-tag_exists = tm._db.get_tag_id("supernatural") is not None
-check("removeTag keeps tag in DB", tag_exists)
+# A tag that nothing uses any more is removed with its last link (a misspelling must not stay as a suggestion)
+check("removeTag drops a tag nothing uses", tm._db.get_tag_id("supernatural") is None)
 
 # 14. Suggest returns the right tags
 m, tm = fresh_pair()

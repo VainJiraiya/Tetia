@@ -153,7 +153,7 @@ Kirigami.ApplicationWindow {
             // The sort button sits just left of the mode button. Its slot is also
             // reserved on the left (and when the button is hidden) so the title stays centred.
             readonly property real sortSlotWidth: 40
-            readonly property int toolButtonCount: 2     // purge and sort sit left of the mode button
+            readonly property int toolButtonCount: 3     // purge, browse tags and sort sit left of the mode button
 
             TextMetrics {
                 id: doneMetrics
@@ -361,12 +361,13 @@ Kirigami.ApplicationWindow {
                 Layout.preferredHeight: leftButton.height
 
                 ToolButton {
+                    objectName: "purgeButton"
                     anchors.centerIn: parent
                     icon.name: "edit-clear-all"
                     display: AbstractButton.IconOnly
                     visible: pageStack.currentItem !== null
                              && pageStack.currentItem.filterCategory === "photos"
-                             && pageStack.currentItem.isSearch === false
+                             && (pageStack.currentItem.isSearch === false || pageStack.currentItem.isTagPage === true)
                     ToolTip.visible: hovered
                     ToolTip.delay: 600
                     ToolTip.text: "Purge: swipe through these pictures to keep them or send them to the Trash"
@@ -374,7 +375,27 @@ Kirigami.ApplicationWindow {
                 }
             }
 
-            // Sort button: only on a folder's (or subfolder's) page. Search results
+            // Browse tags: on every page of items (folders, virtual folders, search results)
+            Item {
+                Layout.preferredWidth: headerRow.sortSlotWidth
+                Layout.preferredHeight: leftButton.height
+
+                ToolButton {
+                    objectName: "browseTagsButton"
+                    anchors.centerIn: parent
+                    icon.name: "tag"
+                    display: AbstractButton.IconOnly
+                    visible: pageStack.currentItem !== null && pageStack.currentItem.isGridPage === true
+                    checkable: true
+                    checked: pageStack.currentItem !== null && pageStack.currentItem.browseOpen === true
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: "Browse by tag (T)"
+                    onClicked: root.toggleBrowseTags()
+                }
+            }
+
+            // Sort button: only on a folder's (or subfolder's) page, and on a tag's results. Search results
             // keep their ranking and the top-level tab lists folders, so neither has it.
             Item {
                 Layout.preferredWidth: headerRow.sortSlotWidth
@@ -382,12 +403,13 @@ Kirigami.ApplicationWindow {
 
                 ToolButton {
                     id: sortButton
+                    objectName: "sortButton"
                     anchors.centerIn: parent
                     icon.name: "view-sort"
                     display: AbstractButton.IconOnly
                     visible: pageStack.currentItem !== null
                              && pageStack.currentItem.filterCategory !== undefined
-                             && pageStack.currentItem.isSearch === false
+                             && (pageStack.currentItem.isSearch === false || pageStack.currentItem.isTagPage === true)
                     onClicked: sortMenu.popup(sortButton, 0, sortButton.height)
 
                     Menu {
@@ -1067,6 +1089,8 @@ Kirigami.ApplicationWindow {
     }
 
     function searchTitle(query, count) {
+        // a tag page is titled by its tag, not as a search
+        if (root.searchState && root.searchState.label) return root.searchState.label + " \u00B7 " + itemsText(count)
         return "Search: " + query + " (" + count + ")"
     }
 
@@ -1082,6 +1106,8 @@ Kirigami.ApplicationWindow {
         if (page) {
             mediaModel.load_media_ids(ids)
             page.title = searchTitle(query, ids.length)
+            page.isTagPage = false        // a typed search keeps its own ranking
+            page.browsedTags = []
         } else {
             root.currentFolder = null
             root.currentVirtual = -1
@@ -1095,12 +1121,91 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // ---- Browsing by tag ------------------------------------------------------------------------------
+
+    function toggleBrowseTags() {
+        var page = pageStack.currentItem
+        if (!page || page.isGridPage !== true) return
+        page.browseOpen = !page.browseOpen
+        if (page.browseOpen) {
+            // the panels share one spot
+            root.isTagMode = false
+            page.metadataMediaId = -1
+        }
+    }
+
+    // Shows the items with the chosen tags, staying in the grid: in the library folder this page is in, and in
+    // the same kind of items (the tab). Clicking a tag chooses it; on a page that already shows the results of
+    // tags, the next tag narrows them. The tag browser stays open: it is closed only by its own button.
+    function browseTag(category, name) {
+        var page = pageStack.currentItem
+        if (!page || page.isGridPage !== true) return
+        var chosen = page.isTagPage ? page.browsedTags.slice() : []
+        for (var i = 0; i < chosen.length; i++) {
+            if (chosen[i].category === category && chosen[i].name === name) return
+        }
+        chosen.push({ category: category, name: name })
+        runTagPage(chosen, page)
+    }
+
+    // A chosen tag's remove button: show the items again without it (the folder itself, with none left)
+    function unbrowseTag(category, name) {
+        var page = pageStack.currentItem
+        if (!page || page.isTagPage !== true) return
+        var chosen = page.browsedTags.filter(function(t) { return !(t.category === category && t.name === name) })
+        if (chosen.length === 0) {
+            var popped = pageStack.pop()
+            if (popped) popped.destroy()
+            return
+        }
+        runTagPage(chosen, page)
+    }
+
+    function tagQuery(chosen, tab) {
+        var kinds = {"photos": " type:image", "videos": " type:video", "manga": " ~type:comic ~type:ebook",
+                     "books": " type:ebook"}[tab] || ""
+        return chosen.map(function(t) { return t.category + ":" + t.name }).join(" ") + kinds
+    }
+
+    // `from` is the page the click was made on: a folder (the search is for its library folder and tab), or
+    // the tag page being narrowed or widened
+    function runTagPage(chosen, from) {
+        var tab = from.filterCategory
+        var scope = from.isTagPage ? root.searchState.scope
+                  : (searchModel.rootOf(from.virtualId >= 0 ? from.homePath : String(from.folderPath))
+                     || (from.virtualId >= 0 ? from.homePath : String(from.folderPath)))
+        var query = tagQuery(chosen, tab)
+        var label = chosen.map(function(t) { return t.name.replace(/_/g, " ") }).join(", ")
+        var ids = searchModel.search(query, scope)
+        root.searchState = { query: query, scope: scope, label: label }
+        if (from.isTagPage) {
+            mediaModel.load_media_ids_sorted(ids)
+            from.title = searchTitle(query, ids.length)
+            from.browsedTags = chosen
+        } else {
+            root.currentFolder = null
+            root.currentVirtual = -1
+            mediaModel.filterMode = MediaModel.All
+            mediaModel.load_media_ids_sorted(ids)
+            pageStack.push(mediaGridComponent, {
+                title: searchTitle(query, ids.length),
+                isSearch: true,
+                isTagPage: true,
+                browsedTags: chosen,
+                browseOpen: true,                  // the browser stays open as the tag is chosen
+                filterCategory: tab,
+                searchScope: scope
+            })
+        }
+    }
+
     // Re-run the open search (after a delete, or when indexing finishes)
     function refreshSearch() {
         var page = searchPage()
         if (!page || !root.searchState) return
         var ids = searchModel.search(root.searchState.query, root.searchState.scope)
-        mediaModel.load_media_ids(ids)
+        if (page.isTagPage) mediaModel.load_media_ids_sorted(ids)
+        else mediaModel.load_media_ids(ids)
         page.title = searchTitle(root.searchState.query, ids.length)
     }
 
@@ -1244,13 +1349,22 @@ Kirigami.ApplicationWindow {
             // A virtual folder page: which one, and the real folder it was made in
             property int virtualId: -1
             property string homePath: ""
+            // The tag browser is open on this page
+            property bool browseOpen: false
+            // The results of a tag clicked in the browser (a search page that is sorted and purged like a folder),
+            // and the tags chosen so far, [{category, name}]
+            property bool isTagPage: false
+            property var browsedTags: []
 
             // The file whose metadata panel is open (-1: none)
             property int metadataMediaId: -1
             Connections {
                 target: root
                 function onIsTagModeChanged() {
-                    if (root.isTagMode) gridPage.metadataMediaId = -1
+                    if (root.isTagMode) {
+                        gridPage.metadataMediaId = -1
+                        gridPage.browseOpen = false
+                    }
                 }
             }
 
@@ -1362,8 +1476,10 @@ Kirigami.ApplicationWindow {
                     // The metadata panel and the tag panel share one spot: showing one hides the other
                     onMetadataRequested: function(mediaId) {
                         root.isTagMode = false
+                        gridPage.browseOpen = false
                         gridPage.metadataMediaId = mediaId
                     }
+                    onBrowseTagsRequested: root.toggleBrowseTags()
 
                     onImageClicked: function(index) {
                         pageStack.push(imageViewerComponent, { initialIndex: index })
@@ -1472,6 +1588,19 @@ Kirigami.ApplicationWindow {
                     visible: gridPage.metadataMediaId >= 0
                     mediaId: gridPage.metadataMediaId
                     onCloseRequested: gridPage.metadataMediaId = -1
+                }
+
+                TagBrowsePanel {
+                    objectName: "tagBrowsePanel"
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: implicitWidth
+                    visible: gridPage.browseOpen
+                    mediaBackend: mediaModel
+                    tagBackend: tagModel
+                    onCloseRequested: gridPage.browseOpen = false
+                    selected: gridPage.browsedTags
+                    onTagChosen: function(category, name) { root.browseTag(category, name) }
+                    onTagRemoved: function(category, name) { root.unbrowseTag(category, name) }
                 }
 
                 // Shown for the whole of tag mode (not only while something is

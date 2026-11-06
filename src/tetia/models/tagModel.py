@@ -75,6 +75,25 @@ class TagModel(QObject):
             logger.error("Failed to get tags for media_id=%d: %s", media_id, e)
             return []
 
+    @Slot(list, result=list)
+    def browse(self, media_ids: list) -> list:
+        """The tags to browse on a page of items: [{category, tags: [{id, name, count}]}] in category order, each
+        category's tags most used first. A tag on only one of the items is left out (it would lead to nothing
+        more than the item already in view), and so is a category left with none."""
+        try:
+            counted = self._db.get_tag_counts(_as_ids(media_ids))
+        except sqlite3.Error as e:
+            logger.error("Failed to count the tags of a page: %s", e)
+            return []
+        groups = []
+        for tag in counted:
+            if tag["count"] < 2:
+                continue
+            if not groups or groups[-1]["category"] != tag["category"]:
+                groups.append({"category": tag["category"], "tags": []})
+            groups[-1]["tags"].append({"id": tag["id"], "name": tag["name"], "count": tag["count"]})
+        return groups
+
     def _resolve_tag(self, raw_name: str, category_name: str) -> int | None:
         """Normalize, resolve aliases and create the tag if needed.
         Returns the tag id, or None if the name/category is invalid."""
@@ -118,7 +137,7 @@ class TagModel(QObject):
 
     @Slot(int, int)
     def removeTag(self, media_id: int, tag_id: int):
-        """Remove a tag link from a media item. The tag itself is preserved."""
+        """Remove a tag link from a media item. A tag that nothing uses any more is removed too."""
         try:
             self._db.remove_media_tag(media_id, tag_id)
         except sqlite3.Error as e:

@@ -691,13 +691,26 @@ class Database:
             (media_id, tag_id, source)
         )
 
+    # A tag nothing uses and that nothing refers to: no item has it, and it is not an alias target or part of an
+    # implication (those were set up on purpose and a tag can be used through them). Such a tag is what is left
+    # behind by a misspelling that was typed and then removed.
+    _TAG_IN_USE = ("(EXISTS (SELECT 1 FROM media_tag mt WHERE mt.tag_id = {t}.id)"
+                   " OR EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.tag_id = {t}.id)"
+                   " OR EXISTS (SELECT 1 FROM tag_implication ti WHERE ti.antecedent_id = {t}.id OR ti.consequent_id = {t}.id))")
+
+    def _prune_unused_tags(self, tag_ids):
+        """Delete the tags among `tag_ids` that nothing uses (see _TAG_IN_USE). Runs inside the caller's transaction."""
+        for tag_id in set(tag_ids):
+            self.conn.execute(
+                "DELETE FROM tag WHERE id = ? AND NOT " + self._TAG_IN_USE.format(t="tag"), (int(tag_id),))
+
     def remove_media_tag(self, media_id: int, tag_id: int):
-        """Remove a tag link from media."""
-        self._write(
-            self.conn.execute,
-            "DELETE FROM media_tag WHERE media_id = ? AND tag_id = ?",
-            (media_id, tag_id)
-        )
+        """Remove a tag link from media. A tag left with nothing using it goes too, so a misspelling does not
+        stay behind as a suggestion."""
+        def _do():
+            self.conn.execute("DELETE FROM media_tag WHERE media_id = ? AND tag_id = ?", (media_id, tag_id))
+            self._prune_unused_tags([tag_id])
+        self._write(_do)
 
     # --- Favorites (for the consolidated Favorites tab) ---
 
@@ -740,6 +753,29 @@ class Database:
         """, (media_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_tag_counts(self, media_ids) -> list[dict]:
+        """How many of these items carry each tag: [{id, name, category, count}], in category order, then
+        most used first, then alphabetical."""
+        ids = [int(i) for i in media_ids]
+        counts = {}
+        for start in range(0, len(ids), 500):       # stay under SQLite's variable limit
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            for row in self.conn.execute(f"""
+                SELECT t.id, t.name, tc.name AS category, tc.sort_order AS position, COUNT(*) AS n
+                FROM media_tag mt
+                JOIN tag t ON t.id = mt.tag_id
+                JOIN tag_category tc ON tc.id = t.category_id
+                WHERE mt.media_id IN ({marks})
+                GROUP BY t.id""", chunk):
+                found = counts.setdefault(row["id"], {"id": row["id"], "name": row["name"], "category": row["category"],
+                                                      "position": row["position"], "count": 0})
+                found["count"] += row["n"]
+        ordered = sorted(counts.values(), key=lambda t: (t["position"], -t["count"], t["name"]))
+        for tag in ordered:
+            del tag["position"]
+        return ordered
+
     def search_tags(self, text: str, limit: int = 10) -> list[dict]:
         """Autocomplete: tags whose name (or alias) starts with or contains `text`.
 
@@ -753,13 +789,14 @@ class Database:
         esc = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         prefix, anywhere = esc + "%", "%" + esc + "%"
 
+        in_use = self._TAG_IN_USE.format(t="t")      # leftovers of a removed misspelling are not suggested
         usage = "(SELECT COUNT(*) FROM media_tag mt WHERE mt.tag_id = t.id)"
         cursor = self.conn.cursor()
         cursor.execute(f"""
             SELECT t.id, t.name, tc.name AS category, NULL AS alias,
                    (t.name LIKE ? ESCAPE '\\') AS is_prefix, {usage} AS uses
             FROM tag t JOIN tag_category tc ON tc.id = t.category_id
-            WHERE t.name LIKE ? ESCAPE '\\'
+            WHERE t.name LIKE ? ESCAPE '\\' AND {in_use}
             UNION ALL
             SELECT t.id, t.name, tc.name, a.alias,
                    (a.alias LIKE ? ESCAPE '\\'), {usage}
@@ -804,12 +841,12 @@ class Database:
         )
 
     def remove_media_tags(self, media_ids, tag_id: int):
-        """Unlink one tag from many items in ONE transaction (one commit)."""
-        self._write(
-            self.conn.executemany,
-            "DELETE FROM media_tag WHERE media_id = ? AND tag_id = ?",
-            [(m, tag_id) for m in media_ids]
-        )
+        """Unlink one tag from many items in ONE transaction (one commit); a tag left unused goes too."""
+        def _do():
+            self.conn.executemany("DELETE FROM media_tag WHERE media_id = ? AND tag_id = ?",
+                                  [(m, tag_id) for m in media_ids])
+            self._prune_unused_tags([tag_id])
+        self._write(_do)
 
     # --- Deleting media ---
 

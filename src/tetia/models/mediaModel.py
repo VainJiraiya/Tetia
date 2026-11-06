@@ -91,6 +91,7 @@ class MediaModel(QAbstractListModel):
         # Internal state tracking variables
         self._current_folder_path: str = ""
         self._virtual_id: int = -1      # the virtual folder shown, if the grid shows one
+        self._sortable_ids = False      # the ids shown are a tag page's, which the sort choice applies to
         self._sort_mode = MediaModel.SortMode.Default
         self._filter_mode: MediaModel.FilterMode = MediaModel.FilterMode.All
 
@@ -227,6 +228,7 @@ class MediaModel(QAbstractListModel):
         # Kept exactly as chosen, since QML reads it back through folderPath
         self._current_folder_path = str(folder_directory)
         self._virtual_id = -1
+        self._sortable_ids = False
 
         # Stored media paths are resolved (symlinks followed), so database
         # comparisons for this folder must use the resolved form as well
@@ -288,7 +290,7 @@ class MediaModel(QAbstractListModel):
         """`items` in the chosen sort order. Only for an open folder (search
         results keep their ranking); ties fall back to natural name order."""
         mode = self._sort_mode
-        if mode == MediaModel.SortMode.Default or not (self._current_folder_path or self._virtual_id >= 0):
+        if mode == MediaModel.SortMode.Default or not (self._current_folder_path or self._virtual_id >= 0 or self._sortable_ids):
             return items
         name = lambda item: covers.natural_key(item["file_name"])
         if mode == MediaModel.SortMode.NameDescending:
@@ -363,6 +365,14 @@ class MediaModel(QAbstractListModel):
         return -1
 
     @Slot(list)
+    def load_media_ids_sorted(self, media_ids: list):
+        """Like load_media_ids, for the results of a tag: the ids are in natural name order and the grid's sort
+        choice applies to them (a search keeps its own order)."""
+        self.load_media_ids(media_ids)
+        self._sortable_ids = True
+        self._update_visible_items()
+
+    @Slot(list)
     def load_media_ids(self, media_ids: list):
         """Show these media rows (search results) instead of a folder's files,
         in the order given. Leaves no folder open, so folder-only features
@@ -375,6 +385,7 @@ class MediaModel(QAbstractListModel):
             self._file_system_watcher.removePaths(existing_watched)
         self._current_folder_path = ""
         self._virtual_id = -1
+        self._sortable_ids = False
 
         images, videos, comics, books = [], [], [], []
         for media_id in ids:
@@ -409,6 +420,7 @@ class MediaModel(QAbstractListModel):
             self._file_system_watcher.removePaths(existing_watched)
         self._current_folder_path = ""
         self._virtual_id = int(vfolder_id)
+        self._sortable_ids = False
 
         images, videos, comics, books = [], [], [], []
         for row in virtualfolders.member_rows(self._db, self._virtual_id):
@@ -518,6 +530,11 @@ class MediaModel(QAbstractListModel):
         """The media ids of the pictures shown now (no videos, comics or books), in the order shown."""
         return [item["media_id"] for item in self._visible_items
                 if not (item.get("is_video") or item.get("is_comic") or item.get("is_book"))]
+
+    @Slot(result=list)
+    def visibleIds(self) -> list:
+        """The media ids of every file shown now (the page's items, whatever their type), in the order shown."""
+        return [item["media_id"] for item in self._visible_items if item.get("media_id") is not None]
 
     @Slot(str, result=bool)
     def setFolderCoverFromPath(self, path: str) -> bool:

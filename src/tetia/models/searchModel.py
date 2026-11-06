@@ -181,6 +181,18 @@ class SearchModel(QObject):
         return [tag_query.scope_range(os.path.realpath(covers.folder_key(f)))
                 for f in self._db.get_all_folders()]
 
+    @Slot(str, result=str)
+    def rootOf(self, path: str) -> str:
+        """The library folder (as added to a tab) that holds `path`: the outermost one if they nest. '' if none does."""
+        real = os.path.realpath(covers.folder_key(path)) if path else ""
+        best = ""
+        for folder in self._db.get_all_folders():
+            root = os.path.realpath(covers.folder_key(folder))
+            if real == root or real.startswith(root.rstrip(os.sep) + os.sep):
+                if not best or len(root) < len(best):
+                    best = root
+        return best
+
     @Slot(str, result=list)
     def splitTokens(self, text: str) -> list:
         return tag_query.split_tokens(text)
