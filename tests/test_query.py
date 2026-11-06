@@ -33,6 +33,7 @@ def make_db():
         CREATE TABLE media (id INTEGER PRIMARY KEY, path TEXT, name TEXT, kind TEXT,
                             favorite INTEGER DEFAULT 0, rating INTEGER, missing INTEGER DEFAULT 0);
         CREATE TABLE media_tag (media_id INTEGER, tag_id INTEGER);
+        CREATE TABLE folder_tag (folder TEXT, tag_id INTEGER);
         INSERT INTO media VALUES (1,'/lib/a/Starfall 01.mkv','Starfall 01.mkv','video',1,2,0);
         INSERT INTO media VALUES (2,'/lib/a/Starfall 02.mkv','Starfall 02.mkv','video',0,NULL,0);
         INSERT INTO media VALUES (3,'/lib/b/100%_done.png','100%_done.png','image',0,3,0);
@@ -81,6 +82,21 @@ class SearchTests(unittest.TestCase):
 
     def test_negative_tag(self):
         self.assertEqual(run("isekai -chibi"), [2, 4])
+
+    def test_a_tag_of_a_folder_counts_for_the_files_below_it(self):
+        def with_folder_tags(text, rows):
+            db = make_db()
+            db.executemany("INSERT INTO folder_tag VALUES (?, ?)", rows)
+            sql, params = q.build_sql(q.parse(text), FakeResolver(TAGS), RANGES)
+            return sorted(r[0] for r in db.execute(sql, params).fetchall())
+        # /lib/b carries "chibi" (11): the files 3 and 4 in it match it, files 1 and 2 (their own tag) still do too
+        self.assertEqual(with_folder_tags("chibi", [("/lib/b", 11)]), [1, 3, 4])
+        self.assertEqual(with_folder_tags("chibi", []), [1])
+        self.assertEqual(with_folder_tags("-chibi", [("/lib/b", 11)]), [2])          # excluding it excludes them
+        self.assertEqual(with_folder_tags("isekai", [("/lib/b", 99)]), [1, 2, 4])         # an unrelated folder tag changes nothing
+        # a folder is not its look-alike: /lib/b2 and /lib/bb are not below /lib/b
+        self.assertEqual(with_folder_tags("chibi", [("/lib/a", 11)]), [1, 2])
+        self.assertEqual(with_folder_tags("chibi", [("/lib/a/Star", 11)]), [1])
 
     def test_negative_unknown_tag_falls_to_name(self):
         # "-zzz" is not a tag, so it excludes names containing zzz: nothing here

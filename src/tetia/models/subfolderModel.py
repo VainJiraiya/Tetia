@@ -100,6 +100,7 @@ class SubfolderModel(QAbstractListModel):
         SingleFileRole = Qt.UserRole + 8
         IsVirtualRole = Qt.UserRole + 9
         VirtualIdRole = Qt.UserRole + 10
+        SingleFileIdRole = Qt.UserRole + 11
 
     filterModeChanged = Signal()
 
@@ -107,6 +108,7 @@ class SubfolderModel(QAbstractListModel):
         super().__init__(parent)
         self._db = get_database()
         self._parent_dir = ""
+        self._series_paths: list[str] = []   # search results: these series as tiles, no folder open
         self._virtual_id = -1           # >= 0: the tiles of that virtual folder, not of a real one
         self._filter_mode = MediaModel.FilterMode.All
         self._dirs: list[dict] = []   # {"path", "name", "count"}
@@ -128,6 +130,12 @@ class SubfolderModel(QAbstractListModel):
         if self._filter_mode not in self._FLATTEN_MODES or self._is_series(entry):
             return ""
         return series.single_file(entry["path"], self._extensions())
+
+    @Slot(result=list)
+    def folderKeys(self) -> list:
+        """The series shown as tiles now, as file:// addresses: the only folders that carry tags."""
+        return [covers.folder_uri(e["path"]) for e in self._dirs
+                if e.get("virtual") is None and self._is_series(e)]
 
     @Slot(str, result=str)
     def openSingleFile(self, folder_path: str) -> str:
@@ -180,6 +188,11 @@ class SubfolderModel(QAbstractListModel):
             return self._is_series(entry)
         if role == self.Roles.SingleFileRole:
             return self._single_file(entry)
+        if role == self.Roles.SingleFileIdRole:
+            # a tile drawn as its one file is that file for tags: its media id (-1 if it is not in the library yet)
+            single = self._single_file(entry)
+            found = self._db.get_media_by_path(os.path.realpath(single)) if single else None
+            return found[0] if found else -1
         if role == self.Roles.IsFavoriteRole:
             if virtual is not None:
                 return False
@@ -200,6 +213,7 @@ class SubfolderModel(QAbstractListModel):
             self.Roles.SingleFileRole: b"singleFile",
             self.Roles.IsVirtualRole: b"isVirtual",
             self.Roles.VirtualIdRole: b"virtualId",
+            self.Roles.SingleFileIdRole: b"singleFileId",
         }
 
     # ---- loading ----------------------------------------------------------
@@ -213,6 +227,7 @@ class SubfolderModel(QAbstractListModel):
         something matching the current filter, and the virtual folders made in it."""
         self._parent_dir = covers.folder_key(folder)
         self._virtual_id = -1
+        self._series_paths = []
         self._reload()
 
     @Slot(int)
@@ -220,6 +235,16 @@ class SubfolderModel(QAbstractListModel):
         """List the tiles inside a virtual folder: the virtual folders in it and the real folders placed in it."""
         self._parent_dir = ""
         self._virtual_id = int(vfolder_id)
+        self._series_paths = []
+        self._reload()
+
+    @Slot(list)
+    def loadSeries(self, folders: list):
+        """Show these series (folders, paths or file:// URIs) as the tiles: the series a search found, in place of
+        their chapters."""
+        self._parent_dir = ""
+        self._virtual_id = -1
+        self._series_paths = [covers.folder_key(str(f)) for f in folders or []]
         self._reload()
 
     # ---- the tiles of a virtual folder ----------------------------------------------------------------
@@ -273,6 +298,9 @@ class SubfolderModel(QAbstractListModel):
                 found = self._entries_in_virtual(extensions)
             elif self._parent_dir:
                 found = self._entries_in_folder(extensions)
+            elif self._series_paths:
+                found = sorted(({"path": p, "name": os.path.basename(p.rstrip(os.sep)), "count": len(series.chapters(p))}
+                                for p in self._series_paths), key=lambda e: covers.natural_key(e["name"]))
         except sqlite3.Error as e:
             logger.error("Failed to list the tiles: %s", e)
         try:
@@ -354,6 +382,26 @@ class SubfolderModel(QAbstractListModel):
             self._db.set_collection_favorite(key, favorite)
         except sqlite3.Error as e:
             logger.error("Failed to set folder favorite for %s: %s", key, e)
+            return
+        covers.notifier.changed.emit(key)
+
+    @Slot(str, result=bool)
+    def folderFavorite(self, folder_path: str) -> bool:
+        return bool(self._db.get_collection_meta(covers.folder_key(folder_path))["favorite"])
+
+    @Slot(str, result=int)
+    def folderRating(self, folder_path: str) -> int:
+        """A folder's rating 0-3, -1 if it has none."""
+        rating = self._db.get_collection_meta(covers.folder_key(folder_path))["rating"]
+        return -1 if rating is None else int(rating)
+
+    @Slot(str, int)
+    def setRating(self, folder_path: str, rating: int):
+        key = covers.folder_key(folder_path)
+        try:
+            self._db.set_collection_rating(key, rating if 0 <= rating <= 3 else None)
+        except sqlite3.Error as e:
+            logger.error("Failed to set folder rating for %s: %s", key, e)
             return
         covers.notifier.changed.emit(key)
 

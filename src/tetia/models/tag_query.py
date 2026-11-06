@@ -129,9 +129,13 @@ def _clause(term: Term, resolver):
             ids = resolver.wildcard_ids(term.value, None)
         else:
             ids = resolver.tag_ids(term.value, term.category)
-        return ("EXISTS (SELECT 1 FROM media_tag mt WHERE mt.media_id = m.id "
-                "AND mt.tag_id IN (SELECT value FROM json_each(?)))",
-                [json.dumps(sorted(ids))])
+        # a file has a tag itself, or lies in a folder that carries it (a series' tags, for instance)
+        encoded = json.dumps(sorted(ids))
+        return ("(EXISTS (SELECT 1 FROM media_tag mt WHERE mt.media_id = m.id "
+                "AND mt.tag_id IN (SELECT value FROM json_each(?))) "
+                "OR EXISTS (SELECT 1 FROM folder_tag ft WHERE ft.tag_id IN (SELECT value FROM json_each(?)) "
+                "AND substr(m.path, 1, length(ft.folder) + 1) = ft.folder || '/'))",
+                [encoded, encoded])
     if term.kind == "name":
         return ("m.name LIKE ? ESCAPE '\\'", [f"%{like_escape(term.value)}%"])
     if term.kind == "type":

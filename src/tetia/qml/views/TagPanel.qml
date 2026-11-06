@@ -19,6 +19,9 @@ Rectangle {
     property var tagModel: null
     property var mediaModel: null
     property int currentMediaId: -1
+    // Series tiles selected with the files: a series is tagged as one item, and the files below it count as having its tags.
+    property var folderKeys: []
+    property var folderBackend: null     // the SubfolderModel: favorites and ratings of series
 
     // Tag categories offered in the picker, in display order. Must match the
     // names seeded in tag_category.
@@ -48,7 +51,7 @@ Rectangle {
     // Kept for hosts that used the old helpers.
     function getSelectedCount() { return root.targetCount }
     function isSingleItem() { return root.isSingle }
-    function getFirstMediaId() { return root.targetCount > 0 ? root.targetIds[0] : -1 }
+    function getFirstMediaId() { return root.fileCount > 0 ? root.targetIds[0] : -1 }
 
     // ---- Derived state ---------------------------------------------------
 
@@ -60,7 +63,9 @@ Rectangle {
         if (root.currentMediaId >= 0) return [root.currentMediaId]
         return ids
     }
-    readonly property int targetCount: targetIds.length
+    readonly property var targetFolders: root.folderKeys ? root.folderKeys : []
+    readonly property int fileCount: targetIds.length
+    readonly property int targetCount: fileCount + targetFolders.length
     readonly property bool isSingle: targetCount === 1
 
     property var _groups: []          // [{category, tags: [{tagId, name, count}]}]
@@ -83,6 +88,7 @@ Rectangle {
     color: Kirigami.Theme.alternateBackgroundColor
 
     onTargetIdsChanged: refresh()
+    onTargetFoldersChanged: refresh()
     onTagModelChanged: refresh()
     onMediaModelChanged: refresh()
     Component.onCompleted: refresh()
@@ -129,6 +135,16 @@ Rectangle {
                     byId[t.id].count++
                 }
             }
+            for (var f = 0; f < root.targetFolders.length; f++) {
+                var own = root.tagModel.tagsForFolder(root.targetFolders[f]) || []
+                for (var k = 0; k < own.length; k++) {
+                    var ft = own[k]
+                    if (!byId[ft.id]) {
+                        byId[ft.id] = { tagId: ft.id, name: ft.name, category: ft.category || "", count: 0 }
+                    }
+                    byId[ft.id].count++
+                }
+            }
         }
 
         var counts = {}
@@ -168,62 +184,75 @@ Rectangle {
     }
 
     function _loadRating() {
-        var ids = root.targetIds
-        if (ids.length === 0 || !root.mediaModel) {
+        var ratings = []
+        for (var i = 0; i < root.targetIds.length; i++) ratings.push(_readRating(root.targetIds[i]))
+        for (var k = 0; k < root.targetFolders.length && root.folderBackend; k++) {
+            var r = root.folderBackend.folderRating(root.targetFolders[k])
+            ratings.push(r < 0 || r > 3 ? -1 : r)
+        }
+        if (ratings.length === 0) {
             root._rating = -1
             return
         }
-        var first = _readRating(ids[0])
-        for (var i = 1; i < ids.length; i++) {
-            if (_readRating(ids[i]) !== first) {
+        for (var j = 1; j < ratings.length; j++) {
+            if (ratings[j] !== ratings[0]) {
                 root._rating = -2
                 return
             }
         }
-        root._rating = first
+        root._rating = ratings[0]
     }
 
     function _loadFavorite() {
         var ids = root.targetIds
-        if (ids.length === 0 || !root.mediaModel) {
+        var total = ids.length + (root.folderBackend ? root.targetFolders.length : 0)
+        if (total === 0) {
             root._favState = 0
             return
         }
         var n = 0
-        for (var i = 0; i < ids.length; i++) {
+        for (var i = 0; i < ids.length && root.mediaModel; i++) {
             if (root.mediaModel.getFavorite(ids[i])) n++
         }
-        root._favState = n === 0 ? 0 : (n === ids.length ? 2 : 1)
+        for (var k = 0; k < root.targetFolders.length && root.folderBackend; k++) {
+            if (root.folderBackend.folderFavorite(root.targetFolders[k])) n++
+        }
+        root._favState = n === 0 ? 0 : (n === total ? 2 : 1)
     }
 
     // ---- Actions ---------------------------------------------------------
 
     // Clicking the active rating clears it (Unrated).
     function _setRating(value) {
-        if (!root.mediaModel) return
         var newValue = (root._rating === value) ? -1 : value
-        for (var i = 0; i < root.targetIds.length; i++) {
+        for (var i = 0; i < root.targetIds.length && root.mediaModel; i++) {
             root.mediaModel.setRating(root.targetIds[i], newValue)
+        }
+        for (var k = 0; k < root.targetFolders.length && root.folderBackend; k++) {
+            root.folderBackend.setRating(root.targetFolders[k], newValue)
         }
         _loadRating()   // re-read so the UI always shows what was really stored
     }
 
     function _toggleFavorite() {
-        if (!root.mediaModel) return
         var makeFavorite = root._favState !== 2
-        for (var i = 0; i < root.targetIds.length; i++) {
+        for (var i = 0; i < root.targetIds.length && root.mediaModel; i++) {
             root.mediaModel.setFavorite(root.targetIds[i], makeFavorite)
+        }
+        for (var k = 0; k < root.targetFolders.length && root.folderBackend; k++) {
+            root.folderBackend.setFavorite(root.targetFolders[k], makeFavorite)
         }
         _loadFavorite()
     }
 
     function _removeTag(tagId) {
         if (!root.tagModel) return
-        if (root.targetCount > 1) {
+        if (root.fileCount > 1) {
             root.tagModel.removeTagsFromMedia(root.targetIds, tagId)
-        } else if (root.targetCount === 1) {
+        } else if (root.fileCount === 1) {
             root.tagModel.removeTag(root.targetIds[0], tagId)
         }
+        if (root.targetFolders.length > 0) root.tagModel.removeTagFromFolders(root.targetFolders, tagId)
         _loadTags()
     }
 
@@ -282,9 +311,11 @@ Rectangle {
         for (var j = 0; j < entries.length; j++) {
             var e = entries[j]
             var category = e.category !== "" ? e.category : _categoryFor(e.name)
-            var ok = root.isSingle
-                ? root.tagModel.addTag(root.targetIds[0], e.name, category)
-                : root.tagModel.addTagsToMedia(root.targetIds, e.name, category)
+            var ok = true
+            if (root.fileCount === 1) ok = root.tagModel.addTag(root.targetIds[0], e.name, category)
+            else if (root.fileCount > 1) ok = root.tagModel.addTagsToMedia(root.targetIds, e.name, category)
+            if (ok !== false && root.targetFolders.length > 0)
+                ok = root.tagModel.addTagToFolders(root.targetFolders, e.name, category)
             if (ok === false) failed.push(e.name)
         }
 

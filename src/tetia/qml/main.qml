@@ -119,7 +119,7 @@ Kirigami.ApplicationWindow {
     property var viewerTags: []
     function refreshViewerTags() {
         var page = pageStack.currentItem
-        viewerTags = (page && page.isViewer === true && page.currentMediaId >= 0) ? tagModel.tagsFor(page.currentMediaId) : []
+        viewerTags = (page && page.isViewer === true && page.currentMediaId >= 0) ? tagModel.tagsShown(page.currentMediaId) : []
     }
     Connections {
         target: pageStack
@@ -953,6 +953,16 @@ Kirigami.ApplicationWindow {
                                       && root.visibility === Window.FullScreen
 
     Component {
+        id: showComponent
+
+        ShowView {
+            tagSource: tagModel
+            folderSource: subfolderModel
+            onPlayRequested: function(uri) { root.openFile(uri) }
+        }
+    }
+
+    Component {
         id: readerComponent
 
         ReaderView {
@@ -1161,18 +1171,26 @@ Kirigami.ApplicationWindow {
         return "Search: " + query + " (" + count + ")"
     }
 
+    // Hits as {ids, series}: the series a search found are tiles, not their chapters (see SearchModel.searchHits)
+    function showHits(hits, sorted) {
+        if (sorted) mediaModel.load_media_ids_sorted(hits.ids)
+        else mediaModel.load_media_ids(hits.ids)
+        subfolderModel.loadSeries(hits.series)    // after the media: loading them closes the folder, which clears the tiles
+        return hits.ids.length + hits.series.length
+    }
+
     function runSearch(query) {
         if (query.trim() === "") {
             leaveSearch()
             return
         }
         var scope = currentSearchScope()
-        var ids = searchModel.search(query, scope)
+        var hits = searchModel.searchHits(query, scope, "")
         root.searchState = { query: query, scope: scope }
         var page = searchPage()
         if (page) {
-            mediaModel.load_media_ids(ids)
-            page.title = searchTitle(query, ids.length)
+            var count = showHits(hits, false)
+            page.title = searchTitle(query, count)
             page.isTagPage = false        // a typed search keeps its own ranking
             page.browsedTags = []
             page.savedSearch = root.searchState
@@ -1180,9 +1198,9 @@ Kirigami.ApplicationWindow {
             root.currentFolder = null
             root.currentVirtual = -1
             mediaModel.filterMode = MediaModel.All   // results are never narrowed by a folder tab's filter
-            mediaModel.load_media_ids(ids)
+            var total = showHits(hits, false)
             pageStack.push(mediaGridComponent, {
-                title: searchTitle(query, ids.length),
+                title: searchTitle(query, total),
                 isSearch: true,
                 searchScope: scope
             })
@@ -1265,9 +1283,7 @@ Kirigami.ApplicationWindow {
             root.currentFolder = null
             root.currentVirtual = -1
             mediaModel.filterMode = MediaModel.All
-            var ids = state.tab ? searchModel.searchInTab(state.query, state.tab) : searchModel.search(state.query, state.scope)
-            if (page.isTagPage) mediaModel.load_media_ids_sorted(ids)
-            else mediaModel.load_media_ids(ids)
+            showHits(searchModel.searchHits(state.query, state.tab ? "" : state.scope, state.tab), page.isTagPage === true)
         } else if (page.folderPath) {
             loadFolder(page.folderPath, page.filterCategory)
         }
@@ -1295,12 +1311,12 @@ Kirigami.ApplicationWindow {
         var wholeTab = from.isTagPage === true && from.tagWholeTab === true && tab !== ""
         var query = tagQuery(chosen, tab)
         var label = chosen.map(function(t) { return t.name.replace(/_/g, " ") }).join(", ")
-        var ids = wholeTab ? searchModel.searchInTab(query, tab) : searchModel.search(query, folder)
+        var hits = searchModel.searchHits(query, wholeTab ? "" : folder, wholeTab ? tab : "")
         var state = { query: query, scope: wholeTab ? "" : folder, root: folder, label: label, tab: wholeTab ? tab : "" }
         root.searchState = state
         if (from.isTagPage && push !== true) {
-            mediaModel.load_media_ids_sorted(ids)
-            from.title = searchTitle(query, ids.length)
+            var count = showHits(hits, true)
+            from.title = searchTitle(query, count)
             from.browsedTags = chosen
             from.savedSearch = state
             from.searchScope = wholeTab ? "" : folder
@@ -1308,9 +1324,9 @@ Kirigami.ApplicationWindow {
             root.currentFolder = null
             root.currentVirtual = -1
             mediaModel.filterMode = MediaModel.All
-            mediaModel.load_media_ids_sorted(ids)
+            var total = showHits(hits, true)
             pageStack.push(mediaGridComponent, {
-                title: searchTitle(query, ids.length),
+                title: searchTitle(query, total),
                 isSearch: true,
                 isTagPage: true,
                 browsedTags: chosen,
@@ -1335,11 +1351,9 @@ Kirigami.ApplicationWindow {
     function refreshSearch() {
         var page = searchPage()
         if (!page || !root.searchState) return
-        var ids = root.searchState.tab ? searchModel.searchInTab(root.searchState.query, root.searchState.tab)
-                                       : searchModel.search(root.searchState.query, root.searchState.scope)
-        if (page.isTagPage) mediaModel.load_media_ids_sorted(ids)
-        else mediaModel.load_media_ids(ids)
-        page.title = searchTitle(root.searchState.query, ids.length)
+        var count = showHits(searchModel.searchHits(root.searchState.query,
+            root.searchState.tab ? "" : root.searchState.scope, root.searchState.tab || ""), page.isTagPage === true)
+        page.title = searchTitle(root.searchState.query, count)
     }
 
     function leaveSearch() {
@@ -1603,6 +1617,11 @@ Kirigami.ApplicationWindow {
                         else root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
                     }
                     onSubfolderSeriesRequested: function(subfolderPath, which) {
+                        // a show opens its page; "next", "previous" and "first" start that episode straight away
+                        if (which === "resume" && gridPage.filterCategory === "videos") {
+                            pageStack.push(showComponent, { location: subfolderPath })
+                            return
+                        }
                         var chapter = subfolderModel.openSeries(subfolderPath, which)
                         if (chapter !== "") root.openFile(chapter)
                         else root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
@@ -1738,6 +1757,7 @@ Kirigami.ApplicationWindow {
                     Layout.preferredWidth: implicitWidth
                     visible: gridPage.browseOpen
                     mediaBackend: mediaModel
+                    subfolderBackend: subfolderModel
                     tagBackend: tagModel
                     onCloseRequested: gridPage.browseOpen = false
                     selected: gridPage.browsedTags
@@ -1752,6 +1772,8 @@ Kirigami.ApplicationWindow {
                     Layout.preferredWidth: implicitWidth
                     visible: gridView.tagMode
                     mediaIds: gridView.selectedIds
+                    folderKeys: gridView.selectedTiles
+                    folderBackend: subfolderModel
                     tagModel: gridView.tagBackend
                     mediaModel: gridView.mediaBackend
 

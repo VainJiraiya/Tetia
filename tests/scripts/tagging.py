@@ -234,7 +234,7 @@ tags8 = tm.tagsFor(media_id8)
 check("MediaModel and TagModel coexist", len(tags8) == 1 and visible(m)["c.jpg"]["is_favorite"] == 1)
 
 # 20. Migration version
-check("schema is at the latest version (9)", get_database().conn.execute("PRAGMA user_version").fetchone()[0] == 9)
+check("schema is at the latest version (12)", get_database().conn.execute("PRAGMA user_version").fetchone()[0] == 12)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 shutil.rmtree(ROOT, ignore_errors=True)

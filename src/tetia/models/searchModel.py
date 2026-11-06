@@ -151,6 +151,11 @@ class SearchModel(QObject):
         db = None
         try:
             db = Database()   # a connection of its own: sqlite connections are per-thread
+            try:
+                # tags of folders that were renamed or deleted (see Database.prune_stale_folder_tags)
+                db.prune_stale_folder_tags()
+            except sqlite3.Error as e:
+                logger.warning("Forgetting the tags of removed folders failed: %s", e)
             for root in folders:
                 for directory in walk_directories(root):
                     if self._stop.is_set():
@@ -214,6 +219,43 @@ class SearchModel(QObject):
             return []
         rows.sort(key=lambda r: covers.natural_key(r[1]))
         return [media_id for media_id, _ in rows]
+
+    def _series_split(self, rows) -> dict:
+        """Search hits as {"ids": the files outside any series, "series": the series folders holding hits}: a
+        series is one result however many of its chapters match (or inherit the tag)."""
+        roots = {os.path.realpath(covers.folder_key(p)) for p in self._db.get_series_folders()}
+        ids, found = [], {}
+        for media_id, path in rows:
+            folder = os.path.dirname(path)
+            while folder and folder != os.path.dirname(folder):
+                if folder in roots:
+                    found[folder] = True
+                    break
+                folder = os.path.dirname(folder)
+            else:
+                ids.append(media_id)
+        return {"ids": ids, "series": sorted(found, key=covers.natural_key)}
+
+    @Slot(str, str, str, result="QVariantMap")
+    def searchHits(self, query: str, scope: str, tab: str) -> dict:
+        """What a results page shows: the hits of search() (or of searchInTab() when `tab` is given) with the chapters
+        of a series folded into one tile. {"ids": [...], "series": [folder, ...]}"""
+        terms = tag_query.parse(query)
+        if tab:
+            ranges = [tag_query.scope_range(os.path.realpath(covers.folder_key(f["path"])))
+                      for f in self._db.get_folders_by_category(tab)]
+            if not ranges:
+                return {"ids": [], "series": []}
+        else:
+            ranges = self._ranges(scope)
+        sql, params = tag_query.build_sql(terms, self._resolver, ranges)
+        try:
+            rows = self._db.run_media_query(sql, params)
+        except sqlite3.Error as e:
+            logger.error("Search failed (%s): %s", query, e)
+            return {"ids": [], "series": []}
+        rows.sort(key=lambda r: covers.natural_key(r[1]))
+        return self._series_split(rows)
 
     @Slot(str, str, result=list)
     def search(self, query: str, scope: str) -> list:

@@ -91,7 +91,7 @@ GridView {
     property real sidePadding: edge
     property bool tagMode: false
     // Select mode: the same click and drag selection as tag mode, for moving things into virtual
-    // folders. Folder tiles can be selected in it (tag mode only tags files).
+    // folders. Folder tiles can be selected in it, and in tag mode (only a folder shown as a series takes tags).
     property bool selectMode: false
     readonly property bool selecting: tagMode || selectMode
     // The host says what the page allows: virtual folder actions at all (not in a search from the top level),
@@ -119,18 +119,21 @@ GridView {
             selectedTiles = []
         }
     }
-    onSelectModeChanged: {
-        // folder tiles can only be selected in select mode
-        if (!selectMode) selectedTiles = []
-    }
+    onSelectModeChanged: selectedTiles = []
+    onTagModeChanged: if (!tagMode) selectedTiles = []
 
     // Folder tiles in the grid's rows: Qt.UserRole + 100 (isFolder) and + 101 (the tile's path or "virtual:<id>")
     readonly property int isFolderRole: 356
     readonly property int tilePathRole: 357
+    readonly property int tileSeriesRole: 362
+    readonly property int tileSingleIdRole: 366
 
     function tileKeyAt(row) {
         var index = grid.model.index(row, 0)
-        return grid.model.data(index, grid.isFolderRole) === true ? String(grid.model.data(index, grid.tilePathRole)) : ""
+        if (grid.model.data(index, grid.isFolderRole) !== true) return ""
+        var key = String(grid.model.data(index, grid.tilePathRole))
+        // only a folder shown as a series takes tags
+        return grid.tagMode && grid.model.data(index, grid.tileSeriesRole) !== true ? "" : key
     }
 
     function setTiles(keys) {
@@ -167,7 +170,14 @@ GridView {
     // the bindings (tile highlights, the tag panel) that depend on it.
 
     function mediaIdAt(row) {
-        return grid.model.data(grid.model.index(row, 0), grid.mediaIdRole)
+        var index = grid.model.index(row, 0)
+        var id = grid.model.data(index, grid.mediaIdRole)
+        if (grid.tagMode && (id === null || id === undefined)) {
+            // a folder tile drawn as its one file is that file for tags
+            var single = grid.model.data(index, grid.tileSingleIdRole)
+            if (single !== null && single !== undefined && single >= 0) return single
+        }
+        return id
     }
 
     function rowOfMediaId(mediaId) {
@@ -205,7 +215,7 @@ GridView {
 
     function selectAll() {
         addRangeSelection(0, grid.count - 1)
-        if (grid.selectMode) {
+        if (grid.selecting) {
             var keys = grid.selectedTiles.slice()
             for (var i = 0; i < grid.count; i++) {
                 var key = tileKeyAt(i)
@@ -218,7 +228,7 @@ GridView {
     // ---- Drag select (tag and select mode) ------------------------------------------
     // Dragging on the grid draws a rubber band and selects every file tile it
     // touches. A plain drag replaces the selection; with Ctrl or Shift held it
-    // adds to what was selected. Folder tiles are never selected. Dragging near
+    // adds to what was selected. Dragging near
     // the top or bottom edge scrolls. A click without dragging still toggles a
     // single tile (the DragHandler only takes over after the drag threshold).
 
@@ -266,7 +276,7 @@ GridView {
                 if (top + cellHeight - 2 * inset <= y0 || top >= y1) continue
                 var id = mediaIdAt(row)
                 if (id !== null && id !== undefined && ids.indexOf(id) < 0) ids.push(id)
-                if (grid.selectMode) {
+                if (grid.selecting) {
                     var key = tileKeyAt(row)
                     if (key !== "" && keys.indexOf(key) < 0) keys.push(key)
                 }
@@ -486,7 +496,31 @@ GridView {
         property bool isSeries: false
         property bool isSingle: false
         property string singleFile: ""
+        property int singleId: -1
+        readonly property string part: grid.subfolderBackend !== null
+                                       && grid.subfolderBackend.filterMode === MediaModel.VideosOnly ? "episode" : "chapter"
         property string heroPath: ""     // the picture this tile shows
+
+        MenuItem {
+            text: "Edit tags"
+            icon.name: "tag"
+            visible: subfolderMenu.isSeries || (subfolderMenu.isSingle && subfolderMenu.singleId >= 0)
+            height: visible ? implicitHeight : 0
+            onTriggered: {
+                // a series is tagged as one item; a one-file folder is its file. The selection is set after
+                // tag mode starts, which clears a stale one.
+                grid.editTagsRequested(subfolderMenu.isSeries ? -1 : subfolderMenu.singleId)
+                if (subfolderMenu.isSeries) {
+                    grid.selectedIds = []
+                    grid.selectedTiles = [subfolderMenu.folderPath]
+                } else {
+                    grid.selectedTiles = []
+                    grid.selectedIds = [subfolderMenu.singleId]
+                }
+                grid.selectionChanged()
+            }
+        }
+        MenuSeparator { visible: subfolderMenu.isSeries || (subfolderMenu.isSingle && subfolderMenu.singleId >= 0) }
 
         MenuItem {
             text: "Choose cover page\u2026"
@@ -504,28 +538,28 @@ GridView {
         }
         MenuSeparator { visible: subfolderMenu.isSingle }
         MenuItem {
-            text: "Open next chapter"
+            text: "Open next " + subfolderMenu.part
             icon.name: "go-next"
             visible: subfolderMenu.isSeries
             height: visible ? implicitHeight : 0
             onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "next")
         }
         MenuItem {
-            text: "Open previous chapter"
+            text: "Open previous " + subfolderMenu.part
             icon.name: "go-previous"
             visible: subfolderMenu.isSeries
             height: visible ? implicitHeight : 0
             onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "previous")
         }
         MenuItem {
-            text: "Open first chapter"
+            text: "Open first " + subfolderMenu.part
             icon.name: "go-first"
             visible: subfolderMenu.isSeries
             height: visible ? implicitHeight : 0
             onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "first")
         }
         MenuItem {
-            text: "Browse chapters"
+            text: "Browse " + subfolderMenu.part + "s"
             icon.name: "view-list-details"
             visible: subfolderMenu.isSeries
             height: visible ? implicitHeight : 0
@@ -538,10 +572,14 @@ GridView {
             ToolTip.delay: 600
             ToolTip.text: subfolderMenu.isSeries
                           ? "Go back to showing this as an ordinary folder you can open"
-                          : "Treat this folder's chapter files as one manga: one tile that opens where you left off"
+                          : (grid.subfolderBackend !== null && grid.subfolderBackend.filterMode === MediaModel.VideosOnly
+                             ? "Treat this folder's videos as one show: one tile that opens where you left off"
+                             : "Treat this folder's chapter files as one manga: one tile that opens where you left off")
             icon.name: "bookmarks-symbolic"
-            // Only manga folders hold chapters
-            visible: grid.subfolderBackend !== null && grid.subfolderBackend.filterMode === MediaModel.MangaOnly
+            // Only manga folders (chapters) and video folders (episodes) can be a series
+            visible: grid.subfolderBackend !== null
+                     && (grid.subfolderBackend.filterMode === MediaModel.MangaOnly
+                         || grid.subfolderBackend.filterMode === MediaModel.VideosOnly)
                      && !subfolderMenu.isSingle
             height: visible ? implicitHeight : 0
             onTriggered: grid.subfolderBackend.setSeries(subfolderMenu.folderPath, !subfolderMenu.isSeries)
@@ -769,7 +807,8 @@ GridView {
                 // like a single file: no outline, no bold name, and (series) the count badge only on hover
                 readonly property bool asFile: model.subfolderIsSeries === true || !!model.subfolderSingleFile
                 readonly property bool isVirtual: model.subfolderIsVirtual === true
-                readonly property bool picked: grid.selectMode && grid.selectedTiles.indexOf(String(model.subfolderPath)) >= 0
+                readonly property bool picked: grid.selecting && (grid.selectedTiles.indexOf(String(model.subfolderPath)) >= 0
+                    || (grid.tagMode && model.subfolderSingleFileId >= 0 && grid.selectedIds.indexOf(model.subfolderSingleFileId) >= 0))
                 radius: 6
                 color: picked ? Qt.alpha(palette.highlight, 0.18)
                               : Qt.alpha(palette.text, folderHover.hovered ? 0.07 : 0)
@@ -911,20 +950,32 @@ GridView {
                             subfolderMenu.isSeries = !!model.subfolderIsSeries
                             subfolderMenu.isSingle = !!model.subfolderSingleFile
                             subfolderMenu.singleFile = model.subfolderSingleFile || ""
+                            subfolderMenu.singleId = model.subfolderSingleFileId
                             subfolderMenu.heroPath = model.subfolderHero || ""
                             subfolderMenu.hasCustomCover = grid.subfolderBackend
                                 ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
                             subfolderMenu.popup()
-                        } else if (grid.selectMode) {
+                        } else if (grid.selecting) {
                             grid.forceActiveFocus()
                             var key = String(model.subfolderPath)
+                            if (grid.tagMode && model.subfolderIsSeries !== true) {
+                                // a one-file folder is its file: select it like a file tile
+                                if (model.subfolderSingleFileId >= 0) {
+                                    if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)
+                                            || grid.selectedIds.indexOf(model.subfolderSingleFileId) >= 0)
+                                        grid.toggleSelection(model.subfolderSingleFileId)
+                                    else
+                                        grid.setSelection([model.subfolderSingleFileId])
+                                }
+                                return
+                            }
                             if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier) || grid.selectedTiles.indexOf(key) >= 0) {
                                 grid.toggleTile(key)
                             } else {
                                 grid.selectedIds = []
                                 grid.setTiles([key])
                             }
-                        } else if (!grid.tagMode) {
+                        } else {
                             if (folderTile.isVirtual) grid.virtualFolderClicked(model.subfolderVirtualId, model.subfolderName)
                             else if (model.subfolderIsSeries) grid.subfolderSeriesRequested(model.subfolderPath, "resume")
                             else if (model.subfolderSingleFile) grid.subfolderSingleFileRequested(model.subfolderPath)

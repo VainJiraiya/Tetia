@@ -15,6 +15,8 @@ Rectangle {
     id: root
 
     property var mediaBackend: null
+    // the folder tiles of the page: the tags they carry count for the folder
+    property var subfolderBackend: null
     property var tagBackend: null
 
     // Which edge touches the content, so the divider line is drawn on it.
@@ -42,7 +44,7 @@ Rectangle {
             groups = []
             return
         }
-        groups = tagBackend.browse(mediaBackend.visibleIds())
+        groups = tagBackend.browse(mediaBackend.visibleIds(), subfolderBackend ? subfolderBackend.folderKeys() : [])
     }
 
     // The same colours and titles as the tag editor (TagPanel.qml), so a category looks the same in both
@@ -83,6 +85,10 @@ Rectangle {
     // the items on the page changed (another folder, a move, a Trash)
     Connections {
         target: root.mediaBackend
+        function onModelReset() { if (root.visible) root.refresh() }
+    }
+    Connections {
+        target: root.subfolderBackend
         function onModelReset() { if (root.visible) root.refresh() }
     }
 

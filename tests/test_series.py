@@ -65,7 +65,7 @@ def test_series_flag_and_last_read_are_stored(tmp_path):
     assert db.get_collections_meta([key])[key]["is_series"] is True
     db.set_collection_series(key, False)                  # forgets the chapter, drops the row
     assert db.get_collection_meta(key) == {"cover_path": None, "favorite": False,
-                                           "is_series": False, "last_read": None}
+                                           "is_series": False, "last_read": None, "rating": None, "description": None}
 
 
 def test_series_survives_a_favorite_toggle(tmp_path):
@@ -457,3 +457,58 @@ def test_a_series_without_chapters_falls_back_to_the_folder(tmp_path, qapp):
     series.set_series(get_database(), str(tmp_path / "Empty"), True)
     model, tiles = _favorites_collections(tmp_path, tmp_path / "Empty")
     assert model.openCollection(tiles["Empty"]["folderUri"]) == "" and not tiles["Empty"]["opensFile"]
+
+
+def test_a_folder_of_videos_lists_its_episodes_in_order(tmp_path):
+    for name in ("Show S01E10.mkv", "Show S01E02.mkv", "Show S01E01.mkv", "notes.txt"):
+        (tmp_path / name).write_bytes(b"x")
+    assert [os.path.basename(p) for p in series.chapters(str(tmp_path))] == [
+        "Show S01E01.mkv", "Show S01E02.mkv", "Show S01E10.mkv"]
+
+
+def test_episode_names_are_read_in_every_common_style():
+    from tetia.models import episodes as ep
+    assert ep.parse_episode("Show S01E02 - Guts.mkv") == (1, 2)
+    assert ep.parse_episode("show.s1e5.720p.mkv") == (1, 5)
+    assert ep.parse_episode("Show Season 2 Episode 10.mp4") == (2, 10)
+    assert ep.parse_episode("Show 1x07.avi") == (1, 7)
+    assert ep.parse_episode("Show - Ep 12 [1080p].mkv") == (None, 12)
+    assert ep.parse_episode("Dragon Ball 001 - Secret.mkv") == (None, 1)
+    assert ep.parse_episode("[Group] Naruto - 045 [1080p][ABCD1234].mkv") == (None, 45)
+    assert ep.parse_episode("Movie (2012) 1080p x264.mkv") == (None, None)
+    assert ep.parse_season_folder("Season 1") == 1 and ep.parse_season_folder("S03") == 3
+    assert ep.parse_season_folder("Specials") == 0 and ep.parse_season_folder("Extras") == 0
+    assert ep.parse_season_folder("Dragon") is None
+    assert ep.episode_title("Show S01E02 - Guts.mkv", 2, "Show") == "Guts"
+    assert ep.episode_title("Show 1x07.avi", 7, "Show") == "Episode 7"
+
+
+def test_a_show_with_season_folders_lists_seasons_in_order(tmp_path):
+    from tetia.models import episodes as ep
+    for folder, names in (("Season 10", ["Show S10E01.mkv"]), ("Season 2", ["Show S02E02.mkv", "Show S02E01.mkv"]),
+                          ("Season 1", ["Show S01E01.mkv"]), ("Specials", ["Making of.mkv"])):
+        (tmp_path / folder).mkdir()
+        for n in names:
+            (tmp_path / folder / n).write_bytes(b"x")
+    groups = ep.seasons(str(tmp_path))
+    assert [g["name"] for g in groups] == ["Specials", "Season 1", "Season 2", "Season 10"]
+    assert [e["number"] for e in groups[2]["episodes"]] == [1, 2]
+    assert [os.path.basename(p) for p in ep.episode_paths(str(tmp_path))][1:4] == [
+        "Show S01E01.mkv", "Show S02E01.mkv", "Show S02E02.mkv"]
+    assert len(series.chapters(str(tmp_path))) == 5                # the series tile counts every episode
+
+
+def test_one_folder_of_hundreds_of_episodes_goes_by_number(tmp_path):
+    from tetia.models import episodes as ep
+    for n in (100, 2, 10, 1, 99):
+        (tmp_path / ("Dragon Ball %03d.mkv" % n)).write_bytes(b"x")
+    (group,) = ep.seasons(str(tmp_path))
+    assert [e["number"] for e in group["episodes"]] == [1, 2, 10, 99, 100] and group["name"] == "Episodes"
+
+
+def test_loose_episodes_are_grouped_by_their_season(tmp_path):
+    from tetia.models import episodes as ep
+    for n in ("Show S02E01.mkv", "Show S01E02.mkv", "Show S01E01.mkv"):
+        (tmp_path / n).write_bytes(b"x")
+    groups = ep.seasons(str(tmp_path))
+    assert [(g["name"], len(g["episodes"])) for g in groups] == [("Season 1", 2), ("Season 2", 1)]

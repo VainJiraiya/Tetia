@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QUrl
 
-from tetia.models import covers
+from tetia.models import covers, episodes
 from tetia.models.scanner import EBOOK_EXTENSIONS, MANGA_TAB_EXTENSIONS, VIDEO_EXTENSIONS
 
 # A loose picture with one of these names (any common image extension) is the
@@ -64,14 +64,15 @@ def sort_chapter_names(names: list[str]) -> list[str]:
 
 def chapters(folder: str) -> list[str]:
     """The chapter files directly inside `folder`, in reading order (see
-    sort_chapter_names)."""
+    sort_chapter_names). A folder of videos is a series too: its episodes, in name order."""
     try:
-        names = [e for e in os.listdir(folder)
-                 if not e.startswith(".")
-                 and Path(e).suffix.lower() in MANGA_TAB_EXTENSIONS
-                 and os.path.isfile(os.path.join(folder, e))]
+        entries = [e for e in os.listdir(folder)
+                   if not e.startswith(".") and os.path.isfile(os.path.join(folder, e))]
     except OSError:
         return []
+    names = [e for e in entries if Path(e).suffix.lower() in MANGA_TAB_EXTENSIONS]
+    if not names:
+        return episodes.episode_paths(folder)       # a show: its season folders and their episodes
     return [os.path.join(folder, n) for n in sort_chapter_names(names)]
 
 
@@ -152,6 +153,8 @@ def set_series(db, folder: str, is_series: bool):
     key = covers.folder_key(folder)
     try:
         db.set_collection_series(key, is_series)
+        if not is_series:
+            db.clear_folder_tags(os.path.realpath(key))     # only a series carries tags
     except sqlite3.Error as e:
         logger.error("Failed to set series for %s: %s", key, e)
         return

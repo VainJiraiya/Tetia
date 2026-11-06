@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import logging
+import os
 import re
 
 import sqlite3
 from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtQml import QmlElement
 
+from tetia.models import covers
 from tetia.models.database import get_database
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,15 @@ def normalize_tag(name: str) -> str:
     return re.sub(r"\s+", "_", name)
 
 
+def _folder_path(key) -> str:
+    """A folder as the database keys its tags: its real path (what the paths of the files below it start with)."""
+    return os.path.realpath(covers.folder_key(str(key))) if key else ""
+
+
+def _folder_paths(keys) -> list[str]:
+    return [p for p in (_folder_path(k) for k in keys or []) if p]
+
+
 def _as_ids(media_ids) -> list[int]:
     """QML hands lists over as Python lists of int/float; coerce and drop junk."""
     ids = []
@@ -78,24 +89,68 @@ class TagModel(QObject):
             logger.error("Failed to get tags for media_id=%d: %s", media_id, e)
             return []
 
-    @Slot(list, result=list)
-    def browse(self, media_ids: list) -> list:
-        """The tags to browse on a page of items: [{category, tags: [{id, name, count}]}] in category order, each
-        category's tags most used first. A tag on only one of the items is left out (it would lead to nothing
-        more than the item already in view), and so is a category left with none."""
+    @Slot(list, list, result=list)
+    def browse(self, media_ids: list, folder_keys: list) -> list:
+        """The tags to browse on a page of items and folder tiles: [{category, tags: [{id, name, count}]}] in
+        category order, each category's tags most used first. A tag on only one of the items is left out (it would
+        lead to nothing more than the item already in view), and so is a category left with none."""
         try:
-            counted = self._db.get_tag_counts(_as_ids(media_ids))
+            counted = self._db.get_tag_counts(_as_ids(media_ids), _folder_paths(folder_keys))
         except sqlite3.Error as e:
             logger.error("Failed to count the tags of a page: %s", e)
             return []
         groups = []
         for tag in counted:
-            if tag["count"] < 2:
+            if tag["count"] < 2 and not tag["on_folder"]:     # a tag on one file is left out; a series was tagged by hand
                 continue
             if not groups or groups[-1]["category"] != tag["category"]:
                 groups.append({"category": tag["category"], "tags": []})
             groups[-1]["tags"].append({"id": tag["id"], "name": tag["name"], "count": tag["count"]})
         return groups
+
+    @Slot(int, result=list)
+    def tagsShown(self, media_id: int) -> list[dict]:
+        """The tags to show with a file: its own and those of the folders it lies in (see tagsFor for its own only)."""
+        try:
+            return self._db.get_tags_shown_for_media(media_id)
+        except sqlite3.Error as e:
+            logger.error("Failed to get the tags shown for media_id=%d: %s", media_id, e)
+            return []
+
+    @Slot(str, result=list)
+    def tagsForFolder(self, folder: str) -> list[dict]:
+        """The tags a folder carries itself: [{id, name, category}]."""
+        try:
+            return self._db.get_tags_for_folder(_folder_path(folder))
+        except sqlite3.Error as e:
+            logger.error("Failed to get the tags of a folder: %s", e)
+            return []
+
+    @Slot(list, str, str, result=bool)
+    def addTagToFolders(self, folder_keys: list, raw_name: str, category_name: str) -> bool:
+        """Give folders a tag: the files below them count as having it in a search, now and when added later."""
+        tag_id = self._resolve_tag(raw_name, category_name)
+        if tag_id is None:
+            return False
+        try:
+            # only a folder shown as a series takes tags
+            keys = [k for k in folder_keys or [] if self._db.get_collection_meta(covers.folder_key(str(k)))["is_series"]]
+            self._db.insert_folder_tags(_folder_paths(keys), tag_id)
+        except sqlite3.Error as e:
+            logger.error("Failed to tag folders: %s", e)
+            return False
+        self.tagsChanged.emit()
+        return True
+
+    @Slot(list, int)
+    def removeTagFromFolders(self, folder_keys: list, tag_id: int):
+        """Take a tag off folders. A tag that nothing uses any more is removed too."""
+        try:
+            self._db.remove_folder_tags(_folder_paths(folder_keys), tag_id)
+        except sqlite3.Error as e:
+            logger.error("Failed to remove a tag from folders: %s", e)
+            return
+        self.tagsChanged.emit()
 
     def _resolve_tag(self, raw_name: str, category_name: str) -> int | None:
         """Normalize, resolve aliases and create the tag if needed.

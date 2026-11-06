@@ -123,6 +123,9 @@ class Database:
             (7, self._migrate_v7),
             (8, self._migrate_v8),
             (9, self._migrate_v9),
+            (10, self._migrate_v10),
+            (11, self._migrate_v11),
+            (12, self._migrate_v12),
         )
         for target, step in steps:
             if version < target:
@@ -309,6 +312,27 @@ class Database:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_media_placement_folder ON media_placement(vfolder_id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_folder_placement_folder ON folder_placement(vfolder_id)")
 
+    def _migrate_v10(self):
+        # Tags on a folder: a series (a folder shown as one tile) or any other subfolder. Every file in the
+        # folder, now or added later, counts as having these tags in a search (tag_query). Keyed by the folder's
+        # real path like the other per-folder data; the same tag rows as the files' tags, so a tag is one tag.
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS folder_tag (
+                folder TEXT    NOT NULL,
+                tag_id INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE,
+                PRIMARY KEY (folder, tag_id)
+            );
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_folder_tag_tag ON folder_tag(tag_id)")
+
+    def _migrate_v11(self):
+        # A rating (0-3) on a folder shown as a series, like a file's
+        self.conn.execute("ALTER TABLE collection ADD COLUMN rating INTEGER")
+
+    def _migrate_v12(self):
+        # What a series says about itself, typed by hand (shown beside its poster)
+        self.conn.execute("ALTER TABLE collection ADD COLUMN description TEXT")
+
     def close(self):
         self.conn.close()
 
@@ -416,16 +440,18 @@ class Database:
         """{'cover_path', 'favorite', 'is_series', 'last_read'} (defaults if no row)."""
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT cover_path, favorite, is_series, last_read FROM collection WHERE path = ?", (path,))
+            "SELECT cover_path, favorite, is_series, last_read, rating, description FROM collection WHERE path = ?", (path,))
         row = cursor.fetchone()
         return self._meta_from_row(row) if row else self._meta_from_row(None)
 
     @staticmethod
     def _meta_from_row(row) -> dict:
         if row is None:
-            return {"cover_path": None, "favorite": False, "is_series": False, "last_read": None}
+            return {"cover_path": None, "favorite": False, "is_series": False, "last_read": None, "rating": None,
+                    "description": None}
         return {"cover_path": row["cover_path"], "favorite": bool(row["favorite"]),
-                "is_series": bool(row["is_series"]), "last_read": row["last_read"]}
+                "is_series": bool(row["is_series"]), "last_read": row["last_read"], "rating": row["rating"],
+                "description": row["description"]}
 
     def get_collections_meta(self, paths) -> dict[str, dict]:
         """get_collection_meta for many paths at once: {path: meta}."""
@@ -435,7 +461,7 @@ class Database:
             chunk = paths[start:start + 500]
             marks = ",".join("?" * len(chunk))
             cursor = self.conn.execute(
-                f"SELECT path, cover_path, favorite, is_series, last_read FROM collection "
+                f"SELECT path, cover_path, favorite, is_series, last_read, rating, description FROM collection "
                 f"WHERE path IN ({marks})",
                 chunk
             )
@@ -446,7 +472,7 @@ class Database:
     def _tidy_collection(self, path: str):
         self.conn.execute(
             "DELETE FROM collection WHERE path = ? AND favorite = 0 AND cover_path IS NULL "
-            "AND is_series = 0",
+            "AND is_series = 0 AND rating IS NULL AND description IS NULL",
             (path,)
         )
 
@@ -456,6 +482,27 @@ class Database:
                 "INSERT INTO collection (path, favorite) VALUES (?, ?) "
                 "ON CONFLICT(path) DO UPDATE SET favorite = excluded.favorite",
                 (path, 1 if favorite else 0)
+            )
+            self._tidy_collection(path)
+        self._write(_do)
+
+    def set_collection_rating(self, path: str, rating):
+        """Rate a folder 0-3 (None: unrated)."""
+        def _do():
+            self.conn.execute(
+                "INSERT INTO collection (path, rating) VALUES (?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET rating = excluded.rating",
+                (path, rating)
+            )
+            self._tidy_collection(path)
+        self._write(_do)
+
+    def set_collection_description(self, path: str, text):
+        def _do():
+            self.conn.execute(
+                "INSERT INTO collection (path, description) VALUES (?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET description = excluded.description",
+                (path, text or None)
             )
             self._tidy_collection(path)
         self._write(_do)
@@ -695,6 +742,7 @@ class Database:
     # implication (those were set up on purpose and a tag can be used through them). Such a tag is what is left
     # behind by a misspelling that was typed and then removed.
     _TAG_IN_USE = ("(EXISTS (SELECT 1 FROM media_tag mt WHERE mt.tag_id = {t}.id)"
+                   " OR EXISTS (SELECT 1 FROM folder_tag ft WHERE ft.tag_id = {t}.id)"
                    " OR EXISTS (SELECT 1 FROM tag_alias ta WHERE ta.tag_id = {t}.id)"
                    " OR EXISTS (SELECT 1 FROM tag_implication ti WHERE ti.antecedent_id = {t}.id OR ti.consequent_id = {t}.id))")
 
@@ -753,24 +801,103 @@ class Database:
         """, (media_id,))
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_tag_counts(self, media_ids) -> list[dict]:
-        """How many of these items carry each tag: [{id, name, category, count}], in category order, then
-        most used first, then alphabetical."""
+    # ---- Tags on folders ----------------------------------------------------------------------------
+
+    def get_tags_for_folder(self, folder: str) -> list[dict]:
+        """The tags a folder carries itself: [{id, name, category}] in category order, then by name."""
+        rows = self.conn.execute("""
+            SELECT t.id, t.name, tc.name AS category
+            FROM folder_tag ft JOIN tag t ON t.id = ft.tag_id JOIN tag_category tc ON tc.id = t.category_id
+            WHERE ft.folder = ? ORDER BY tc.sort_order, t.name""", (folder,))
+        return [dict(r) for r in rows.fetchall()]
+
+    def get_tags_shown_for_media(self, media_id: int) -> list[dict]:
+        """A file's own tags and the ones the folders it lies in carry, without repeats, in category order."""
+        rows = self.conn.execute("""
+            SELECT t.id, t.name, tc.name AS category, tc.sort_order AS position FROM tag t
+            JOIN tag_category tc ON tc.id = t.category_id
+            WHERE t.id IN (SELECT tag_id FROM media_tag WHERE media_id = :m)
+               OR t.id IN (SELECT ft.tag_id FROM folder_tag ft JOIN media md ON md.id = :m
+                           WHERE substr(md.path, 1, length(ft.folder) + 1) = ft.folder || '/')
+            ORDER BY tc.sort_order, t.name""", {"m": int(media_id)})
+        return [{"id": r["id"], "name": r["name"], "category": r["category"]} for r in rows.fetchall()]
+
+    def insert_folder_tags(self, folders, tag_id: int):
+        self._write(self.conn.executemany, "INSERT OR IGNORE INTO folder_tag (folder, tag_id) VALUES (?, ?)",
+                    [(f, int(tag_id)) for f in folders])
+
+    def remove_folder_tags(self, folders, tag_id: int):
+        """Take a tag off folders; a tag left with nothing using it goes too."""
+        def _do():
+            self.conn.executemany("DELETE FROM folder_tag WHERE folder = ? AND tag_id = ?",
+                                  [(f, int(tag_id)) for f in folders])
+            self._prune_unused_tags([tag_id])
+        self._write(_do)
+
+    def get_series_folders(self) -> list[str]:
+        """The folders marked as a series (their collection keys)."""
+        return [r[0] for r in self.conn.execute("SELECT path FROM collection WHERE is_series = 1").fetchall()]
+
+    def clear_folder_tags(self, folder: str):
+        """Forget every tag of one folder (it is no longer a series); tags nothing uses any more go too."""
+        def _do():
+            tag_ids = {r[0] for r in self.conn.execute("SELECT tag_id FROM folder_tag WHERE folder = ?", (folder,))}
+            self.conn.execute("DELETE FROM folder_tag WHERE folder = ?", (folder,))
+            self._prune_unused_tags(tag_ids)
+        self._write(_do)
+
+    def prune_stale_folder_tags(self) -> int:
+        """Forget the tags of folders that were renamed or deleted: a folder whose parent is there but that is not.
+        (A folder whose parent is missing too may be on a drive that is not mounted: it is kept.) Returns how many
+        folders were forgotten."""
+        import os
+        gone = [r[0] for r in self.conn.execute("SELECT DISTINCT folder FROM folder_tag").fetchall()
+                if not os.path.isdir(r[0]) and os.path.isdir(os.path.dirname(r[0]))]
+        if not gone:
+            return 0
+
+        def _do():
+            tag_ids = {r[0] for f in gone for r in self.conn.execute("SELECT tag_id FROM folder_tag WHERE folder = ?", (f,))}
+            self.conn.executemany("DELETE FROM folder_tag WHERE folder = ?", [(f,) for f in gone])
+            self._prune_unused_tags(tag_ids)
+        self._write(_do)
+        return len(gone)
+
+    def get_tag_counts(self, media_ids, folders=()) -> list[dict]:
+        """How many of these items carry each tag: [{id, name, category, count}], in category order, then most
+        used first, then alphabetical. A file carries its own tags and those of the folders it lies in; each folder
+        in `folders` (tiles on the page) counts as one item with the tags it carries (`on_folder`: a tile carries it)."""
         ids = [int(i) for i in media_ids]
         counts = {}
+
+        def add(rows, on_folder=False):
+            for row in rows:
+                found = counts.setdefault(row["id"], {"id": row["id"], "name": row["name"], "category": row["category"],
+                                                      "position": row["position"], "count": 0, "on_folder": False})
+                found["count"] += row["n"]
+                found["on_folder"] = found["on_folder"] or on_folder
+
         for start in range(0, len(ids), 500):       # stay under SQLite's variable limit
             chunk = ids[start:start + 500]
             marks = ",".join("?" * len(chunk))
-            for row in self.conn.execute(f"""
+            add(self.conn.execute(f"""
+                WITH carried(media_id, tag_id) AS (
+                    SELECT media_id, tag_id FROM media_tag WHERE media_id IN ({marks})
+                    UNION
+                    SELECT md.id, ft.tag_id FROM media md JOIN folder_tag ft
+                      ON substr(md.path, 1, length(ft.folder) + 1) = ft.folder || '/'
+                    WHERE md.id IN ({marks}))
                 SELECT t.id, t.name, tc.name AS category, tc.sort_order AS position, COUNT(*) AS n
-                FROM media_tag mt
-                JOIN tag t ON t.id = mt.tag_id
-                JOIN tag_category tc ON tc.id = t.category_id
-                WHERE mt.media_id IN ({marks})
-                GROUP BY t.id""", chunk):
-                found = counts.setdefault(row["id"], {"id": row["id"], "name": row["name"], "category": row["category"],
-                                                      "position": row["position"], "count": 0})
-                found["count"] += row["n"]
+                FROM carried c JOIN tag t ON t.id = c.tag_id JOIN tag_category tc ON tc.id = t.category_id
+                GROUP BY t.id""", chunk + chunk))
+        folders = list(folders)
+        for start in range(0, len(folders), 500):
+            chunk = folders[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            add(self.conn.execute(f"""
+                SELECT t.id, t.name, tc.name AS category, tc.sort_order AS position, COUNT(DISTINCT ft.folder) AS n
+                FROM folder_tag ft JOIN tag t ON t.id = ft.tag_id JOIN tag_category tc ON tc.id = t.category_id
+                WHERE ft.folder IN ({marks}) GROUP BY t.id""", chunk), on_folder=True)
         ordered = sorted(counts.values(), key=lambda t: (t["position"], -t["count"], t["name"]))
         for tag in ordered:
             del tag["position"]
