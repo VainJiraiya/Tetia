@@ -125,3 +125,37 @@ def test_leftovers_from_before_are_not_suggested(page):
     db.conn.commit()
     assert page["tags"].suggest("old_t") == []
     assert [s["name"] for s in page["tags"].suggest("mir")] == ["mira"]
+
+
+# ---- the whole tab, and the viewer's tag signal ---------------------------------------------------------------
+
+def test_searching_a_whole_tab_takes_every_folder_added_to_it(page, tmp_path):
+    other = tmp_path / "Elsewhere"
+    touch(str(other / "z.png"))
+    db = get_database()
+    db.add_folder(covers.folder_uri(str(other)), "photos")
+    db.add_folder(covers.folder_uri(str(tmp_path / "Videos")), "videos")
+    touch(str(tmp_path / "Videos" / "v.mp4"))
+    media = MediaModel()
+    media.load_from_qurl(str(other))
+    z = media._visible_items[0]["media_id"]
+    page["tags"].addTag(z, "mira", "character")
+    search = SearchModel()
+    in_folder = search.search("character:mira", page["root"])
+    in_tab = search.searchInTab("character:mira", "photos")
+    assert len(in_folder) == 3 and z not in in_folder
+    assert len(in_tab) == 4 and z in in_tab                               # both library folders of the Photos tab
+    assert search.searchInTab("character:mira", "videos") == []           # another tab's folders are not searched
+    assert search.searchInTab("character:mira", "manga") == []            # a tab with no folder
+
+
+def test_the_tag_model_says_when_tags_change(page):
+    seen = []
+    page["tags"].tagsChanged.connect(lambda: seen.append(1))
+    ids = page["ids"]
+    page["tags"].addTag(ids["e.png"], "solo", "genre")
+    page["tags"].addTagsToMedia([ids["d.png"], ids["e.png"]], "pair", "genre")
+    tag = get_database().get_tag_id("solo")
+    page["tags"].removeTag(ids["e.png"], tag)
+    page["tags"].removeTagsFromMedia([ids["d.png"]], get_database().get_tag_id("pair"))
+    assert len(seen) == 4

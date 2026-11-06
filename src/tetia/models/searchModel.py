@@ -198,6 +198,24 @@ class SearchModel(QObject):
         return tag_query.split_tokens(text)
 
     @Slot(str, str, result=list)
+    def searchInTab(self, query: str, tab: str) -> list:
+        """Media ids matching the query in every library folder added to one tab ("photos", "videos", "manga" or
+        "books"), in natural path order: the whole tab, whichever folder holds the items."""
+        ranges = [tag_query.scope_range(os.path.realpath(covers.folder_key(f["path"])))
+                  for f in self._db.get_folders_by_category(tab)]
+        if not ranges:
+            return []
+        terms = tag_query.parse(query)
+        sql, params = tag_query.build_sql(terms, self._resolver, ranges)
+        try:
+            rows = self._db.run_media_query(sql, params)
+        except sqlite3.Error as e:
+            logger.error("Search failed (%s): %s", query, e)
+            return []
+        rows.sort(key=lambda r: covers.natural_key(r[1]))
+        return [media_id for media_id, _ in rows]
+
+    @Slot(str, str, result=list)
     def search(self, query: str, scope: str) -> list:
         """Media ids matching the query, in natural path order. `scope` is a
         folder (path or file:// URI) to search inside, or '' for the whole library."""

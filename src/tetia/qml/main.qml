@@ -115,6 +115,30 @@ Kirigami.ApplicationWindow {
     // The virtual folder mediaModel holds instead (-1: none); see loadVirtual
     property int currentVirtual: -1
 
+    // The tags of the picture the image viewer shows, for the header; [] outside the viewer
+    property var viewerTags: []
+    function refreshViewerTags() {
+        var page = pageStack.currentItem
+        viewerTags = (page && page.isViewer === true && page.currentMediaId >= 0) ? tagModel.tagsFor(page.currentMediaId) : []
+    }
+    Connections {
+        target: pageStack
+        function onCurrentItemChanged() {
+            var page = pageStack.currentItem
+            if (page && page.isViewer === true && page.needsRestore === true) root.restoreViewerSource(page)
+            root.refreshViewerTags()
+        }
+    }
+    Connections {
+        target: pageStack.currentItem
+        ignoreUnknownSignals: true
+        function onCurrentMediaIdChanged() { root.refreshViewerTags() }
+    }
+    Connections {
+        target: tagModel
+        function onTagsChanged() { root.refreshViewerTags() }
+    }
+
     // Stack layout: 1 = folder grid (or the Favorites tab), 2 = folder contents
     // (or the viewer opened from Favorites), 3 = image viewer from a folder.
     readonly property bool onFavoritesTab: folderModel.currentCategory === "favorites"
@@ -163,8 +187,49 @@ Kirigami.ApplicationWindow {
 
             // Dynamic Left Button (Menu vs. Back)
             Item {
+                id: leftSlot
                 Layout.preferredWidth: headerRow.sideSlotWidth + headerRow.sortSlotWidth * headerRow.toolButtonCount
                 Layout.preferredHeight: leftButton.height
+
+                // On a tag's results: one button that switches where the tag is looked for, between the library
+                // folder it was clicked in and the whole tab. It names the place a click would switch to.
+                Button {
+                    id: scopeButton
+                    objectName: "scopeButton"
+                    anchors.left: leftButton.right
+                    anchors.leftMargin: Kirigami.Units.smallSpacing
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: pageStack.currentItem !== null && pageStack.currentItem.isTagPage === true
+                             && pageStack.currentItem.tagFolderName !== ""
+                    readonly property bool wide: pageStack.currentItem !== null && pageStack.currentItem.tagWholeTab === true
+                    readonly property string folderName: (pageStack.currentItem && pageStack.currentItem.tagFolderName) || ""
+                    readonly property string target: wide ? folderName : "All " + root.tabName(pageStack.currentItem ? pageStack.currentItem.filterCategory : "")
+                    text: target.length > 24 ? target.slice(0, 23) + "\u2026" : target
+                    focusPolicy: Qt.NoFocus
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 500
+                    ToolTip.text: wide ? "Looking in all of " + root.tabName(pageStack.currentItem.filterCategory) + ". Click to look only in \u201C" + folderName + "\u201D"
+                                       : "Looking only in \u201C" + folderName + "\u201D. Click to look in all of " + root.tabName(pageStack.currentItem.filterCategory)
+                    onClicked: root.setTagScope(pageStack.currentItem, !wide)
+                }
+
+                // In the image viewer: the picture's tags, starting beside the back button and reaching toward the
+                // title. Only as many as fit before the title (or the profile mark), then "+N" with the rest.
+                TagChipRow {
+                    id: viewerTagRow
+                    objectName: "viewerTags"
+                    anchors.left: leftButton.right
+                    anchors.leftMargin: Kirigami.Units.largeSpacing
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: root.viewerTags.length > 0
+                    tags: root.viewerTags
+                    // up to the title's left edge, or the start of the title area when the profile mark sits there
+                    readonly property real limit: profileIndicator.visible
+                        ? titleSlot.x - leftSlot.x - Kirigami.Units.smallSpacing
+                        : titleSlot.x - leftSlot.x + (titleSlot.width - Math.min(titleText.contentWidth, titleSlot.width)) / 2 - Kirigami.Units.largeSpacing
+                    available: Math.max(0, limit - leftButton.x - leftButton.width - Kirigami.Units.largeSpacing)
+                    onTagClicked: function(category, name) { root.browseTagFromViewer(category, name) }
+                }
 
                 ToolButton {
                     id: leftButton
@@ -282,6 +347,7 @@ Kirigami.ApplicationWindow {
 
                 // Always shows which profile you are in, if it isn't General
                 Row {
+                    id: profileIndicator
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 4
@@ -303,6 +369,7 @@ Kirigami.ApplicationWindow {
                 }
 
                 Label {
+                    id: titleText
                     anchors.fill: parent
                     visible: titleSlot.crumbs.length < 2
                     text: pageStack.currentItem && pageStack.currentItem.title ? pageStack.currentItem.title : "Collections"
@@ -1108,6 +1175,7 @@ Kirigami.ApplicationWindow {
             page.title = searchTitle(query, ids.length)
             page.isTagPage = false        // a typed search keeps its own ranking
             page.browsedTags = []
+            page.savedSearch = root.searchState
         } else {
             root.currentFolder = null
             root.currentVirtual = -1
@@ -1161,27 +1229,81 @@ Kirigami.ApplicationWindow {
         runTagPage(chosen, page)
     }
 
+    // A tag clicked in the image viewer's header: open the items with it over the viewer, so Back returns to the
+    // picture. (From a page of tag results the tag narrows what that page shows, in a new page of its own.)
+    function browseTagFromViewer(category, name) {
+        var viewer = pageStack.currentItem
+        if (!viewer || viewer.isViewer !== true) return
+        var from = viewer.sourcePage
+        var chosen = (from && from.isTagPage) ? from.browsedTags.slice() : []
+        for (var i = 0; i < chosen.length; i++) {
+            if (chosen[i].category === category && chosen[i].name === name) return
+        }
+        chosen.push({ category: category, name: name })
+        viewer.savedIndex = viewer.viewerIndex
+        viewer.needsRestore = from !== null
+        if (from) {
+            runTagPage(chosen, from, true)
+        } else {
+            // opened from the Favorites tab: look in the whole Photos tab, which is what it shows
+            runTagPage(chosen, { filterCategory: "photos", isTagPage: false, virtualId: -1, folderPath: "", homePath: "", searchScope: "" }, true)
+        }
+    }
+
+    // The viewer is on top again after a page of results was opened over it: put its items back into the media
+    // model (the results took it over) and the picture it was showing
+    function restoreViewerSource(viewer) {
+        var page = viewer.sourcePage
+        viewer.needsRestore = false
+        if (!page) return
+        if (page.virtualId >= 0) {
+            loadVirtual(page.virtualId, page.filterCategory)
+        } else if (page.isSearch) {
+            var state = page.savedSearch
+            if (!state) return
+            root.searchState = state
+            root.currentFolder = null
+            root.currentVirtual = -1
+            mediaModel.filterMode = MediaModel.All
+            var ids = state.tab ? searchModel.searchInTab(state.query, state.tab) : searchModel.search(state.query, state.scope)
+            if (page.isTagPage) mediaModel.load_media_ids_sorted(ids)
+            else mediaModel.load_media_ids(ids)
+        } else if (page.folderPath) {
+            loadFolder(page.folderPath, page.filterCategory)
+        }
+        viewer.restoreIndex(viewer.savedIndex)
+    }
+
     function tagQuery(chosen, tab) {
         var kinds = {"photos": " type:image", "videos": " type:video", "manga": " ~type:comic ~type:ebook",
                      "books": " type:ebook"}[tab] || ""
         return chosen.map(function(t) { return t.category + ":" + t.name }).join(" ") + kinds
     }
 
-    // `from` is the page the click was made on: a folder (the search is for its library folder and tab), or
-    // the tag page being narrowed or widened
-    function runTagPage(chosen, from) {
+    // The name a tab's results are shown under in the scope switch
+    function tabName(tab) {
+        return {"photos": "Photos", "videos": "Videos", "manga": "Manga", "books": "EBooks"}[tab] || "everything"
+    }
+
+    // `from` is the page the click was made on: a folder (the search is for its library folder and tab), or the
+    // tag page being narrowed, widened or switched between "this library folder" and "the whole tab"
+    // `push` opens a new page even from a tag page (the viewer's header does)
+    function runTagPage(chosen, from, push) {
         var tab = from.filterCategory
-        var scope = from.isTagPage ? root.searchState.scope
-                  : (searchModel.rootOf(from.virtualId >= 0 ? from.homePath : String(from.folderPath))
-                     || (from.virtualId >= 0 ? from.homePath : String(from.folderPath)))
+        var base = from.virtualId >= 0 ? from.homePath : (from.folderPath ? String(from.folderPath) : from.searchScope)
+        var folder = from.isTagPage ? from.savedSearch.root : (base ? (searchModel.rootOf(base) || base) : "")
+        var wholeTab = from.isTagPage === true && from.tagWholeTab === true && tab !== ""
         var query = tagQuery(chosen, tab)
         var label = chosen.map(function(t) { return t.name.replace(/_/g, " ") }).join(", ")
-        var ids = searchModel.search(query, scope)
-        root.searchState = { query: query, scope: scope, label: label }
-        if (from.isTagPage) {
+        var ids = wholeTab ? searchModel.searchInTab(query, tab) : searchModel.search(query, folder)
+        var state = { query: query, scope: wholeTab ? "" : folder, root: folder, label: label, tab: wholeTab ? tab : "" }
+        root.searchState = state
+        if (from.isTagPage && push !== true) {
             mediaModel.load_media_ids_sorted(ids)
             from.title = searchTitle(query, ids.length)
             from.browsedTags = chosen
+            from.savedSearch = state
+            from.searchScope = wholeTab ? "" : folder
         } else {
             root.currentFolder = null
             root.currentVirtual = -1
@@ -1192,18 +1314,29 @@ Kirigami.ApplicationWindow {
                 isSearch: true,
                 isTagPage: true,
                 browsedTags: chosen,
+                savedSearch: state,
+                tagWholeTab: wholeTab,
                 browseOpen: true,                  // the browser stays open as the tag is chosen
+                tagFolderName: folder ? folderTitle(folder) : "",
                 filterCategory: tab,
-                searchScope: scope
+                searchScope: folder
             })
         }
+    }
+
+    // The scope switch on a tag page: the same tags in the page's library folder, or in the whole tab
+    function setTagScope(page, wholeTab) {
+        if (!page || page.isTagPage !== true || page.tagWholeTab === wholeTab) return
+        page.tagWholeTab = wholeTab
+        runTagPage(page.browsedTags, page)
     }
 
     // Re-run the open search (after a delete, or when indexing finishes)
     function refreshSearch() {
         var page = searchPage()
         if (!page || !root.searchState) return
-        var ids = searchModel.search(root.searchState.query, root.searchState.scope)
+        var ids = root.searchState.tab ? searchModel.searchInTab(root.searchState.query, root.searchState.tab)
+                                       : searchModel.search(root.searchState.query, root.searchState.scope)
         if (page.isTagPage) mediaModel.load_media_ids_sorted(ids)
         else mediaModel.load_media_ids(ids)
         page.title = searchTitle(root.searchState.query, ids.length)
@@ -1355,6 +1488,9 @@ Kirigami.ApplicationWindow {
             // and the tags chosen so far, [{category, name}]
             property bool isTagPage: false
             property var browsedTags: []
+            // the scope switch: false looks in the library folder the tag was clicked in (named here), true in the whole tab
+            property bool tagWholeTab: false
+            property string tagFolderName: ""
 
             // The file whose metadata panel is open (-1: none)
             property int metadataMediaId: -1
@@ -1368,10 +1504,12 @@ Kirigami.ApplicationWindow {
                 }
             }
 
-            // A search results page: no folder, just the matches of root.searchState
+            // A search results page: no folder, just the matches of root.searchState. The page keeps its own copy of
+            // the state (tag results can be stacked, with a picture between), and root.searchState follows the page on top.
             property bool isSearch: false
             property string searchScope: ""
-            Component.onDestruction: if (isSearch) root.searchState = null
+            property var savedSearch: null
+            Component.onDestruction: if (isSearch && root.searchState === savedSearch) root.searchState = null
 
             // mediaModel is shared by every folder page. After popping back
             // from a subfolder it still holds the subfolder, so reload ours.
@@ -1379,6 +1517,10 @@ Kirigami.ApplicationWindow {
                 target: pageStack
                 function onCurrentItemChanged() {
                     if (pageStack.currentItem !== gridPage) return
+                    if (gridPage.isSearch) {
+                        root.searchState = gridPage.savedSearch
+                        return
+                    }
                     if (gridPage.virtualId >= 0) {
                         if (root.currentVirtual !== gridPage.virtualId) {
                             root.loadVirtual(gridPage.virtualId, gridPage.filterCategory)
@@ -1482,7 +1624,7 @@ Kirigami.ApplicationWindow {
                     onBrowseTagsRequested: root.toggleBrowseTags()
 
                     onImageClicked: function(index) {
-                        pageStack.push(imageViewerComponent, { initialIndex: index })
+                        pageStack.push(imageViewerComponent, { initialIndex: index, sourcePage: gridPage })
                     }
 
                     // Videos, comics, and ebooks don't have dedicated in-app
@@ -1628,6 +1770,7 @@ Kirigami.ApplicationWindow {
 
         Kirigami.Page {
             id: viewerPage
+            objectName: "viewerPage"
 
             // Overridden by pageStack.push(imageViewerComponent, { initialIndex: ... })
             property int initialIndex: 0
@@ -1637,6 +1780,19 @@ Kirigami.ApplicationWindow {
             property var viewerModel: mediaModel
 
             readonly property bool isViewer: true
+            // the picture shown, for the tags in the header
+            readonly property int currentMediaId: imageViewer.currentMediaId
+            // The grid page the viewer was opened from (none from the Favorites tab). Another page of results can be
+            // opened over the viewer (a tag clicked in its header) and takes the media model over; coming back,
+            // the viewer gets its items and its place back: see restoreViewerSource.
+            property var sourcePage: null
+            property bool needsRestore: false
+            property int savedIndex: 0
+            readonly property int viewerIndex: imageViewer.currentIndex
+            function restoreIndex(index) {
+                imageViewer.currentIndex = index
+                imageViewer.positionViewAtIndex(index, ListView.Beginning)
+            }
 
             // Pulls the title dynamically from the imageViewer component
             // which updates on every image switch

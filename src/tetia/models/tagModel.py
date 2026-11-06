@@ -5,7 +5,7 @@ import logging
 import re
 
 import sqlite3
-from PySide6.QtCore import QObject, Slot
+from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtQml import QmlElement
 
 from tetia.models.database import get_database
@@ -58,6 +58,9 @@ def _as_ids(media_ids) -> list[int]:
 @QmlElement
 class TagModel(QObject):
     """Service class for tag operations on media items."""
+
+    # a tag was added to or removed from some items: what shows tags (the viewer's header) should look again
+    tagsChanged = Signal()
 
     def __init__(self, parent: QObject = None):
         super().__init__(parent)
@@ -116,6 +119,7 @@ class TagModel(QObject):
             return False
         try:
             self._db.insert_media_tag(media_id, tag_id)
+            self.tagsChanged.emit()
             return True
         except sqlite3.Error as e:
             logger.error("Failed to add tag to media_id=%d: %s", media_id, e)
@@ -130,6 +134,7 @@ class TagModel(QObject):
             return False
         try:
             self._db.insert_media_tags(_as_ids(media_ids), tag_id)
+            self.tagsChanged.emit()
             return True
         except sqlite3.Error as e:
             logger.error("Failed to bulk-add tag: %s", e)
@@ -140,6 +145,7 @@ class TagModel(QObject):
         """Remove a tag link from a media item. A tag that nothing uses any more is removed too."""
         try:
             self._db.remove_media_tag(media_id, tag_id)
+            self.tagsChanged.emit()
         except sqlite3.Error as e:
             logger.error("Failed to remove tag from media_id=%d: %s", media_id, e)
 
@@ -148,6 +154,7 @@ class TagModel(QObject):
         """Remove a tag from many media items in a single transaction."""
         try:
             self._db.remove_media_tags(_as_ids(media_ids), tag_id)
+            self.tagsChanged.emit()
         except sqlite3.Error as e:
             logger.error("Failed to bulk-remove tag: %s", e)
 
