@@ -98,6 +98,7 @@ class FavoritesModel(QAbstractListModel):
                 "hero": covers.hero_path(key, row["cover_path"], bool(row["is_series"])),
                 "uri": covers.folder_uri(key),
                 # a series, or a folder holding one file, opens that file instead of the folder
+                "isShow": bool(row["is_series"]) and series.is_show(key),
                 "opensFile": series.opens_directly(self._db, key),
             })
         out.sort(key=lambda c: c["name"].lower())
@@ -251,7 +252,8 @@ class FavoritesModel(QAbstractListModel):
                 "kind": "collection",
                 "kindIndex": i,
                 "folderUri": c["uri"],
-                "opensFile": c["opensFile"],
+                "isShow": c["isShow"],
+                "opensFile": c["opensFile"] and not c["isShow"],
             } for i, c in enumerate(self._collections)]
             for start in range(0, len(tiles), columns):
                 out.append({"type": "tiles", "kind": "collection", "items": tiles[start:start + columns]})

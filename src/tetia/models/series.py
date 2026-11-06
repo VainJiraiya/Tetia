@@ -76,6 +76,12 @@ def chapters(folder: str) -> list[str]:
     return [os.path.join(folder, n) for n in sort_chapter_names(names)]
 
 
+def is_show(folder: str) -> bool:
+    """Whether the folder's chapters are videos (a show with episodes, not a manga)."""
+    files = chapters(folder)
+    return bool(files) and Path(files[0]).suffix.lower() in VIDEO_EXTENSIONS
+
+
 def loose_cover(folder: str) -> str:
     """A picture lying in `folder` named cover, folder, poster, thumb, front or A1
     ('' if there is none)."""

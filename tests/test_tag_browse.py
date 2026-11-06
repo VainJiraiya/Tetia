@@ -251,3 +251,12 @@ def test_a_series_takes_a_rating_and_a_favorite(manga, qapp):
     assert get_database().get_favorite_collections()[0]["path"] == covers.folder_key(manga["series"])
     model.setRating(manga["series"], -1)
     assert model.folderRating(manga["series"]) == -1
+
+
+def test_hidden_files_are_not_media(tmp_path, qapp):
+    folder = tmp_path / "Videos"
+    touch(str(folder / "Show 01.mp4"))
+    touch(str(folder / "._Show 01.mp4"))                 # a macOS resource-fork stub
+    media = MediaModel()
+    media.load_from_qurl(str(folder))
+    assert [i["file_name"] for i in media._visible_items] == ["Show 01.mp4"]

@@ -512,3 +512,14 @@ def test_loose_episodes_are_grouped_by_their_season(tmp_path):
         (tmp_path / n).write_bytes(b"x")
     groups = ep.seasons(str(tmp_path))
     assert [(g["name"], len(g["episodes"])) for g in groups] == [("Season 1", 2), ("Season 2", 1)]
+
+
+def test_a_series_of_videos_is_a_show_and_one_of_chapters_is_not(tmp_path):
+    show, manga = tmp_path / "Show", tmp_path / "Manga"
+    (show / "Season 1").mkdir(parents=True)
+    manga.mkdir()
+    (show / "Season 1" / "Show S01E01.mkv").write_bytes(b"x")
+    (manga / "Vol.1 Ch.1.cbz").write_bytes(b"x")
+    assert series.is_show(str(show)) is True
+    assert series.is_show(str(manga)) is False
+    assert series.is_show(str(tmp_path / "nothing")) is False

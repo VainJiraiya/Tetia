@@ -271,16 +271,16 @@ Kirigami.Page {
                             anchors.fill: parent
                             anchors.leftMargin: Kirigami.Units.largeSpacing
                             Kirigami.Icon {
-                                source: row.modelData.folded ? "arrow-right" : "arrow-down"
+                                source: row.modelData.header && !row.modelData.folded ? "arrow-down" : "arrow-right"
                                 Layout.preferredWidth: Kirigami.Units.iconSizes.small
                                 Layout.preferredHeight: Kirigami.Units.iconSizes.small
                             }
                             Label {
-                                text: row.modelData.name
+                                text: row.modelData.header ? row.modelData.name : ""
                                 font.bold: true
                             }
                             Label {
-                                text: row.modelData.count + (row.modelData.count === 1 ? " episode" : " episodes")
+                                text: row.modelData.header ? row.modelData.count + (row.modelData.count === 1 ? " episode" : " episodes") : ""
                                 opacity: 0.6
                                 Layout.fillWidth: true
                             }

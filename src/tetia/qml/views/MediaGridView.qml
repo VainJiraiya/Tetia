@@ -25,6 +25,8 @@ GridView {
     signal subfolderClicked(string subfolderPath)
     // A series tile was opened: which chapter is "resume", "first", "next" or "previous"
     signal subfolderSeriesRequested(string subfolderPath, string which)
+    // A show (a series of videos) was opened: it has a page of its own
+    signal showRequested(string subfolderPath)
     // A one-file subfolder was opened: it shows as that file, so open the file
     signal subfolderSingleFileRequested(string subfolderPath)
 
@@ -497,8 +499,8 @@ GridView {
         property bool isSingle: false
         property string singleFile: ""
         property int singleId: -1
-        readonly property string part: grid.subfolderBackend !== null
-                                       && grid.subfolderBackend.filterMode === MediaModel.VideosOnly ? "episode" : "chapter"
+        property bool isShow: false      // a series of videos
+        readonly property string part: isShow ? "episode" : "chapter"
         property string heroPath: ""     // the picture this tile shows
 
         MenuItem {
@@ -559,11 +561,12 @@ GridView {
             onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "first")
         }
         MenuItem {
-            text: "Browse " + subfolderMenu.part + "s"
+            text: subfolderMenu.isShow ? "Open series page" : "Browse chapters"
             icon.name: "view-list-details"
             visible: subfolderMenu.isSeries
             height: visible ? implicitHeight : 0
-            onTriggered: grid.subfolderClicked(subfolderMenu.folderPath)
+            onTriggered: subfolderMenu.isShow ? grid.showRequested(subfolderMenu.folderPath)
+                                              : grid.subfolderClicked(subfolderMenu.folderPath)
         }
         MenuSeparator { visible: subfolderMenu.isSeries }
         MenuItem {
@@ -572,15 +575,15 @@ GridView {
             ToolTip.delay: 600
             ToolTip.text: subfolderMenu.isSeries
                           ? "Go back to showing this as an ordinary folder you can open"
-                          : (grid.subfolderBackend !== null && grid.subfolderBackend.filterMode === MediaModel.VideosOnly
+                          : (subfolderMenu.isShow || (grid.subfolderBackend !== null && grid.subfolderBackend.filterMode === MediaModel.VideosOnly)
                              ? "Treat this folder's videos as one show: one tile that opens where you left off"
                              : "Treat this folder's chapter files as one manga: one tile that opens where you left off")
             icon.name: "bookmarks-symbolic"
             // Only manga folders (chapters) and video folders (episodes) can be a series
-            visible: grid.subfolderBackend !== null
+            visible: subfolderMenu.isSeries || (grid.subfolderBackend !== null
                      && (grid.subfolderBackend.filterMode === MediaModel.MangaOnly
                          || grid.subfolderBackend.filterMode === MediaModel.VideosOnly)
-                     && !subfolderMenu.isSingle
+                     && !subfolderMenu.isSingle)
             height: visible ? implicitHeight : 0
             onTriggered: grid.subfolderBackend.setSeries(subfolderMenu.folderPath, !subfolderMenu.isSeries)
         }
@@ -948,6 +951,7 @@ GridView {
                             subfolderMenu.folderPath = model.subfolderPath
                             subfolderMenu.isFavorite = model.subfolderFavorite
                             subfolderMenu.isSeries = !!model.subfolderIsSeries
+                            subfolderMenu.isShow = !!model.subfolderIsShow
                             subfolderMenu.isSingle = !!model.subfolderSingleFile
                             subfolderMenu.singleFile = model.subfolderSingleFile || ""
                             subfolderMenu.singleId = model.subfolderSingleFileId
@@ -977,6 +981,7 @@ GridView {
                             }
                         } else {
                             if (folderTile.isVirtual) grid.virtualFolderClicked(model.subfolderVirtualId, model.subfolderName)
+                            else if (model.subfolderIsShow) grid.showRequested(model.subfolderPath)
                             else if (model.subfolderIsSeries) grid.subfolderSeriesRequested(model.subfolderPath, "resume")
                             else if (model.subfolderSingleFile) grid.subfolderSingleFileRequested(model.subfolderPath)
                             else grid.subfolderClicked(model.subfolderPath)

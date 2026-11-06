@@ -32,6 +32,8 @@ Rectangle {
     // A favorited folder was clicked; folderUri is a file:// URI, the same
     // form FolderGridView's folderClicked carries.
     signal collectionClicked(string folderUri)
+    // a favorited show (a video series) opens its own page, never as a folder
+    signal showRequested(string folderUri)
 
     // A cover changed by hand: this number is added to the pictures' URLs so they reload
     property int coverRevision: 0
@@ -248,6 +250,8 @@ Rectangle {
                                         contextMenu.opensFile = tile.modelData.kind === "collection"
                                                                 && !!tile.modelData.opensFile
                                         contextMenu.popup()
+                                    } else if (tile.modelData.kind === "collection" && tile.modelData.isShow) {
+                                        root.showRequested(tile.modelData.folderUri)
                                     } else if (tile.modelData.kind === "collection") {
                                         // A series or a one-file folder opens its file in one click
                                         var target = allModel.openCollection(tile.modelData.folderUri)

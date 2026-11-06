@@ -101,6 +101,7 @@ class SubfolderModel(QAbstractListModel):
         IsVirtualRole = Qt.UserRole + 9
         VirtualIdRole = Qt.UserRole + 10
         SingleFileIdRole = Qt.UserRole + 11
+        IsShowRole = Qt.UserRole + 12
 
     filterModeChanged = Signal()
 
@@ -188,6 +189,8 @@ class SubfolderModel(QAbstractListModel):
             return self._is_series(entry)
         if role == self.Roles.SingleFileRole:
             return self._single_file(entry)
+        if role == self.Roles.IsShowRole:
+            return self._is_series(entry) and series.is_show(entry["path"])
         if role == self.Roles.SingleFileIdRole:
             # a tile drawn as its one file is that file for tags: its media id (-1 if it is not in the library yet)
             single = self._single_file(entry)
@@ -214,6 +217,7 @@ class SubfolderModel(QAbstractListModel):
             self.Roles.IsVirtualRole: b"isVirtual",
             self.Roles.VirtualIdRole: b"virtualId",
             self.Roles.SingleFileIdRole: b"singleFileId",
+            self.Roles.IsShowRole: b"isShow",
         }
 
     # ---- loading ----------------------------------------------------------

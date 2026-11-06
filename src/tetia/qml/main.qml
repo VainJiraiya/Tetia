@@ -1473,6 +1473,9 @@ Kirigami.ApplicationWindow {
         onCollectionClicked: function(folderUri) {
             openMediaGrid(folderUri, folderModel.currentCategory)
         }
+        onShowRequested: function(folderUri) {
+            pageStack.push(showComponent, { location: folderUri })
+        }
     }
 
     Component {
@@ -1616,12 +1619,11 @@ Kirigami.ApplicationWindow {
                         if (file !== "") root.openFile(file)
                         else root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
                     }
+                    // a show (a video series) opens its page; its "next", "previous" and "first" episode start straight away
+                    onShowRequested: function(subfolderPath) {
+                        pageStack.push(showComponent, { location: subfolderPath })
+                    }
                     onSubfolderSeriesRequested: function(subfolderPath, which) {
-                        // a show opens its page; "next", "previous" and "first" start that episode straight away
-                        if (which === "resume" && gridPage.filterCategory === "videos") {
-                            pageStack.push(showComponent, { location: subfolderPath })
-                            return
-                        }
                         var chapter = subfolderModel.openSeries(subfolderPath, which)
                         if (chapter !== "") root.openFile(chapter)
                         else root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)

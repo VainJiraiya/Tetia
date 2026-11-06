@@ -28,6 +28,7 @@ _SUB_ROLES = {
     Qt.UserRole + 108: (b"subfolderIsVirtual", Qt.UserRole + 9),
     Qt.UserRole + 109: (b"subfolderVirtualId", Qt.UserRole + 10),
     Qt.UserRole + 110: (b"subfolderSingleFileId", Qt.UserRole + 11),
+    Qt.UserRole + 111: (b"subfolderIsShow", Qt.UserRole + 12),
 }
 _IS_FOLDER = Qt.UserRole + 100
 

@@ -66,7 +66,7 @@ def scan_folder(db, folder_directory: Path, hash_fn):
     memo = {}
     try:
         for entry in folder_directory.iterdir():
-            if entry.is_file() and entry.suffix.lower() in ALL_MEDIA_EXTENSIONS:
+            if entry.is_file() and not entry.name.startswith(".") and entry.suffix.lower() in ALL_MEDIA_EXTENSIONS:
                 path = str(entry.resolve())
                 info = entry.stat()
                 if not db.get_stored_hash(path, info.st_size, int(info.st_mtime)):
@@ -87,8 +87,9 @@ def scan_folder(db, folder_directory: Path, hash_fn):
         for directory_item in sorted(
             folder_directory.iterdir(), key=lambda entry: covers.natural_key(entry.name)
         ):
-            # Checks if the current item is an actual file (not a subfolder)
-            if directory_item.is_file():
+            # Checks if the current item is an actual file (not a subfolder). Hidden files are left out: macOS
+            # leaves "._Name.mp4" resource-fork stubs next to copied files, and they are not media.
+            if directory_item.is_file() and not directory_item.name.startswith("."):
                 file_extension = directory_item.suffix.lower()
 
                 is_image = file_extension in IMAGE_EXTENSIONS
