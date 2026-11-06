@@ -38,6 +38,8 @@ Kirigami.Page {
 
     ShowModel { id: show }
     Component.onCompleted: show.load(location)
+    // back from the player: Resume follows the episode last played
+    onVisibleChanged: if (visible && location !== "") show.load(location)
 
     // the seasons folded away, by position
     property var collapsed: ({})

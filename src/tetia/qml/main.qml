@@ -597,7 +597,7 @@ Kirigami.ApplicationWindow {
             id: searchBar
             width: headerColumn.width
             // out of the way on a show's page, back when the results are
-            visible: root.searchOpen && !(pageStack.currentItem && pageStack.currentItem.isShow === true)
+            visible: root.searchOpen && !(pageStack.currentItem && (pageStack.currentItem.isShow === true || pageStack.currentItem.isReader === true))
             backend: searchModel
             indexing: searchModel.indexing
             scopeText: root.scopeName(root.currentSearchScope())
@@ -906,7 +906,24 @@ Kirigami.ApplicationWindow {
     function openFile(uri) {
         if (uri === "") return
         if (readerProbe.canRead(uri)) pageStack.push(readerComponent, { location: uri })
+        else if (playerProbe.canPlay(uri)) playVideos([{ uri: uri, name: "" }], 0, "", "")
         else Qt.openUrlExternally(uri)
+    }
+
+    Player { id: playerProbe }
+
+    // The player, over the videos to step through: [{uri, name}] and the one to start with. A show gives its title and
+    // folder (its episodes, and the arrows seek); anything else is browsed like the photo viewer.
+    function playVideos(playlist, index, showTitle, showPath) {
+        pageStack.push(playerComponent, { playlist: playlist, index: index, series: showTitle !== "",
+                                          showTitle: showTitle, showPath: showPath })
+    }
+    // an episode of a show, from where its folder is: the player gets the whole show to step through
+    function playEpisode(showPath, uri) {
+        var uris = subfolderModel.episodeUris(showPath)
+        var at = uris.indexOf(uri)
+        if (at < 0 || !playerProbe.canPlay(uri)) { openFile(uri); return }
+        playVideos(uris.map(function(u) { return { uri: u, name: "" } }), at, folderTitle(showPath), showPath)
     }
     // Fullscreen remembers what it came from, so a maximized window comes back maximized. A window manager can drop
     // a maximize request made in the very moment fullscreen ends (and fall back to the size from before maximizing),
@@ -954,12 +971,27 @@ Kirigami.ApplicationWindow {
                                       && root.visibility === Window.FullScreen
 
     Component {
+        id: playerComponent
+
+        PlayerView {
+            fullscreen: root.visibility === Window.FullScreen
+            onFullscreenToggled: root.toggleReaderFullscreen()
+            onLeaveRequested: {
+                root.leaveReaderFullscreen()
+                var popped = pageStack.pop()
+                if (popped) popped.destroy()
+            }
+            onEpisodeStarted: function(uri) { subfolderModel.rememberEpisode(showPath, uri) }
+        }
+    }
+
+    Component {
         id: showComponent
 
         ShowView {
             tagSource: tagModel
             folderSource: subfolderModel
-            onPlayRequested: function(uri) { root.openFile(uri) }
+            onPlayRequested: function(uri) { root.playEpisode(location, uri) }
             // a tag of the show: the videos with it, in a page of their own over the show
             onTagClicked: function(category, name) {
                 root.runTagPage([{ category: category, name: name }],
@@ -1632,7 +1664,7 @@ Kirigami.ApplicationWindow {
                     }
                     onSubfolderSeriesRequested: function(subfolderPath, which) {
                         var chapter = subfolderModel.openSeries(subfolderPath, which)
-                        if (chapter !== "") root.openFile(chapter)
+                        if (chapter !== "") root.playEpisode(subfolderPath, chapter)
                         else root.openMediaGrid(subfolderPath, gridPage.filterCategory, gridPage.crumbs)
                     }
                     onSubfolderClicked: function(subfolderPath) {
@@ -1661,7 +1693,11 @@ Kirigami.ApplicationWindow {
                     // now they open in whatever the system's default handler
                     // is for that file type.
                     onVideoClicked: function(index) {
-                        Qt.openUrlExternally(mediaModel.getFileUri(index))
+                        var videos = mediaModel.videoList()
+                        var at = -1
+                        for (var i = 0; i < videos.length; i++) if (videos[i].row === index) at = i
+                        if (at < 0 || !playerProbe.canPlay(videos[at].uri)) Qt.openUrlExternally(mediaModel.getFileUri(index))
+                        else root.playVideos(videos, at, "", "")
                     }
                     onComicClicked: function(index) { root.openFile(mediaModel.getFileUri(index)) }
                     onBookClicked: function(index) { root.openFile(mediaModel.getFileUri(index)) }

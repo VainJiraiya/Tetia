@@ -590,6 +590,12 @@ class MediaModel(QAbstractListModel):
     # Looks up a single item's file URI by its row in the currently visible
     # (filtered) list. Used by QML to open videos/comics/ebooks externally
     # since those don't have dedicated in-app viewers yet.
+    @Slot(result=list)
+    def videoList(self) -> list:
+        """The videos shown now, in the order shown, for the player to step through: [{row, uri, name}]."""
+        return [{"row": row, "uri": item["uniform_resource_identifier"], "name": item["file_name"]}
+                for row, item in enumerate(self._visible_items) if item.get("is_video")]
+
     @Slot(int, result=str)
     def getFileUri(self, row: int) -> str:
         if 0 <= row < len(self._visible_items):

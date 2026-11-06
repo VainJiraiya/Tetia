@@ -397,6 +397,7 @@ GridView {
             text: "Open in system default"
             icon.name: "document-open"
             visible: grid.contextMenuData.kind === "comic" || grid.contextMenuData.kind === "ebook"
+                     || grid.contextMenuData.kind === "video"
             height: visible ? implicitHeight : 0
             onTriggered: grid.openExternallyRequested(grid.contextMenuData.fileIndex)
         }

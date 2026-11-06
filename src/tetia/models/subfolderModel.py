@@ -417,6 +417,19 @@ class SubfolderModel(QAbstractListModel):
     def setSeries(self, folder_path: str, is_series: bool):
         series.set_series(self._db, folder_path, is_series)
 
+    @Slot(str, result=list)
+    def episodeUris(self, folder_path: str) -> list:
+        """A show's episodes as file:// addresses, in watching order, for the player to step through."""
+        return [QUrl.fromLocalFile(p).toString(QUrl.FullyEncoded) for p in series.chapters(covers.folder_key(folder_path))]
+
+    @Slot(str, str)
+    def rememberEpisode(self, folder_path: str, episode_uri: str):
+        """The player started this episode: Resume continues from it."""
+        try:
+            self._db.set_collection_last_read(covers.folder_key(folder_path), QUrl(episode_uri).toLocalFile())
+        except sqlite3.Error as e:
+            logger.error("Failed to remember the episode for %s: %s", folder_path, e)
+
     @Slot(str, str, result=str)
     def openSeries(self, folder_path: str, which: str) -> str:
         return series.open_series(self._db, folder_path, which)

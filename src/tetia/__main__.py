@@ -23,7 +23,7 @@ def _register_qml_types():
     (module "Tetia"). Must run after the profile has been chosen."""
     from tetia.models import (  # noqa: F401
         coverPicker, favoritesModel, file_picker, folderModel, gridModel, mediaActions,
-        mediaModel, metadataModel, profileModel, purgeSession, readerSession, searchModel, showModel, subfolderModel, tagModel, uiSettings, virtualFolderService, wheelZoom,
+        mediaModel, metadataModel, player, profileModel, purgeSession, readerSession, searchModel, showModel, subfolderModel, tagModel, uiSettings, virtualFolderService, wheelZoom,
     )
 
 
@@ -60,6 +60,10 @@ def main(argv=None) -> int:
     from tetia.models.bookpages import BookPageProvider
     from tetia.models.readerSession import ReaderPageProvider
     from tetia.models.thumbModel import ThumbnailProvider
+
+    # The video player draws through OpenGL (libmpv into a Qt Quick framebuffer item), so Qt Quick must use it too
+    from PySide6.QtQuick import QQuickWindow, QSGRendererInterface
+    QQuickWindow.setGraphicsApi(QSGRendererInterface.GraphicsApi.OpenGL)
 
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
