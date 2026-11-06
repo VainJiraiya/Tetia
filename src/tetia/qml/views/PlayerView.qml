@@ -51,7 +51,10 @@ Kirigami.Page {
     property bool autoNext: false
     property bool scrubbing: false
     property real scrubTo: 0
-    readonly property bool barHeld: barHover.hovered || scrubbing || menuOpen
+    // The controls stay while the pointer is on any of them (the bar, or the previous / next buttons at the sides):
+    // a new video restarts the hide timer, and it must not take a button away from under a resting mouse
+    readonly property bool edgeHeld: previousButton.hovered || nextButton.hovered
+    readonly property bool barHeld: barHover.hovered || scrubbing || menuOpen || edgeHeld
     property bool menuOpen: subtitleMenu.visible || audioMenu.visible || speedMenu.visible
 
     Player { id: playback }
@@ -193,6 +196,7 @@ Kirigami.Page {
 
         // ---- browse mode: previous / next video, like the photo viewer ----
         RoundButton {
+            id: previousButton
             anchors.left: parent.left
             anchors.leftMargin: 16
             anchors.verticalCenter: parent.verticalCenter
@@ -207,6 +211,7 @@ Kirigami.Page {
             onClicked: page.goPrevious()
         }
         RoundButton {
+            id: nextButton
             anchors.right: parent.right
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
