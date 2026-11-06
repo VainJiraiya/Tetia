@@ -20,6 +20,7 @@ Kirigami.Page {
 
     readonly property bool isShow: true
     signal playRequested(string uri)
+    signal tagClicked(string category, string name)
 
     // The same colours as the tag editor and the tag browser (keep them in step)
     function categoryColor(category) {
@@ -200,6 +201,11 @@ Kirigami.Page {
                                 anchors.centerIn: parent
                                 text: modelData.name.replace(/_/g, " ")
                                 font: Kirigami.Theme.smallFont
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: page.tagClicked(modelData.category, modelData.name)
                             }
                         }
                     }

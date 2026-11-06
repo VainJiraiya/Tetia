@@ -596,7 +596,8 @@ Kirigami.ApplicationWindow {
         SearchBar {
             id: searchBar
             width: headerColumn.width
-            visible: root.searchOpen
+            // out of the way on a show's page, back when the results are
+            visible: root.searchOpen && !(pageStack.currentItem && pageStack.currentItem.isShow === true)
             backend: searchModel
             indexing: searchModel.indexing
             scopeText: root.scopeName(root.currentSearchScope())
@@ -959,6 +960,12 @@ Kirigami.ApplicationWindow {
             tagSource: tagModel
             folderSource: subfolderModel
             onPlayRequested: function(uri) { root.openFile(uri) }
+            // a tag of the show: the videos with it, in a page of their own over the show
+            onTagClicked: function(category, name) {
+                root.runTagPage([{ category: category, name: name }],
+                                { filterCategory: "videos", isTagPage: false, virtualId: -1,
+                                  folderPath: location, homePath: "", searchScope: "" }, true)
+            }
         }
     }
 
