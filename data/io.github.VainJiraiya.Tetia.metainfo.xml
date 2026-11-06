@@ -81,6 +81,20 @@
   </screenshots>
 
   <releases>
+    <release version="0.3.0" date="2026-11-06">
+      <description>
+        <p>Tetia now plays video and reads manga, and understands TV shows:</p>
+        <ul>
+          <li>A video player built on libmpv: hardware decoding, subtitle and audio track pickers (embedded or separate files), your own click zones, and a gallery mode that steps through a folder of clips</li>
+          <li>Shows: a folder of videos can be a series with a page of its own, with poster, description, tags and episodes by season; season and episode numbers are read from the file names</li>
+          <li>Tetia remembers where you stopped, marks what you have watched, and shows progress bars and episode lengths</li>
+          <li>A page reader for comics, PDFs and picture EPUBs, with paged and long-strip layouts, right-to-left reading, zoom, auto-scroll and your place kept per book</li>
+          <li>Virtual folders to sort a library without moving any files</li>
+          <li>A tag browser, tags shown in the picture viewer, and series that are tagged, rated and favorited as one item and found as one tile in a search</li>
+          <li>One tile layout for every grid, with badges that never cover a picture</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-11-04">
       <description>
         <p>Tidying up and finding things:</p>

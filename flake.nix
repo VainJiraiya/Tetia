@@ -21,8 +21,78 @@
           pyside6
         ]);
 
+        # What Tetia's interface needs from Qt and KDE
+        qtPackages = [
+          pkgs.qt6.qtbase
+          pkgs.qt6.qtdeclarative
+          pkgs.qt6.qtsvg
+          pkgs.qt6.qtimageformats
+          pkgs.qt6.qtwayland
+          pkgs.kdePackages.kirigami.unwrapped    # the QML module itself; `kirigami` is only a wrapper around it
+          pkgs.kdePackages.kirigami-addons
+          pkgs.kdePackages.qqc2-desktop-style
+          # what the desktop style loads (its QML imports these)
+          pkgs.kdePackages.sonnet
+          pkgs.kdePackages.kconfig
+          pkgs.kdePackages.kcolorscheme
+          pkgs.kdePackages.kiconthemes
+          pkgs.kdePackages.ki18n
+          pkgs.kdePackages.kcoreaddons
+          pkgs.kdePackages.kguiaddons
+        ];
+
+        pyproject = (builtins.fromTOML (builtins.readFile ./pyproject.toml)).project;
+
+        # The app itself: `nix build`, `nix run`, or add `tetia.packages.${system}.default` to your system packages.
+        # Qt finds Kirigami through the wrapper; libmpv (loaded with ctypes) and the thumbnail tools are put on its paths.
+        tetia = pkgs.python3Packages.buildPythonApplication {
+          pname = "tetia";
+          version = pyproject.version;
+          pyproject = true;
+          src = pkgs.lib.cleanSource self;
+
+          build-system = [ pkgs.python3Packages.setuptools ];
+          dependencies = [ pkgs.python3Packages.pyside6 ];
+
+          buildInputs = qtPackages;
+          dontWrapQtApps = true;      # the paths are set below instead
+
+          # Python applications are wrapped by Nix's Python hook; the paths Qt needs to find Kirigami, its style and the
+          # platform plugins are set here, the same ones the dev shell sets.
+          makeWrapperArgs = [
+            "--set-default" "QT_QUICK_CONTROLS_STYLE" "org.kde.desktop"
+            "--prefix" "QML2_IMPORT_PATH" ":" "${pkgs.lib.makeSearchPath "lib/qt-6/qml" qtPackages}"
+            "--prefix" "QT_PLUGIN_PATH" ":" "${pkgs.lib.makeSearchPath "lib/qt-6/plugins" qtPackages}"
+            "--prefix" "XDG_DATA_DIRS" ":" "${pkgs.kdePackages.breeze-icons}/share"
+            "--prefix" "LD_LIBRARY_PATH" ":" "${pkgs.lib.makeLibraryPath [ pkgs.mpv-unwrapped ]}"
+            "--prefix" "PATH" ":" "${pkgs.lib.makeBinPath [ pkgs.ffmpegthumbnailer pkgs.ffmpeg ]}"
+          ];
+
+          postInstall = ''
+            install -Dm644 data/io.github.VainJiraiya.Tetia.desktop -t $out/share/applications
+            install -Dm644 data/icons/hicolor/scalable/apps/io.github.VainJiraiya.Tetia.svg \
+              -t $out/share/icons/hicolor/scalable/apps
+            install -Dm644 data/io.github.VainJiraiya.Tetia.metainfo.xml -t $out/share/metainfo
+          '';
+
+          doCheck = false;            # the tests run in CI and from the dev shell
+          meta = {
+            description = pyproject.description;
+            homepage = "https://github.com/VainJiraiya/Tetia";
+            license = pkgs.lib.licenses.gpl3Plus;
+            mainProgram = "tetia";
+            platforms = pkgs.lib.platforms.linux;
+          };
+        };
+
       in
       {
+        packages = {
+          default = tetia;
+          inherit tetia;
+        };
+        apps.default = flake-utils.lib.mkApp { drv = tetia; };
+
         # Optional: nix fmt
         formatter = pkgs.nixpkgs-fmt;
 
