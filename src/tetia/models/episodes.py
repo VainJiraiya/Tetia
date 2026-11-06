@@ -23,6 +23,12 @@ _SEASON_FOLDER = re.compile(r"^(?:season|series|staffel|saison)[\s._-]*(\d{1,3})
 # what is not a number of the episode: [groups], (years), resolutions, codecs
 _NOISE = re.compile(r"\[[^\]]*\]|\([^)]*\)|\b\d{3,4}p\b|\b[xh]\.?26[45]\b|\b\d{1,2}[- ]?bit\b|\b(?:hevc|flac|aac|ac3|dts|web|bd|dvd)\w*\b",
                     re.IGNORECASE)
+# a release name's own words (where it came from, how it was encoded); only taken out of names that look like releases
+_TECH = re.compile(r"\b(?:\d{3,4}p|[xh]\.?26[45]|hevc|web[-. ]?(?:dl|rip)|blu[-. ]?ray|bd[-. ]?rip|hdtv|dvd[-. ]?rip)\b", re.IGNORECASE)
+_RELEASE = re.compile(r"\b(?:web[-. ]?dl|web[-. ]?rip|blu[-. ]?ray|bd[-. ]?rip|dvd[-. ]?rip|hdtv|hdrip|amzn|amazon|netflix|nf|hulu|"
+                      r"dsnp|disney|hmax|atvp|pcok|repack|proper|remux|dual[-. ]?audio|multi|ddp?[0-9][. ]?[0-9]|aac[0-9. ]*|opus)\b",
+                      re.IGNORECASE)
+_SEASON_IN_NAME = re.compile(r"[\s._-]*\b(?:season|series|s)[\s._-]*\d+\b.*$", re.IGNORECASE)
 _STANDALONE = re.compile(r"(?<![\w.])(\d{1,4})(?![\w])")
 _SPECIALS = {"specials", "special", "extras", "ova", "ovas"}
 
@@ -51,10 +57,22 @@ def parse_season_folder(name: str):
     return None
 
 
+def show_name(folder_name: str) -> str:
+    """A show folder's name without the tags, year and season that downloads add:
+    "Rick and Morty - Season 3 (2017) [1080p]" -> "Rick and Morty"."""
+    name = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", folder_name)
+    name = _SEASON_IN_NAME.sub("", name)
+    return re.sub(r"\s+", " ", name.replace(".", " ").replace("_", " ")).strip(" -") or folder_name
+
+
 def episode_title(name: str, number, show: str = "") -> str:
     """What is left of a file name once the extension, tags, resolution, the show's name and the episode number are
     taken out ("Episode 3" if nothing is)."""
-    stem = _NOISE.sub(" ", Path(name).stem)
+    stem = Path(name).stem
+    if _TECH.search(stem):
+        stem = re.sub(r"-[A-Za-z0-9]+$", "", stem)          # the release group: "...x264-Group"
+        stem = _RELEASE.sub(" ", stem)
+    stem = _NOISE.sub(" ", stem)
     for pattern in (_SXXEXX, _LONG, _NXNN, _EPISODE):
         stem = pattern.sub(" ", stem)
     stem = re.sub(r"[._]+", " ", stem)
@@ -109,7 +127,7 @@ def seasons(show: str, depth: int = 2) -> list[dict]:
         names = _videos(folder)
         if names:
             hint = parse_season_folder(os.path.basename(folder)) if folder != show else None
-            episodes = _episodes(folder, names, hint, os.path.basename(show.rstrip(os.sep)))
+            episodes = _episodes(folder, names, hint, show_name(os.path.basename(show.rstrip(os.sep))))
             if folder == show:
                 by_season = {}
                 for episode in episodes:

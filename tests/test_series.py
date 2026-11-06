@@ -523,3 +523,16 @@ def test_a_series_of_videos_is_a_show_and_one_of_chapters_is_not(tmp_path):
     assert series.is_show(str(show)) is True
     assert series.is_show(str(manga)) is False
     assert series.is_show(str(tmp_path / "nothing")) is False
+
+
+def test_titles_lose_the_release_junk_and_the_show_name():
+    from tetia.models import episodes as ep
+    name = "Rick.and.Morty.S03E01.The.Rickshank.Rickdemption.1080p.Amazon.WEB-DL.x264-Rapta.mkv"
+    show = ep.show_name("Rick and Morty - Season 3 (2017) [1080p]")
+    assert show == "Rick and Morty"
+    assert ep.episode_title(name, 1, show) == "The Rickshank Rickdemption"
+    assert ep.show_name("The Walking Dead") == "The Walking Dead"
+    assert ep.show_name("Show.Name.S02.1080p") == "Show Name"
+    # a real title with a dash in it is left alone, and so is a name that does not look like a release
+    assert ep.episode_title("Show S01E04 - Spider-Man.mkv", 4, "Show") == "Spider-Man"
+    assert ep.episode_title("Show S01E04 - Amazon Women.mkv", 4, "Show") == "Amazon Women"

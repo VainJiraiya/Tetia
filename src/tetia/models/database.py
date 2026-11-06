@@ -126,6 +126,7 @@ class Database:
             (10, self._migrate_v10),
             (11, self._migrate_v11),
             (12, self._migrate_v12),
+            (13, self._migrate_v13),
         )
         for target, step in steps:
             if version < target:
@@ -333,6 +334,18 @@ class Database:
         # What a series says about itself, typed by hand (shown beside its poster)
         self.conn.execute("ALTER TABLE collection ADD COLUMN description TEXT")
 
+    def _migrate_v13(self):
+        # Where a video was stopped, how long it is (also learned without playing it), and whether it was watched
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS playback (
+                media_id INTEGER PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+                position REAL    NOT NULL DEFAULT 0,
+                duration REAL    NOT NULL DEFAULT 0,
+                finished INTEGER NOT NULL DEFAULT 0,
+                updated  TEXT
+            );
+        """)
+
     def close(self):
         self.conn.close()
 
@@ -400,6 +413,45 @@ class Database:
             "ON CONFLICT(media_id) DO UPDATE SET page = excluded.page, offset = excluded.offset, "
             "total = excluded.total, finished = MAX(finished, excluded.finished), updated = CURRENT_TIMESTAMP",
             (int(media_id), int(page), float(offset), int(total), 1 if finished else 0)))
+
+    # --- video playback ---
+
+    def get_playback(self, media_id: int):
+        row = self.conn.execute(
+            "SELECT position, duration, finished FROM playback WHERE media_id = ?", (int(media_id),)).fetchone()
+        return {"position": row["position"], "duration": row["duration"], "finished": bool(row["finished"])} if row else None
+
+    def get_playback_many(self, media_ids) -> dict:
+        """{media_id: {position, duration, finished}} for the ones that have a record."""
+        ids = [int(i) for i in media_ids]
+        found = {}
+        for start in range(0, len(ids), 500):       # stay under SQLite's variable limit
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            for row in self.conn.execute(
+                    f"SELECT media_id, position, duration, finished FROM playback WHERE media_id IN ({marks})", chunk):
+                found[row["media_id"]] = {"position": row["position"], "duration": row["duration"],
+                                          "finished": bool(row["finished"])}
+        return found
+
+    def set_playback(self, media_id: int, position: float, duration: float, finished: bool):
+        """Remember where a video was stopped. Finished stays set once the video was watched to the end."""
+        self._write(lambda: self.conn.execute(
+            "INSERT INTO playback (media_id, position, duration, finished, updated) "
+            "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(media_id) DO UPDATE SET position = excluded.position, duration = excluded.duration, "
+            "finished = MAX(finished, excluded.finished), updated = CURRENT_TIMESTAMP",
+            (int(media_id), float(position), float(duration), 1 if finished else 0)))
+
+    def set_duration(self, media_id: int, duration: float):
+        """How long a video is, learned without playing it (leaves a position and watched mark alone)."""
+        self._write(lambda: self.conn.execute(
+            "INSERT INTO playback (media_id, duration, updated) VALUES (?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(media_id) DO UPDATE SET duration = excluded.duration",
+            (int(media_id), float(duration))))
+
+    def clear_playback(self, media_id: int):
+        self._write(lambda: self.conn.execute("DELETE FROM playback WHERE media_id = ?", (int(media_id),)))
 
     def clear_progress(self, media_id: int):
         self._write(lambda: self.conn.execute("DELETE FROM reading_progress WHERE media_id = ?", (int(media_id),)))

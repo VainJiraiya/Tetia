@@ -86,6 +86,17 @@ Kirigami.Page {
         if (uri !== "") page.playRequested(uri)
     }
 
+    Menu {
+        id: episodeMenu
+        property var episode: null
+        function openFor(ep) { episode = ep; popup() }
+        MenuItem {
+            text: episodeMenu.episode && episodeMenu.episode.finished ? "Mark as unwatched" : "Mark as watched"
+            icon.name: episodeMenu.episode && episodeMenu.episode.finished ? "dialog-cancel" : "checkmark"
+            onTriggered: show.markWatched(episodeMenu.episode.uri, !episodeMenu.episode.finished)
+        }
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -241,7 +252,7 @@ Kirigami.Page {
                 Button {
                     highlighted: true
                     icon.name: "media-playback-start"
-                    text: show.resumeTitle !== "" ? "Resume " + show.resumeTitle : "Play"
+                    text: show.resumeTitle !== "" ? "Resume " + show.resumeTitle + (show.resumeAt !== "" ? " \u00B7 " + show.resumeAt : "") : "Play"
                     enabled: show.episodeCount > 0
                     onClicked: page.play(show.play("resume"))
                 }
@@ -267,6 +278,8 @@ Kirigami.Page {
                 delegate: Item {
                     id: row
                     required property var modelData
+                    // the episode of this row (none for a season header)
+                    readonly property var ep: modelData.header ? null : modelData.episode
                     width: list.width
                     height: modelData.header ? Kirigami.Units.gridUnit * 2.2 : Kirigami.Units.gridUnit * 3.4
 
@@ -306,7 +319,7 @@ Kirigami.Page {
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: Kirigami.Units.largeSpacing
-                            anchors.rightMargin: Kirigami.Units.largeSpacing
+                            anchors.rightMargin: Kirigami.Units.largeSpacing + Kirigami.Units.gridUnit    // clear of the scrollbar
                             anchors.topMargin: Kirigami.Units.smallSpacing
                             anchors.bottomMargin: Kirigami.Units.smallSpacing
                             spacing: Kirigami.Units.largeSpacing
@@ -322,7 +335,34 @@ Kirigami.Page {
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
                                     sourceSize.height: 160
-                                    source: row.modelData.header ? "" : "image://thumbnail/" + ThumbUri.fromPath(row.modelData.episode.path)
+                                    source: row.ep ? "image://thumbnail/" + ThumbUri.fromPath(row.ep.path) : ""
+                                }
+                                // how far it was watched
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.bottom: parent.bottom
+                                    height: 3
+                                    width: row.ep && !row.ep.finished ? parent.width * row.ep.fraction : 0
+                                    visible: width > 0
+                                    color: Kirigami.Theme.highlightColor
+                                }
+                                // watched
+                                Rectangle {
+                                    visible: row.ep !== null && row.ep.finished
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 4
+                                    width: Kirigami.Units.iconSizes.small + 4
+                                    height: width
+                                    radius: width / 2
+                                    color: Qt.rgba(0, 0, 0, 0.7)
+                                    Kirigami.Icon {
+                                        anchors.centerIn: parent
+                                        source: "checkmark"
+                                        color: "white"
+                                        width: Kirigami.Units.iconSizes.small - 2
+                                        height: width
+                                    }
                                 }
                             }
                             Label {
@@ -333,16 +373,26 @@ Kirigami.Page {
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: row.modelData.header ? "" : row.modelData.episode.title
+                                text: row.ep ? row.ep.title : ""
+                                opacity: row.ep && row.ep.finished ? 0.55 : 1
                                 elide: Text.ElideRight
+                            }
+                            Label {
+                                text: row.ep ? row.ep.length : ""
+                                opacity: 0.6
+                                visible: text !== ""
                             }
                         }
                         HoverHandler { id: episodeHover }
                         TapHandler {
                             onTapped: {
-                                show.played(row.modelData.episode.uri)
-                                page.play(row.modelData.episode.uri)
+                                show.played(row.ep.uri)
+                                page.play(row.ep.uri)
                             }
+                        }
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            onTapped: episodeMenu.openFor(row.ep)
                         }
                     }
                 }

@@ -29,8 +29,9 @@ Kirigami.Page {
     property string showPath: ""
     property bool fullscreen: false
 
-    // A video shorter than this loops when browsing; a longer one (a film, an episode) stops at the end
-    readonly property real clipSeconds: 15 * 60
+    // A video shorter than this loops when browsing and is never resumed; a longer one (a film, an episode) stops at
+    // the end and picks up where it was left
+    readonly property real clipSeconds: store.clipSeconds
 
     signal leaveRequested()
     signal fullscreenToggled()
@@ -54,6 +55,7 @@ Kirigami.Page {
     property bool menuOpen: subtitleMenu.visible || audioMenu.visible || speedMenu.visible
 
     Player { id: playback }
+    PlaybackStore { id: store }
 
     function formatTime(seconds) {
         var s = Math.max(0, Math.floor(seconds))
@@ -69,12 +71,22 @@ Kirigami.Page {
         hideTimer.restart()
     }
 
+    // Remember where this video is (the store ignores clips)
+    property real savedAt: -1
+    function saveProgress() {
+        if (!playback.loaded || index < 0 || index >= count || playback.position === savedAt) return
+        savedAt = playback.position
+        store.save(playlist[index].uri, playback.position, playback.duration)
+    }
+
     function openAt(i) {
         if (i < 0 || i >= count) return
+        saveProgress()                      // the one being left
         index = i
         loopApplied = -1
+        savedAt = -1
         var item = playlist[i]
-        playback.load(item.uri, 0)
+        playback.load(item.uri, store.resumeFor(item.uri))
         if (series) page.episodeStarted(item.uri)
         showControls()
     }
@@ -86,12 +98,14 @@ Kirigami.Page {
     Connections {
         target: playback
         function onStateChanged() {
+            if (playback.paused) page.saveProgress()
             if (playback.loaded && page.loopApplied !== page.index) {
                 page.loopApplied = page.index
                 playback.setLoop(!page.series && playback.duration < page.clipSeconds)
             }
         }
         function onEndReached() {
+            store.markFinished(page.playlist[page.index].uri, playback.duration)
             // an episode is followed by the next at once; browsing, the next file only if autoplay is on
             if (page.hasNext && (page.series || page.autoNext)) page.goNext()
         }
@@ -101,10 +115,17 @@ Kirigami.Page {
         openAt(Math.max(0, Math.min(index, count - 1)))
         forceActiveFocus()
     }
-    Component.onDestruction: playback.shutdown()
+    Component.onDestruction: { saveProgress(); playback.shutdown() }
     onVisibleChanged: {
-        if (!visible) playback.setPaused(true)
+        if (!visible) { saveProgress(); playback.setPaused(true) }
         else forceActiveFocus()
+    }
+
+    Timer {
+        interval: 5000
+        repeat: true
+        running: playback.loaded && !playback.paused
+        onTriggered: page.saveProgress()
     }
 
     Timer {

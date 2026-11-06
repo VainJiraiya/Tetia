@@ -168,7 +168,7 @@ def set_series(db, folder: str, is_series: bool):
 
 
 def skip_finished(db, folder: str, chapter: str) -> str:
-    """The chapter to resume: `chapter`, or the first unfinished one after it (the last chapter stays
+    """The chapter (or episode) to resume: `chapter`, or the first unfinished one after it (the last one stays
     put when everything up to it is read)."""
     files = chapters(folder)
     if chapter not in files:
@@ -176,8 +176,9 @@ def skip_finished(db, folder: str, chapter: str) -> str:
     index = files.index(chapter)
     while index < len(files) - 1:
         found = db.get_media_by_path(os.path.realpath(files[index]))
-        progress = db.get_progress(found[0]) if found else None
-        if not (progress and progress["finished"]):
+        progress = db.get_progress(found[0]) if found else None         # a chapter read to the end
+        playback = db.get_playback(found[0]) if found else None          # an episode watched to the end
+        if not ((progress and progress["finished"]) or (playback and playback["finished"])):
             break
         index += 1
     return files[index]
