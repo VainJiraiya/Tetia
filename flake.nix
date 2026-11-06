@@ -52,6 +52,10 @@
             pkgs.qt6.qtimageformats              # WebP, TIFF, etc.
             pkgs.qt6.qt5compat                   # Qt5 compatibility shims
 
+            # -- Video playback ------------------------------------------
+            pkgs.mpv-unwrapped                   # libmpv: the video player engine (loaded with ctypes)
+            pkgs.ffmpegthumbnailer               # Video thumbnails (thumbModel.py runs it)
+
             # -- Build Tools ---------------------------------------------
             pkgs.cmake
             pkgs.ninja
@@ -90,8 +94,8 @@
             export QT_QUICK_CONTROLS_STYLE="org.kde.desktop"
             export XDG_DATA_DIRS="${pkgs.kdePackages.kirigami}/share:${pkgs.kdePackages.qqc2-desktop-style}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
-            # Fallback library path for any binary extensions
-            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            # Fallback library path for any binary extensions, and libmpv for ctypes (CDLL("libmpv.so.2"))
+            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.mpv-unwrapped}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           '';
         };
       }
