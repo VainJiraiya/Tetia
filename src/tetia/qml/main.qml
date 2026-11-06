@@ -1164,6 +1164,7 @@ Kirigami.ApplicationWindow {
 
     pageStack.initialPage: Kirigami.ScrollablePage {
         title: root.onFavoritesTab ? "Favorites" : "Collections"
+        padding: 0      // the tiles inset themselves, so this lines up with the folder grids
 
         FolderGridView {
             anchors.fill: parent

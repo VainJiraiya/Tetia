@@ -56,19 +56,26 @@ GridView {
     property int coverRevision: 0
     readonly property string revisionSuffix: coverRevision > 0 ? "?v=" + coverRevision : ""
 
-    // Tile size: -2 .. +2, 0 being the size the grid always had. The scale is
-    // applied to the cell; thumbHint is the thumbnail size to ask for (0: no
-    // preference, so the biggest cached one). -2 and -1 are the normal (128 px)
-    // thumbnails drawn smaller; +1 and +2 ask for the large (256) and x-large (512) ones.
+    // Tile size: -2 .. +2. The cell widths are 110, 140, 180, 265 and 350 px (kept the same in
+    // FolderGridView, so a level is one size everywhere); the cell then stretches a little to fill the row.
+    // thumbHint is the thumbnail size to ask for (0: no preference, so the biggest cached one). -2 and -1
+    // use the normal (128 px) thumbnails; +1 and +2 ask for the large (256) and x-large (512) ones.
     property int tileLevel: 0
-    readonly property real tileScale: [1 / 3, 2 / 3, 1, 1.75, 2.5][tileLevel + 2]
+    readonly property real tileScale: [110, 140, 180, 265, 350][tileLevel + 2] / 160
     readonly property int thumbHint: [128, 128, 0, 256, 512][tileLevel + 2]
-    // At the smallest size there is no room for a file name (hover shows it)
-    readonly property bool showLabels: tileLevel > -2
+    // Even the smallest size is big enough for a (shortened) name
+    readonly property bool showLabels: true
 
     // Exposed properties
-    property int columns: Math.max(1, Math.floor(width / cellWidth))
-    property real sidePadding: Math.max(0, Math.floor((width - (columns * cellWidth)) / 2))
+    // Layout: one rule shared with FolderGridView (keep them in sync). A tile sits `inset` inside its cell, and
+    // the grid keeps `edge` on the left and right, so a tile is edge + inset = 24 px from the wall and from the
+    // header, whatever the tile size or the window. The cells stretch a little to fill the width, instead of
+    // leaving a leftover gap that would grow and shrink with the tile size.
+    readonly property real edge: 12
+    readonly property real inset: 12
+    readonly property real minCell: 160 * tileScale
+    property int columns: Math.max(1, Math.floor((width - 2 * edge) / minCell))
+    property real sidePadding: edge
     property bool tagMode: false
     // Select mode: the same click and drag selection as tag mode, for moving things into virtual
     // folders. Folder tiles can be selected in it (tag mode only tags files).
@@ -227,8 +234,8 @@ GridView {
         var y0 = Math.min(dragStart.y, dragEnd.y)
         var y1 = Math.max(dragStart.y, dragEnd.y)
 
-        // Tiles sit inset by 8 px inside their cells (see the delegates)
-        var inset = 8
+        // Tiles sit `inset` px inside their cells (see the delegates)
+        var inset = grid.inset
         var firstCol = Math.max(0, Math.floor((x0 - sidePadding) / cellWidth))
         var lastCol = Math.min(columns - 1, Math.floor((x1 - sidePadding) / cellWidth))
         var firstRow = Math.max(0, Math.floor(y0 / cellHeight))
@@ -714,8 +721,10 @@ GridView {
     // ---- Grid ------------------------------------------------------------
 
     // Cell height leaves room for both the picture and the file name
-    cellWidth: Math.round(160 * tileScale)
-    cellHeight: showLabels ? Math.round(185 * tileScale) : cellWidth
+    cellWidth: (width - 2 * edge) / columns
+    cellHeight: showLabels ? Math.round(cellWidth * 185 / 160) : cellWidth
+    topMargin: edge
+    bottomMargin: edge
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     ScrollBar.vertical: ScrollBar {}
@@ -912,7 +921,7 @@ GridView {
 
             Loader {
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: grid.inset
                 active: model.isFolder === true
                 sourceComponent: folderCard
             }
@@ -921,7 +930,7 @@ GridView {
                 id: card
                 visible: !model.isFolder
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: grid.inset
                 radius: 6
                 color: tile.selected ? Qt.alpha(palette.highlight, 0.18)
                                      : Qt.alpha(palette.text, hover.hovered ? 0.07 : 0)

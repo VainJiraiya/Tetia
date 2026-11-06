@@ -14,12 +14,23 @@ Item {
     property var model
     property bool removeMode: false
 
-    // Tile size: -2 .. +2, 0 being the size the grid always had (see MediaGridView)
+    // Tile size: -2 .. +2 (the cell widths are listed in MediaGridView)
     property int tileLevel: 0
-    // (the base cell is 180 wide, so +1 and +2 come to 280 and 400 pixels, as in the media grid)
-    readonly property real tileScale: [1 / 3, 2 / 3, 1, 1.55, 2.2][tileLevel + 2]
+    // (the same sizes as the media grid, see MediaGridView, so a level means the same tile size everywhere)
+    readonly property real tileScale: [110, 140, 180, 265, 350][tileLevel + 2] / 160
     readonly property int thumbHint: [128, 128, 256, 256, 512][tileLevel + 2]
-    readonly property bool showLabels: tileLevel > -2
+    readonly property bool showLabels: true
+
+    // Every tile, in every tab, has the same shape: a vertical rectangle (3:4) with the cover cropped to fill
+    // it and the name below. 3:4 is shorter than a manga cover (about 2:3), so a cover loses only a little
+    // (cut from the bottom, so the title at the top stays), and still takes a landscape picture without it
+    // looking squeezed. The gap between tiles is wider than the gap inside one, so each reads as one thing.
+    readonly property real coverRatio: 4 / 3
+    // Layout: one rule shared with MediaGridView (keep them in sync): a tile sits `inset` inside its cell and the
+    // grid keeps `edge` at the sides, so a tile is edge + inset = 24 px from the wall and the header, whatever the
+    // tile size or the window; the cells stretch a little to fill the width. The gap between tiles is 2 * inset.
+    readonly property int inset: 12
+    readonly property int edge: 12
 
     signal folderClicked(string folderPath)
     // A series tile was opened: which chapter to open is "resume", "first" or "next"
@@ -156,252 +167,162 @@ Item {
     GridView {
         id: grid
         anchors.fill: parent
-        anchors.margins: 16
+        // no margin of its own: the tiles inset themselves, so the grid lines up with the folder grids
         visible: grid.count > 0
 
         model: root.model
-        cellWidth: Math.round(180 * root.tileScale)
-        cellHeight: root.showLabels ? Math.round(220 * root.tileScale) : cellWidth
+        readonly property real minCell: 160 * root.tileScale
+        property int columns: Math.max(1, Math.floor((width - 2 * root.edge) / minCell))
+        property real sidePadding: root.edge
+        cellWidth: (width - 2 * root.edge) / columns
+        topMargin: root.edge
+        bottomMargin: root.edge
+        readonly property real coverHeight: Math.round((cellWidth - 2 * root.inset) * root.coverRatio)
+        cellHeight: coverHeight + (root.showLabels ? 34 : 0) + 2 * root.inset
         clip: true
 
-        // 1. Calculate the available columns and left-over horizontal space
-        property int columns: Math.max(1, Math.floor(width / cellWidth))
-        property real sidePadding: Math.floor((width - (columns * cellWidth)) / 2)
-
         delegate: Item {
+            id: cell
             width: grid.cellWidth
             height: grid.cellHeight
 
-            // 2. Shift the delegate's contents visually instead of modifying the layout margins
             Item {
-                x: grid.sidePadding
-                width: parent.width
-                height: parent.height
+                id: cover
+                x: grid.sidePadding + root.inset
+                y: root.inset
+                width: grid.cellWidth - 2 * root.inset
+                height: grid.coverHeight
 
-                Rectangle {
-                    id: cardBg
+                // The Image is drawn to a texture (layer), which ShadowedTexture rounds the corners of.
+                // opacity 0, not visible: false: an invisible item is left out of the render pass that
+                // updates its layer, and the texture would go stale.
+                Image {
+                    id: coverImage
                     anchors.fill: parent
-                    anchors.margins: 8
-                    radius: 8
-                    color: Kirigami.Theme.backgroundColor
-                    border.width: 1
-                    border.color: Qt.rgba(0, 0, 0, 0.2)
-    
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 1
-                        spacing: 0
-    
-                            Item {
-                                id: heroRect
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                Layout.minimumHeight: Math.round(100 * root.tileScale)
-    
-                                // Plain fallback fill so there's a background even
-                                // before the image loads / if there's no heroPath.
-                                // Must match heroTexture's corner rounding, or its
-                                // sharp corners poke out from behind the texture.
-    /*                             Rectangle {
-                                    anchors.fill: parent
-                                    color: Qt.rgba(0, 0, 0, 0.2)
-                                    topLeftRadius: cardBg.radius - 1
-                                    topRightRadius: cardBg.radius - 1
-                                } */
-    
-                                Image {
-                                    id: heroImage
-                                    anchors.fill: parent
-                                    // opacity: 0 (not visible: false) -- this item
-                                    // must still go through a normal render pass
-                                    // for its `layer` to update. visible: false
-                                    // would prune it from that pass entirely and
-                                    // the layer texture below would go stale/blank.
-                                    opacity: 0
-                                    // layer.enabled forces Qt to pre-render this
-                                    // Image (respecting fillMode's crop/fit math)
-                                    // into an offscreen texture. Without this,
-                                    // ShadowedTexture.source grabs the RAW decoded
-                                    // pixmap directly -- bypassing fillMode
-                                    // entirely -- and stretches that to fill its
-                                    // own bounds regardless of aspect ratio. This
-                                    // is what caused the persistent stretching.
-                                    layer.enabled: true
-                                    source: model.heroPath && model.heroPath.length > 0
-                                            ? "image://thumbnail/" + ThumbUri.fromPath(model.heroPath) + root.revisionSuffix
-                                            : ""
-                                    sourceSize: Qt.size(root.thumbHint, root.thumbHint)
-                                    fillMode: Image.PreserveAspectFit
-                                    asynchronous: true
-                                    cache: true
-    
-                                    onStatusChanged: {
-                                        if (status === Image.Error) {
-                                            console.log("Image ERROR for", model.folderName, "source:", source)
-                                        }
-                                    }
-                                }
-    
-                                Kirigami.ShadowedTexture {
-                                    id: heroTexture
-                                    anchors.fill: parent
-                                    source: heroImage
-                                    visible: model.heroPath && model.heroPath.length > 0 && heroImage.status !== Image.Error
-                                    opacity: root.removeMode ? 0.4 : 1.0
-                                    shadow.size: 0  // we only want this for the corner clipping, not a drop shadow
-                                    // PreserveAspectFit above leaves transparent gaps around
-                                    // non-matching aspect ratios; without this they'd show
-                                    // through as ShadowedRectangle's default white fill.
-                                    color: Qt.rgba(0, 0, 0, 0.2)
-                                    corners {
-                                        topLeftRadius: cardBg.radius - 1
-                                        topRightRadius: cardBg.radius - 1
-                                        bottomLeftRadius: 0
-                                        bottomRightRadius: 0
-                                    }
-    
-                                    Behavior on opacity { NumberAnimation { duration: 200 } }
-                                }
-    
-                            Kirigami.Icon {
-                                id: fallbackIcon
-                                anchors.centerIn: parent
-                                width: Math.min(parent.width, parent.height) * 0.45
-                                height: width
-                                source: "folder"
-                                opacity: 0.5
-                                visible: (!model.heroPath || model.heroPath.length === 0 || heroImage.status === Image.Error)
-                                         && !root.removeMode
-                            }
-    
-                            Rectangle {
-                                anchors.bottom: parent.bottom
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                height: parent.height * 0.35
-                                gradient: Gradient {
-                                    GradientStop { position: 0.0; color: "transparent" }
-                                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.4) }
-                                }
-                                visible: model.heroPath && model.heroPath.length > 0 && !root.removeMode
-                            }
-    
-                            Rectangle {
-                                anchors.fill: parent
-                                color: Kirigami.Theme.negativeBackgroundColor
-                                opacity: root.removeMode ? 0.55 : 0.0
-                                topLeftRadius: cardBg.radius - 1
-                                topRightRadius: cardBg.radius - 1
-                                visible: root.removeMode
-                            }
-    
-                            Kirigami.Icon {
-                                source: "edit-delete"
-                                visible: root.removeMode
-                                anchors.centerIn: parent
-                                width: 48
-                                height: 48
-                                color: Kirigami.Theme.negativeTextColor
-                            }
-    
-                            Rectangle {
-                                anchors.top: parent.top
-                                anchors.right: parent.right
-                                anchors.margins: 8
-                                width: countBadgeText.implicitWidth + 14
-                                height: countBadgeText.implicitHeight + 8
-                                radius: height / 2
-                                color: Qt.rgba(0, 0, 0, 0.65)
-                                visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode && root.showLabels
-                                         && !model.singleFile && (!model.isSeries || hoverArea.containsMouse)
-    
-                                Label {
-                                    id: countBadgeText
-                                    anchors.centerIn: parent
-                                    text: model.itemCount || 0
-                                    color: "white"
-                                    font.pixelSize: 11
-                                    font.weight: Font.Bold
-                                }
-                            }
-                        }
-    
-                        Rectangle {
-                            id: labelBackground
-                            Layout.fillWidth: true
-                            visible: root.showLabels
-                            Layout.preferredHeight: root.showLabels ? 36 : 0
-                            
-                            // Fill the background color you want
-                            color: Kirigami.Theme.alternateBackgroundColor 
-                            
-                            // Match the bottom corner radii of cardBg so it clips flush to the outer border
-                            bottomLeftRadius: cardBg.radius - 1
-                            bottomRightRadius: cardBg.radius - 1
-    
-                            Label {
-                                id: folderNameLabel
-                                anchors.fill: parent
-                                // Put the padding/margins on the text inside the label instead of the container layout
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                anchors.bottomMargin: 2
-                                
-                                text: model.folderName || ""
-                                color: root.removeMode ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                                elide: Text.ElideMiddle
-                                font.pixelSize: 13
-                                font.weight: Font.Bold
-                            }
-                        }
+                    opacity: 0
+                    layer.enabled: true
+                    source: model.heroPath && model.heroPath.length > 0
+                            ? "image://thumbnail/" + ThumbUri.fromPath(model.heroPath) + root.revisionSuffix : ""
+                    sourceSize: Qt.size(root.thumbHint, root.thumbHint)
+                    fillMode: Image.PreserveAspectCrop
+                    verticalAlignment: Image.AlignTop      // a taller cover loses its bottom, not its title
+                    asynchronous: true
+                    cache: true
+                }
+                Kirigami.ShadowedTexture {
+                    anchors.fill: parent
+                    source: coverImage
+                    visible: model.heroPath && model.heroPath.length > 0 && coverImage.status !== Image.Error
+                    opacity: root.removeMode ? 0.4 : 1.0
+                    shadow.size: 0           // only for the rounded corners, not a drop shadow
+                    color: Qt.rgba(0, 0, 0, 0.12)
+                    radius: 6
+                    Behavior on opacity { NumberAnimation { duration: 200 } }
+                }
+                // no picture: a soft tile with a folder on it
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 6
+                    color: Qt.alpha(Kirigami.Theme.textColor, 0.06)
+                    visible: (!model.heroPath || model.heroPath.length === 0 || coverImage.status === Image.Error)
+                    Kirigami.Icon {
+                        anchors.centerIn: parent
+                        width: Math.min(parent.width, parent.height) * 0.4
+                        height: width
+                        source: "folder"
+                        opacity: 0.5
                     }
                 }
-    
                 Rectangle {
-                    id: outlineRect
-                    anchors.centerIn: parent
-                    width: cardBg.width + 4
-                    height: cardBg.height + 4
-                    radius: cardBg.radius + 2
-                    color: "transparent"
-                    border.color: root.removeMode
-                                  ? Kirigami.Theme.negativeTextColor
-                                  : (hoverArea.containsMouse ? Kirigami.Theme.highlightColor : "transparent")
-                    border.width: (hoverArea.containsMouse || root.removeMode) ? 2 : 0
-                    z: -1
+                    anchors.fill: parent
+                    radius: 6
+                    color: Kirigami.Theme.negativeBackgroundColor
+                    opacity: 0.55
+                    visible: root.removeMode
+                    Kirigami.Icon {
+                        source: "edit-delete"
+                        anchors.centerIn: parent
+                        width: 48
+                        height: 48
+                        color: Kirigami.Theme.negativeTextColor
+                    }
                 }
-    
-                MouseArea {
-                    id: hoverArea
-                    anchors.fill: cardBg
-                    hoverEnabled: true
-                    ToolTip.visible: containsMouse && !root.showLabels
-                    ToolTip.delay: 700
-                    ToolTip.text: model.folderName || ""
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    onClicked: function(mouse) {
-                        if (mouse.button === Qt.RightButton) {
-                            if (root.removeMode) return
-                            folderMenu.folderPath = model.folderPath
-                            folderMenu.isFavorite = !!model.isFavorite
-                            folderMenu.hasCustomCover = !!model.hasCustomCover
-                            folderMenu.isSeries = !!model.isSeries
-                            folderMenu.isSingle = !!model.singleFile
-                            folderMenu.singleFile = model.singleFile || ""
-                            folderMenu.popup()
-                            return
-                        }
-                        if (root.removeMode) {
-                            root.model.removeFolder(model.folderPath)
-                        } else if (model.isSeries) {
-                            root.seriesRequested(model.folderPath, "resume")
-                        } else if (model.singleFile) {
-                            root.singleFileRequested(model.folderPath)
-                        } else {
-                            root.folderClicked(model.folderPath)
-                        }
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.margins: 6
+                    width: countBadgeText.implicitWidth + 14
+                    height: countBadgeText.implicitHeight + 8
+                    radius: height / 2
+                    color: Qt.rgba(0, 0, 0, 0.65)
+                    visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode && root.showLabels
+                             && !model.singleFile && (!model.isSeries || hoverArea.containsMouse)
+                    Label {
+                        id: countBadgeText
+                        anchors.centerIn: parent
+                        text: model.itemCount || 0
+                        color: "white"
+                        font.pixelSize: 11
+                        font.weight: Font.Bold
+                    }
+                }
+                // outline on hover, or in remove mode
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: -2
+                    radius: 8
+                    color: "transparent"
+                    border.width: root.removeMode || hoverArea.containsMouse ? 2 : 0
+                    border.color: root.removeMode ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.highlightColor
+                }
+            }
+
+            Label {
+                x: grid.sidePadding + root.inset
+                anchors.top: cover.bottom
+                anchors.topMargin: 6
+                width: grid.cellWidth - 2 * root.inset
+                visible: root.showLabels
+                text: model.folderName || ""
+                color: root.removeMode ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideMiddle
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+            }
+
+            MouseArea {
+                id: hoverArea
+                x: grid.sidePadding + root.inset
+                y: root.inset
+                width: grid.cellWidth - 2 * root.inset
+                height: grid.cellHeight - 2 * root.inset
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                ToolTip.visible: containsMouse && !root.showLabels
+                ToolTip.delay: 700
+                ToolTip.text: model.folderName || ""
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: function(mouse) {
+                    if (mouse.button === Qt.RightButton) {
+                        if (root.removeMode) return
+                        folderMenu.folderPath = model.folderPath
+                        folderMenu.isFavorite = !!model.isFavorite
+                        folderMenu.hasCustomCover = !!model.hasCustomCover
+                        folderMenu.isSeries = !!model.isSeries
+                        folderMenu.isSingle = !!model.singleFile
+                        folderMenu.singleFile = model.singleFile || ""
+                        folderMenu.popup()
+                        return
+                    }
+                    if (root.removeMode) {
+                        root.model.removeFolder(model.folderPath)
+                    } else if (model.isSeries) {
+                        root.seriesRequested(model.folderPath, "resume")
+                    } else if (model.singleFile) {
+                        root.singleFileRequested(model.folderPath)
+                    } else {
+                        root.folderClicked(model.folderPath)
                     }
                 }
             }
