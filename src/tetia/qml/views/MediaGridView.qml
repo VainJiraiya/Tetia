@@ -56,12 +56,14 @@ GridView {
     property int coverRevision: 0
     readonly property string revisionSuffix: coverRevision > 0 ? "?v=" + coverRevision : ""
 
-    // Tile size: -2 .. +2. The cell widths are 110, 140, 180, 265 and 350 px (kept the same in
-    // FolderGridView, so a level is one size everywhere); the cell then stretches a little to fill the row.
-    // thumbHint is the thumbnail size to ask for (0: no preference, so the biggest cached one). -2 and -1
-    // use the normal (128 px) thumbnails; +1 and +2 ask for the large (256) and x-large (512) ones.
+    // Tile size: -2 .. +2. Each step is two tiles more or fewer in a row, and the counts are even (with a 2560 px
+    // wide window the levels have 16, 14, 12, 10 and 8 tiles per row, the top-level grid 14, 12, 10, 8 and 6): the
+    // page centre then falls between two tiles and the eye scans tile by tile. The widths below are the smallest
+    // a cell may be (the cell then stretches a little to fill the row). thumbHint is the thumbnail size to ask
+    // for (0: no preference, so the biggest cached one). -2 and -1 use the normal (128 px) thumbnails; +1 and +2
+    // ask for the large (256) and x-large (512) ones.
     property int tileLevel: 0
-    readonly property real tileScale: [110, 140, 180, 265, 350][tileLevel + 2] / 160
+    readonly property real minCell: [155, 178, 205, 245, 300][tileLevel + 2]
     readonly property int thumbHint: [128, 128, 0, 256, 512][tileLevel + 2]
     // Even the smallest size is big enough for a (shortened) name
     readonly property bool showLabels: true
@@ -73,7 +75,16 @@ GridView {
     // leaving a leftover gap that would grow and shrink with the tile size.
     readonly property real edge: 12
     readonly property real inset: 12
-    readonly property real minCell: 160 * tileScale
+    // The badges (a folder's count, the selection check, the virtual folder mark) sit in a strip along the top of
+    // every tile, files included, so the pictures of all tiles line up and a badge never touches a picture.
+    // They shrink with the tile, but not below a readable size, and are never bigger than at tile size 0.
+    readonly property int badgeFont: Math.max(9, Math.min(11, Math.round(11 * cellWidth / 180)))
+    readonly property color badgeColor: Qt.rgba(0, 0, 0, 0.5)
+    readonly property int badgeHeight: Math.round(badgeFont * 1.9)
+    // the badges' margin
+    readonly property int badgeMargin: Math.round(badgeFont * 0.55)
+    // the badge, with the same margin above it and below it (between the badge and the picture)
+    readonly property int strip: badgeHeight + 2 * badgeMargin
     property int columns: Math.max(1, Math.floor((width - 2 * edge) / minCell))
     property real sidePadding: edge
     property bool tagMode: false
@@ -754,9 +765,9 @@ GridView {
                 readonly property bool picked: grid.selectMode && grid.selectedTiles.indexOf(String(model.subfolderPath)) >= 0
                 radius: 6
                 color: picked ? Qt.alpha(palette.highlight, 0.18)
-                              : Qt.alpha(palette.text, folderHover.hovered ? 0.07 : (asFile ? 0 : 0.03))
-                border.width: picked ? 2 : (asFile ? 0 : 1)
-                border.color: picked ? palette.highlight : Qt.alpha(palette.text, 0.15)
+                              : Qt.alpha(palette.text, folderHover.hovered ? 0.07 : 0)
+                border.width: picked ? 2 : 0
+                border.color: palette.highlight
 
                 HoverHandler {
                     id: folderHover
@@ -774,6 +785,7 @@ GridView {
                     anchors.right: parent.right
                     anchors.bottom: folderNameText.top
                     anchors.margins: 4
+                    anchors.topMargin: grid.strip
                     anchors.bottomMargin: 6
                     source: model.subfolderHero && model.subfolderHero.length > 0
                             ? "image://thumbnail/" + ThumbUri.fromPath(model.subfolderHero) + grid.revisionSuffix : ""
@@ -792,13 +804,14 @@ GridView {
                 }
 
                 Rectangle {
+                    id: countPill
                     anchors.top: parent.top
                     anchors.right: parent.right
-                    anchors.margins: 6
-                    width: folderCountText.implicitWidth + 14
-                    height: folderCountText.implicitHeight + 8
+                    anchors.margins: grid.badgeMargin
+                    width: Math.max(height, folderCountText.implicitWidth + grid.badgeFont)
+                    height: grid.badgeHeight
                     radius: height / 2
-                    color: Qt.rgba(0, 0, 0, 0.65)
+                    color: grid.badgeColor
                     // A series shows its chapter count only on hover: the one tell that it is not a single file
                     visible: model.subfolderCount > 0 && grid.showLabels && !model.subfolderSingleFile
                              && (!folderTile.asFile || folderHover.hovered) && !folderTile.picked
@@ -808,7 +821,7 @@ GridView {
                         anchors.centerIn: parent
                         text: model.subfolderCount
                         color: "white"
-                        font.pixelSize: 11
+                        font.pixelSize: grid.badgeFont
                         font.bold: true
                     }
                 }
@@ -818,37 +831,41 @@ GridView {
                     // only on hover: on every tile it clutters the pictures
                     visible: folderTile.isVirtual && grid.showLabels && folderHover.hovered
                     anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.margins: 6
-                    width: virtualMark.implicitWidth + 12
-                    height: virtualMark.implicitHeight + 6
+                    anchors.right: parent.right
+                    anchors.topMargin: grid.badgeMargin
+                    // in the badge row, to the left of the count (or the selection check), so it never lies on the picture
+                    anchors.rightMargin: grid.badgeMargin + (checkPill.visible ? checkPill.width + grid.badgeMargin
+                                                             : (countPill.visible ? countPill.width + grid.badgeMargin : 0))
+                    width: Math.max(height, virtualMark.implicitWidth + grid.badgeFont)
+                    height: grid.badgeHeight
                     radius: height / 2
-                    color: Qt.rgba(0, 0, 0, 0.65)
+                    color: grid.badgeColor
                     Text {
                         id: virtualMark
                         anchors.centerIn: parent
                         text: "\u25C7"
                         color: "white"
-                        font.pixelSize: 11
+                        font.pixelSize: grid.badgeFont
                         font.bold: true
                     }
                 }
 
                 // Selection check badge (top-right), like a file's
                 Rectangle {
+                    id: checkPill
                     anchors.top: parent.top
                     anchors.right: parent.right
-                    anchors.margins: 6
-                    width: 20
-                    height: 20
-                    radius: 10
+                    anchors.margins: grid.badgeMargin
+                    width: grid.badgeHeight
+                    height: grid.badgeHeight
+                    radius: height / 2
                     color: palette.highlight
                     visible: folderTile.picked
                     Text {
                         anchors.centerIn: parent
                         text: "\u2713"
                         color: palette.highlightedText
-                        font.pixelSize: 12
+                        font.pixelSize: grid.badgeFont
                         font.bold: true
                     }
                 }
@@ -953,6 +970,7 @@ GridView {
                     anchors.right: parent.right
                     anchors.bottom: fileNameText.top
                     anchors.margins: 4
+                    anchors.topMargin: grid.strip
                     anchors.bottomMargin: 6
 
                     source: model.isFolder ? "" : "image://thumbnail/" + model.fileUri + grid.revisionSuffix
@@ -985,10 +1003,10 @@ GridView {
                 Rectangle {
                     anchors.top: parent.top
                     anchors.right: parent.right
-                    anchors.margins: 6
-                    width: 20
-                    height: 20
-                    radius: 10
+                    anchors.margins: grid.badgeMargin
+                    width: grid.badgeHeight
+                    height: grid.badgeHeight
+                    radius: height / 2
                     color: palette.highlight
                     visible: tile.selected
 
@@ -996,7 +1014,7 @@ GridView {
                         anchors.centerIn: parent
                         text: "\u2713"
                         color: palette.highlightedText
-                        font.pixelSize: 12
+                        font.pixelSize: grid.badgeFont
                         font.bold: true
                     }
                 }

@@ -468,13 +468,14 @@ Kirigami.ApplicationWindow {
                             source: modeButtonSlot.mode === "idle" ? "system-search" : "checkmark"
                             isMask: true
                             color: modeButtonSlot.fg
-                            Layout.preferredWidth: 16
-                            Layout.preferredHeight: 16
+                            Layout.preferredWidth: 13
+                            Layout.preferredHeight: 13
                         }
 
                         Label {
                             text: modeButtonSlot.mode === "idle" ? "Search" : "Done"
                             color: modeButtonSlot.fg
+                            font.pixelSize: 11
                             font.weight: Font.Medium
                         }
                     }

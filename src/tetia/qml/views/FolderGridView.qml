@@ -14,10 +14,11 @@ Item {
     property var model
     property bool removeMode: false
 
-    // Tile size: -2 .. +2 (the cell widths are listed in MediaGridView)
+    // Tile size: -2 .. +2, two tiles more or fewer in a row per step (14, 12, 10, 8 and 6 tiles per row in a
+    // 2560 px wide window), always an even number, like the folder and file grids (see MediaGridView), whose
+    // tiles are two per row smaller at every level.
     property int tileLevel: 0
-    // (the same sizes as the media grid, see MediaGridView, so a level means the same tile size everywhere)
-    readonly property real tileScale: [110, 140, 180, 265, 350][tileLevel + 2] / 160
+    readonly property real minCell: [175, 205, 245, 300, 400][tileLevel + 2]
     readonly property int thumbHint: [128, 128, 256, 256, 512][tileLevel + 2]
     readonly property bool showLabels: true
 
@@ -171,8 +172,10 @@ Item {
         visible: grid.count > 0
 
         model: root.model
-        readonly property real minCell: 160 * root.tileScale
-        property int columns: Math.max(1, Math.floor((width - 2 * root.edge) / minCell))
+        // the count badge shrinks with the tile, but not below a readable size, and is never bigger than at size 0
+        // (as in MediaGridView)
+        readonly property int badgeFont: Math.max(9, Math.min(11, Math.round(11 * cellWidth / 180)))
+        property int columns: Math.max(1, Math.floor((width - 2 * root.edge) / root.minCell))
         property real sidePadding: root.edge
         cellWidth: (width - 2 * root.edge) / columns
         topMargin: root.edge
@@ -250,11 +253,11 @@ Item {
                 Rectangle {
                     anchors.top: parent.top
                     anchors.right: parent.right
-                    anchors.margins: 6
-                    width: countBadgeText.implicitWidth + 14
-                    height: countBadgeText.implicitHeight + 8
+                    anchors.margins: Math.round(grid.badgeFont * 0.6)
+                    width: Math.max(height, countBadgeText.implicitWidth + grid.badgeFont)
+                    height: Math.round(grid.badgeFont * 1.9)
                     radius: height / 2
-                    color: Qt.rgba(0, 0, 0, 0.65)
+                    color: Qt.rgba(0, 0, 0, 0.5)
                     visible: model.itemCount !== undefined && model.itemCount > 0 && !root.removeMode && root.showLabels
                              && !model.singleFile && (!model.isSeries || hoverArea.containsMouse)
                     Label {
@@ -262,7 +265,7 @@ Item {
                         anchors.centerIn: parent
                         text: model.itemCount || 0
                         color: "white"
-                        font.pixelSize: 11
+                        font.pixelSize: grid.badgeFont
                         font.weight: Font.Bold
                     }
                 }
