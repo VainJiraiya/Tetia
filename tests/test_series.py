@@ -555,3 +555,56 @@ def test_a_half_episode_sits_between_two_episodes(tmp_path):
     (group,) = ep.seasons(str(show))
     assert [(e["number"], e["title"]) for e in group["episodes"]] == [
         (8, "Episode 8"), (9, "Episode 9"), (9.5, "Episode 9.5"), (10, "Episode 10")]
+
+
+def _known(folder):
+    """Put the files of a folder in the library (as opening it does)."""
+    from tetia.models.mediaModel import MediaModel
+    MediaModel().load_from_qurl(str(folder))
+
+
+def test_a_series_says_how_much_is_left_and_how_far_it_is(tmp_path, qapp):
+    from tetia.models.mediaModel import MediaModel
+    from tetia.models.subfolderModel import SubfolderModel
+    folder = tmp_path / "Parent" / "Dragon"
+    _touch(folder, "Ch.1.cbz", "Ch.2.cbz", "Ch.3.cbz", "Ch.4.cbz")
+    _touch(tmp_path / "Parent" / "Plain" / "Inner", "x.cbz")
+    _known(folder)
+    db = get_database()
+    ids = [db.get_media_by_path(os.path.realpath(str(folder / ("Ch.%d.cbz" % n))))[0] for n in (1, 2, 3, 4)]
+
+    assert series.progress(db, str(folder)) == {"total": 4, "left": 4, "fraction": 0.0, "finished": False}
+    db.set_progress(ids[0], 20, 0, 20, True)                     # chapter 1 read
+    db.set_progress(ids[1], 3, 0, 20, False)                     # chapter 2 opened
+    found = series.progress(db, str(folder))
+    assert found["left"] == 3 and found["fraction"] == (1 + 0.5) / 4 and not found["finished"]
+
+    model = SubfolderModel()
+    model.filterMode = int(MediaModel.FilterMode.MangaOnly)
+    model.load(str(tmp_path / "Parent"))
+    model.setSeries(covers.folder_uri(str(folder)), True)
+    rows = {model.data(model.index(r), model.Roles.NameRole): r for r in range(model.rowCount())}
+    dragon, plain = model.index(rows["Dragon"]), model.index(rows["Plain"])
+    assert model.data(dragon, model.Roles.LeftRole) == 3
+    assert model.data(dragon, model.Roles.ProgressRole) == (1 + 0.5) / 4
+    assert model.data(plain, model.Roles.LeftRole) == -1             # not a series
+    assert model.data(plain, model.Roles.FolderCountRole) == 1       # it holds a folder
+
+    for media_id in ids[1:]:
+        db.set_progress(media_id, 20, 0, 20, True)
+    changed = []
+    model.dataChanged.connect(lambda *a: changed.append(a))
+    model.refreshProgress()                                      # back from the reader
+    assert changed and model.data(dragon, model.Roles.FinishedRole) is True
+    assert model.data(dragon, model.Roles.LeftRole) == 0
+
+
+def test_a_show_counts_watched_episodes(tmp_path, qapp):
+    folder = tmp_path / "Show"
+    _touch(folder, "Show S01E01.mkv", "Show S01E02.mkv")
+    _known(folder)
+    db = get_database()
+    first = db.get_media_by_path(os.path.realpath(str(folder / "Show S01E01.mkv")))[0]
+    db.set_playback(first, 2700, 2700, True)
+    found = series.progress(db, str(folder))
+    assert found["left"] == 1 and found["fraction"] == 0.5

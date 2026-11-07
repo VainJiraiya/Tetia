@@ -102,6 +102,10 @@ class SubfolderModel(QAbstractListModel):
         VirtualIdRole = Qt.UserRole + 10
         SingleFileIdRole = Qt.UserRole + 11
         IsShowRole = Qt.UserRole + 12
+        FolderCountRole = Qt.UserRole + 13     # the folders directly inside
+        LeftRole = Qt.UserRole + 14            # a series: chapters or episodes not read or watched to the end (-1: none)
+        ProgressRole = Qt.UserRole + 15        # a series: how far, 0..1
+        FinishedRole = Qt.UserRole + 16        # a series read or watched to the end
 
     filterModeChanged = Signal()
 
@@ -202,6 +206,20 @@ class SubfolderModel(QAbstractListModel):
             return bool(self._meta.get(covers.folder_key(entry["path"]), {}).get("favorite"))
         if role == self.Roles.HasCustomCoverRole:
             return self._cover(entry) is not None
+        if role == self.Roles.FolderCountRole:
+            if virtual is not None:
+                return 0
+            if "folders" not in entry:
+                entry["folders"] = len(_scan(entry["path"])[1])
+            return entry["folders"]
+        if role in (self.Roles.LeftRole, self.Roles.ProgressRole, self.Roles.FinishedRole):
+            if not self._is_series(entry):
+                return {self.Roles.LeftRole: -1, self.Roles.ProgressRole: 0.0, self.Roles.FinishedRole: False}[role]
+            if "progress" not in entry:
+                entry["progress"] = series.progress(self._db, entry["path"])
+            found = entry["progress"]
+            return {self.Roles.LeftRole: found["left"], self.Roles.ProgressRole: found["fraction"],
+                    self.Roles.FinishedRole: found["finished"]}[role]
         return None
 
     def roleNames(self):
@@ -218,7 +236,19 @@ class SubfolderModel(QAbstractListModel):
             self.Roles.VirtualIdRole: b"virtualId",
             self.Roles.SingleFileIdRole: b"singleFileId",
             self.Roles.IsShowRole: b"isShow",
+            self.Roles.FolderCountRole: b"folderCount",
+            self.Roles.LeftRole: b"left",
+            self.Roles.ProgressRole: b"progress",
+            self.Roles.FinishedRole: b"finished",
         }
+
+    @Slot()
+    def refreshProgress(self):
+        """After reading or watching: the series tiles say again how far they are (no reset)."""
+        rows = [row for row, entry in enumerate(self._dirs) if entry.pop("progress", None) is not None]
+        if rows:
+            self.dataChanged.emit(self.index(rows[0]), self.index(rows[-1]),
+                                  [self.Roles.LeftRole, self.Roles.ProgressRole, self.Roles.FinishedRole])
 
     # ---- loading ----------------------------------------------------------
 
@@ -361,6 +391,7 @@ class SubfolderModel(QAbstractListModel):
                 continue
             own = covers.folder_key(entry["path"])
             if key == own:
+                entry.pop("progress", None)
                 try:
                     self._meta[key] = self._db.get_collection_meta(key)
                 except sqlite3.Error:
@@ -372,6 +403,9 @@ class SubfolderModel(QAbstractListModel):
                     self.Roles.HasCustomCoverRole,
                     self.Roles.IsSeriesRole,
                     self.Roles.ItemCountRole,
+                    self.Roles.LeftRole,
+                    self.Roles.ProgressRole,
+                    self.Roles.FinishedRole,
                 ])
             elif key.startswith(own + os.sep):
                 idx = self.index(row)

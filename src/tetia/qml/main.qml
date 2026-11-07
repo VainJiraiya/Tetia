@@ -128,7 +128,10 @@ Kirigami.ApplicationWindow {
             if (page && page.isViewer === true && page.needsRestore === true) root.restoreViewerSource(page)
             root.refreshViewerTags()
             // back from the player: the bars and marks on the videos follow what was watched
-            if (page && page.isGridPage === true) mediaModel.refreshPlayback()
+            if (page && page.isGridPage === true) {
+                mediaModel.refreshPlayback()
+                subfolderModel.refreshProgress()       // and how far each series is
+            }
         }
     }
     Connections {

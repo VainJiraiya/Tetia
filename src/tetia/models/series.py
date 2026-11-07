@@ -153,6 +153,24 @@ def chapter_to_open(folder: str, last_read: str, which: str = RESUME) -> str:
     return last_read
 
 
+def progress(db, folder: str) -> dict:
+    """How far a series is: {total, left (not read or watched to the end), fraction (0..1), finished (all of it)}.
+    A series not started has everything left and no fraction."""
+    files = chapters(folder)
+    real = [os.path.realpath(f) for f in files]
+    try:
+        done, started = db.done_and_started(real)
+    except sqlite3.Error as e:
+        logger.error("Failed to read how far %s is: %s", folder, e)
+        done, started = set(), set()
+    total = len(files)
+    finished = sum(1 for f in real if f in done)
+    partway = sum(1 for f in real if f in started and f not in done)     # a chapter opened counts as half read
+    return {"total": total, "left": total - finished,
+            "fraction": min(1.0, (finished + 0.5 * partway) / total) if total else 0.0,
+            "finished": total > 0 and finished == total}
+
+
 def set_series(db, folder: str, is_series: bool):
     """Show `folder` as one series tile (or as a folder again), and tell every
     model that shows it."""

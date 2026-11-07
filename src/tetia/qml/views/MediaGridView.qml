@@ -858,6 +858,10 @@ Flickable {
                                          ? "image://thumbnail/" + ThumbUri.fromPath(tile.d.subfolderHero) + grid.revisionSuffix : ""
                             thumbSize: tile.thumbSize
                             coverHeight: tile.pictureHeight
+                            // a series: what is left (its one badge), a bar while partway, dimmed once done
+                            badge: tile.d.subfolderIsSeries === true && tile.d.subfolderLeft > 0 ? String(tile.d.subfolderLeft) : ""
+                            progress: tile.d.subfolderProgress || 0
+                            finished: tile.d.subfolderFinished === true
                             picked: grid.selecting && (grid.selectedTiles.indexOf(String(tile.d.subfolderPath)) >= 0
                                 || (grid.tagMode && tile.d.subfolderSingleFileId >= 0 && grid.selectedIds.indexOf(tile.d.subfolderSingleFileId) >= 0))
                             onClicked: function(mouse) { grid.folderTileClicked(tile.d, mouse) }
@@ -901,12 +905,17 @@ Flickable {
     // Under a folder tile: what it holds
     function folderSubtitle(d) {
         var n = d.subfolderCount || 0
-        var virtual = d.subfolderIsVirtual === true
-        // (a folder holding only folders counts 0 files: nothing to say yet)
-        if (d.subfolderSingleFile || n === 0) return virtual ? "Virtual folder" : ""
-        if (d.subfolderIsSeries) return n + (d.subfolderIsShow ? (n === 1 ? " episode" : " episodes")
-                                                               : (n === 1 ? " chapter" : " chapters"))
-        return (virtual ? "Virtual folder \u00B7 " : "") + n + (n === 1 ? " item" : " items")
+        if (d.subfolderSingleFile) return ""
+        if (d.subfolderIsSeries) {
+            if (d.subfolderFinished === true) return d.subfolderIsShow ? "Watched" : "Read"
+            return n + (d.subfolderIsShow ? (n === 1 ? " episode" : " episodes") : (n === 1 ? " chapter" : " chapters"))
+        }
+        var parts = []
+        if (d.subfolderIsVirtual === true) parts.push("Virtual folder")
+        var folders = d.subfolderFolders || 0
+        if (folders > 0) parts.push(folders + (folders === 1 ? " folder" : " folders"))
+        if (n > 0) parts.push(n + (n === 1 ? " item" : " items"))
+        return parts.join(" \u00B7 ")
     }
 
     // A folder tile was clicked: open it, select it, or show its menu

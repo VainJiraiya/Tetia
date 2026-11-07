@@ -403,6 +403,25 @@ class Database:
             "SELECT page, offset, total, finished FROM reading_progress WHERE media_id = ?", (int(media_id),)).fetchone()
         return {"page": row["page"], "offset": row["offset"], "total": row["total"], "finished": bool(row["finished"])} if row else None
 
+    def done_and_started(self, paths) -> tuple[set, set]:
+        """Of these files (real paths): those read or watched to the end, and those opened at all (a page turned,
+        a position kept), in one pass; what a series tile needs to say how far it is."""
+        done, started = set(), set()
+        paths = list(paths)
+        for start in range(0, len(paths), 400):
+            chunk = paths[start:start + 400]
+            marks = ",".join("?" * len(chunk))
+            for row in self.conn.execute(
+                    f"SELECT m.path, MAX(COALESCE(r.finished, 0), COALESCE(p.finished, 0)) AS done, "
+                    f"(r.media_id IS NOT NULL OR COALESCE(p.position, 0) > 0) AS opened "
+                    f"FROM media m LEFT JOIN reading_progress r ON r.media_id = m.id "
+                    f"LEFT JOIN playback p ON p.media_id = m.id WHERE m.path IN ({marks})", chunk):
+                if row["done"]:
+                    done.add(row["path"])
+                if row["opened"]:
+                    started.add(row["path"])
+        return done, started
+
     def get_progress_many(self, media_ids) -> dict:
         """{media_id: progress} for the books that have one."""
         ids = [int(i) for i in media_ids]
