@@ -32,6 +32,26 @@ MAX_CHUNK = 4096          # source pixels: a taller page is cut into chunks no t
 STRIP_RATIO = 2.5         # a book whose pages are typically taller than 2.5 x their width is a webtoon strip
 SAMPLE_PAGES = 10         # how many pages are looked at to decide that
 DEFAULT_WIDTH = 1200      # how wide to draw a page when nothing says
+# The page loader draws a page at the width the screen asked for, rounded UP to one of these, so zooming or resizing
+# the window does not decode the whole page again for every pixel of difference (the cache is keyed by the width).
+# The same list is in qml/views/readerWidth.js, which rounds before asking; a test keeps the two equal.
+WIDTH_STEPS = (600, 800, 1000, 1200, 1600, 2000, 2400, 3000, 3600, 4400)
+MAX_PIXELS = 36_000_000   # no page is drawn with more pixels than this (about 144 MB), however far it is zoomed
+
+
+def step_width(width: int) -> int:
+    """The smallest of WIDTH_STEPS that is at least `width` (the biggest one for anything wider)."""
+    for step in WIDTH_STEPS:
+        if width <= step:
+            return step
+    return WIDTH_STEPS[-1]
+
+
+def within_budget(width: int, source_width: int, source_height: int) -> int:
+    """`width`, made smaller if drawing the page that wide would take more than MAX_PIXELS."""
+    if source_width <= 0 or source_height <= 0:
+        return width
+    return max(1, min(width, int((MAX_PIXELS * source_width / source_height) ** 0.5)))
 READABLE_SUFFIXES = bookcovers.COMIC_SUFFIXES + (".pdf", ".epub")
 
 LAYOUTS = ("paged", "strip")
@@ -141,6 +161,7 @@ class RasterBook(Book):
                 reader, _buffer = _open_reader(data)
                 size = reader.size()
                 source_width, source_height = size.width(), size.height()
+                width = within_budget(width, source_width, source_height)
                 if source_width > 0 and width < source_width:           # draw smaller, never larger
                     reader.setScaledSize(QSize(width, max(1, round(source_height * width / source_width))))
                 image = reader.read()
@@ -326,7 +347,7 @@ class PdfBook(Book):
                     self._document = None
                     return QImage()
             page_w, page_h = self.sizes[index]
-            width = max(1, int(width))
+            width = within_budget(max(1, int(width)), page_w, page_h)
             rendered = self._document.render(index, QSize(width, max(1, round(width * page_h / page_w))))
         if rendered.isNull():
             return QImage()

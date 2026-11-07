@@ -104,7 +104,7 @@ def test_the_image_provider_serves_pages_by_token(tmp_path, qapp):
     token = bookpages.register(path, refs)
     provider = bookpages.BookPageProvider()
     size = QSize()
-    image = provider.requestImage(f"{token}/2", QSize(), size)
+    image = provider.requestImage(f"{token}/2", size, QSize())
     assert middle(image)[1] > 120 and size.width() == image.width()          # page 3 is green
     assert provider.requestImage(f"{token}/99", QSize(), QSize()).isNull()
     assert provider.requestImage("unknown/0", QSize(), QSize()).isNull()

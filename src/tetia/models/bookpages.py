@@ -132,7 +132,8 @@ class BookPageProvider(QQuickImageProvider):
     def __init__(self):
         super().__init__(QQuickImageProvider.Image)
 
-    def requestImage(self, id_string: str, requested_size: QSize, size: QSize):
+    def requestImage(self, id_string: str, size: QSize, requested_size: QSize):
+        # Qt's order: the image's size is an OUTPUT (set below); a page here is always drawn at one fixed size
         token, _, index = id_string.partition("/")
         with _lock:
             entry = _open_books.get(token)

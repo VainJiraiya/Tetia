@@ -288,17 +288,19 @@ def test_the_provider_draws_pages_and_chunks_by_token(tmp_path, qapp):
     session = opened(path, qapp)
     provider = ReaderPageProvider()
     size = QSize()
-    page = provider.requestImage(f"{session.token}/0/0", QSize(200, 0), size)
-    assert (page.width(), page.height()) == (200, 300) and size.width() == 200
-    chunks = [provider.requestImage(f"{session.token}/1/{k}", QSize(350, 0), QSize()) for k in range(3)]
-    assert all(c.width() == 350 for c in chunks) and sum(c.height() for c in chunks) == 4500
+    # a width is asked for with sourceSize (Qt's last argument) and rounded up to a step (600 here); never enlarged
+    page = provider.requestImage(f"{session.token}/0/0", size, QSize(200, 0))
+    assert (page.width(), page.height()) == (400, 600) and size.width() == 400      # the 400 px source, as it is
+    chunks = [provider.requestImage(f"{session.token}/1/{k}", QSize(), QSize(350, 0)) for k in range(3)]
+    assert all(c.width() == 600 for c in chunks)                                    # 350 asked: the 600 step
+    assert abs(sum(c.height() for c in chunks) - round(9000 * 600 / 700)) <= 3
     unbounded = provider.requestImage(f"{session.token}/0/0", QSize(), QSize())
     assert unbounded.width() == 400                                         # no width asked: not enlarged
     for bad in (f"{session.token}/9/0", f"{session.token}/0/5", "nope/0/0", f"{session.token}/x/0", f"{session.token}/0", ""):
-        assert provider.requestImage(bad, QSize(100, 0), QSize()).isNull(), bad
+        assert provider.requestImage(bad, QSize(), QSize(100, 0)).isNull(), bad
     token = session.token
     session.close()
-    assert provider.requestImage(f"{token}/0/0", QSize(100, 0), QSize()).isNull()    # closed: nothing is served
+    assert provider.requestImage(f"{token}/0/0", QSize(), QSize(100, 0)).isNull()    # closed: nothing is served
 
 
 def test_a_pdf_opens_and_is_served_at_the_width_asked(tmp_path, qapp):
@@ -313,5 +315,5 @@ def test_a_pdf_opens_and_is_served_at_the_width_asked(tmp_path, qapp):
     painter.end()
     session = opened(path, qapp)
     assert session.ready and session.kind == "pdf" and session.pageCount == 2
-    page = ReaderPageProvider().requestImage(f"{session.token}/1/0", QSize(300, 0), QSize())
-    assert page.width() == 300 and 420 <= page.height() <= 430
+    page = ReaderPageProvider().requestImage(f"{session.token}/1/0", QSize(), QSize(300, 0))
+    assert page.width() == 600 and 845 <= page.height() <= 852                      # 300 asked: the 600 step, A4 shaped

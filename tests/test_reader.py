@@ -347,3 +347,26 @@ def test_progress_and_bookmarks_go_with_a_trashed_file(tmp_path):
     db.delete_media([mid])
     db.conn.commit()
     assert db.get_progress(mid) is None and db.get_bookmarks(mid) == []
+
+
+# ---- the widths a page is drawn at -------------------------------------------------------------------------------
+
+def test_a_width_rounds_up_to_a_step_and_stops_at_the_last():
+    assert [reader.step_width(w) for w in (1, 533, 600, 601, 1200, 1201, 3000, 4400, 4401, 99999)] == [
+        600, 600, 600, 800, 1200, 1600, 3000, 4400, 4400, 4400]
+
+
+def test_a_huge_page_is_never_drawn_with_more_than_the_pixel_budget():
+    budget = reader.MAX_PIXELS
+    assert reader.within_budget(4400, 1800, 2700) == 4400                       # an ordinary page: untouched
+    width = reader.within_budget(4400, 4000, 16000)                             # a very big, very tall scan
+    assert width < 4400 and width * (16000 * width / 4000) <= budget * 1.001
+    assert reader.within_budget(500, 0, 0) == 500                               # unknown size: left alone
+
+
+def test_the_qml_steps_are_the_same_as_the_ones_here():
+    import re
+    from pathlib import Path
+    js = (Path(reader.__file__).parent.parent / "qml" / "views" / "readerWidth.js").read_text()
+    steps = re.search(r"var steps = \[([^\]]*)\]", js).group(1)
+    assert tuple(int(n) for n in steps.split(",")) == reader.WIDTH_STEPS

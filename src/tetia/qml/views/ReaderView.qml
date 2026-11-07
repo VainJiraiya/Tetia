@@ -6,6 +6,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami 2.20 as Kirigami
 import Tetia 1.0
+import "readerWidth.js" as ReaderWidth
 
 // The page reader for comics, PDFs and picture EPUBs. Two layouts share one position (page + how far down it):
 // "paged" shows a page at a time, "strip" stacks every page in one long column. All the facts (pages, sizes,
@@ -307,7 +308,7 @@ Kirigami.Page {
                                 asynchronous: true
                                 cache: false
                                 source: "image://readerpage/" + book.token + "/" + page.current + "/" + modelData.chunk
-                                sourceSize.width: Math.round(flick.shownW)
+                                sourceSize.width: ReaderWidth.forPixels(Math.round(flick.shownW * Screen.devicePixelRatio))
                             }
                         }
                     }
@@ -325,7 +326,7 @@ Kirigami.Page {
                     enabled: false
                     readonly property var size: modelData >= 0 && modelData <= page.lastPage ? book.pageSize(modelData) : [0, 0]
                     source: size[0] > 0 ? "image://readerpage/" + book.token + "/" + modelData + "/0" : ""
-                    sourceSize.width: size[0] > 0 ? Math.round(size[0] * Math.min(stage.height / size[1], stage.width / size[0])) : 0
+                    sourceSize.width: size[0] > 0 ? ReaderWidth.forPixels(Math.round(size[0] * Math.min(stage.height / size[1], stage.width / size[0]) * Screen.devicePixelRatio)) : 0
                 }
             }
 
@@ -512,7 +513,7 @@ Kirigami.Page {
                                 asynchronous: true
                                 cache: false
                                 source: row.near ? "image://readerpage/" + book.token + "/" + row.modelData.page + "/" + row.modelData.chunk : ""
-                                sourceSize.width: Math.round(list.stripW)
+                                sourceSize.width: ReaderWidth.forPixels(Math.round(list.stripW * Screen.devicePixelRatio))
                             }
                         }
                     }

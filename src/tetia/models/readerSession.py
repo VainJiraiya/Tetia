@@ -49,14 +49,18 @@ class ReaderPageProvider(QQuickImageProvider):
     def __init__(self):
         super().__init__(QQuickImageProvider.Image)
 
-    def requestImage(self, id_string: str, requested_size: QSize, size: QSize):
+    def requestImage(self, id_string: str, size: QSize, requested_size: QSize):
+        # Qt's order: the page's size is an OUTPUT (set below) and the size QML asked for (sourceSize) comes last.
+        # It was declared the other way round, so the width asked for was never seen and every page was drawn 1200
+        # wide: soft when zoomed in or on a sharp screen.
         parts = id_string.split("/")
         image = QImage()
         if len(parts) == 3 and parts[1].lstrip("-").isdigit() and parts[2].lstrip("-").isdigit():
             with _books_lock:
                 book = _books.get(parts[0])
             if book is not None:
-                width = requested_size.width() if requested_size.isValid() and requested_size.width() > 0 else reader.DEFAULT_WIDTH
+                asked = requested_size.width() if requested_size.isValid() and requested_size.width() > 0 else 0
+                width = reader.step_width(asked) if asked else reader.DEFAULT_WIDTH
                 try:
                     image = book.render(int(parts[1]), width, int(parts[2]))
                 except Exception as e:      # noqa: BLE001 - a bad page must not take the reader down
