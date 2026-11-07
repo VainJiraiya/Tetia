@@ -30,6 +30,7 @@ class TileRows(QAbstractListModel):
     WidthsRole = Qt.UserRole + 6
     XsRole = Qt.UserRole + 7
     TilesRole = Qt.UserRole + 8
+    TitleRole = Qt.UserRole + 9
 
     sourceChanged = Signal()
     geometryChanged = Signal()
@@ -48,6 +49,7 @@ class TileRows(QAbstractListModel):
         self._rows: list = []
         self._shapes: list = []
         self._content_height = 0.0
+        self._count = 0
         self._first = self._last = 0     # the window: rows[first:last]
         self._revision = 0
 
@@ -114,7 +116,7 @@ class TileRows(QAbstractListModel):
 
     @Property(int, notify=layoutUpdated)
     def itemCount(self):
-        return len(self._shapes)
+        return self._count
 
     @Property(int, notify=revisionChanged)
     def revision(self):
@@ -142,7 +144,7 @@ class TileRows(QAbstractListModel):
     def roleNames(self):
         return {self.KindRole: b"rowKind", self.StartRole: b"rowStart", self.YRole: b"rowY",
                 self.HeightRole: b"rowHeight", self.LabelRole: b"rowLabel", self.WidthsRole: b"tileWidths",
-                self.XsRole: b"tileXs", self.TilesRole: b"tileCount"}
+                self.XsRole: b"tileXs", self.TilesRole: b"tileCount", self.TitleRole: b"rowTitle"}
 
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid() or not 0 <= index.row() < self._last - self._first:
@@ -150,13 +152,17 @@ class TileRows(QAbstractListModel):
         row = self._rows[self._first + index.row()]
         return {self.KindRole: row.kind, self.StartRole: row.start, self.YRole: row.y, self.HeightRole: row.height,
                 self.LabelRole: row.label, self.WidthsRole: row.widths, self.XsRole: row.xs,
-                self.TilesRole: row.count}.get(role)
+                self.TilesRole: row.count, self.TitleRole: row.title}.get(role)
 
     # ---- work ----------------------------------------------------------------------------------
 
     def _read_shapes(self):
+        """The tiles' shapes, and the group titles (the second part of what is compared and laid out)."""
         source = self._source
-        return source.shapes() if source is not None and hasattr(source, "shapes") else []
+        if source is None or not hasattr(source, "shapes"):
+            return []
+        titles = source.sections() if hasattr(source, "sections") else {}
+        return source.shapes() + ([("titles", tuple(sorted(titles.items())))] if titles else [])
 
     def _on_data_changed(self, *args):
         shapes = self._read_shapes()
@@ -170,8 +176,13 @@ class TileRows(QAbstractListModel):
         if not isinstance(shapes, list):
             shapes = self._read_shapes()
         self._shapes = shapes
+        titles = {}
+        if shapes and shapes[-1][0] == "titles":
+            titles = dict(shapes[-1][1])
+            shapes = shapes[:-1]
+        self._count = len(shapes)
         rows, height = tileLayout.build(shapes, self._width, self._picture_height, self._cover_width,
-                                        self._cover_label)
+                                        self._cover_label, titles)
         self.beginResetModel()
         self._rows, self._content_height = rows, height
         self._first, self._last = self._window()

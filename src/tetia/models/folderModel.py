@@ -151,6 +151,19 @@ class FolderModel(QAbstractListModel):
         "previous"."""
         return series.open_series(self.db, folder_path, which)
 
+    @Slot(result="QVariantMap")
+    def sourceGroups(self):
+        """The tab's library folders for its top level: {"all": [{path, name}], "expand": [...], "tiles": [...]}.
+        A folder that is a collection in itself (a series, or in the Manga, Books and Videos tabs a folder holding
+        one file) is shown as its own tile ("tiles"); any other has its folders and files shown ("expand")."""
+        everything, expand, tiles = [], [], []
+        for folder in sorted(self._folders, key=lambda f: covers.natural_key(f["path"].rstrip("/").split("/")[-1])):
+            path = folder["path"]
+            everything.append({"path": path, "name": path.rstrip("/").split("/")[-1] or path})
+            alone = bool(self._meta_for(folder).get("is_series")) or bool(self._single_file(folder))
+            (tiles if alone else expand).append(path)
+        return {"all": everything, "expand": expand, "tiles": tiles}
+
     @Slot(str)
     def removeFolder(self, path: str):
         self.db.remove_folder(path)

@@ -52,12 +52,11 @@ Kirigami.ApplicationWindow {
     readonly property string tileTarget: {
         var page = pageStack.currentItem
         if (page && (page.isViewer === true || page.isReader === true)) return ""
-        if (pageStack.depth <= 1) return root.onFavoritesTab ? "" : "top"
+        if (pageStack.depth <= 1) return root.onFavoritesTab ? "" : folderModel.currentCategory + ".grid"
         if (page && page.filterCategory !== undefined)
             return (page.filterCategory || folderModel.currentCategory) + ".grid"
         return ""
     }
-    readonly property int topTileLevel: levelFor("top")
     function stepTileLevel(delta) {
         if (tileTarget !== "") setTileLevel(tileTarget, levelFor(tileTarget) + delta)
     }
@@ -112,6 +111,10 @@ Kirigami.ApplicationWindow {
     // The folder whose contents mediaModel currently holds; reloaded after a
     // delete so removed items disappear from the grid and the viewer.
     property var currentFolder: null
+    // A tab's top level (the first page): the library folders of the tab, [{path, name}], and whether the shared
+    // models hold that page now (they hold one page's contents at a time)
+    property var sourceList: []
+    property bool rootShown: false
     // The virtual folder mediaModel holds instead (-1: none); see loadVirtual
     property int currentVirtual: -1
 
@@ -283,47 +286,38 @@ Kirigami.ApplicationWindow {
                         onClosed: leftButton.lastClosedTime = Date.now()
 
                         MenuItem {
-                            text: "Add Folder"
+                            text: "Library Folders\u2026"
                             icon.name: "folder-add"
                             enabled: !root.onFavoritesTab
-                            onTriggered: {
-                                root.isRemoveMode = false
-                                filePicker.openFolderDialog()
-                            }
-                        }
-                        MenuItem {
-                            text: root.isRemoveMode ? "Cancel Removal" : "Remove Folder"
-                            icon.name: "edit-delete"
-                            enabled: !root.onFavoritesTab
-                            onTriggered: root.isRemoveMode = !root.isRemoveMode
+                            onTriggered: libraryDialog.open()
                         }
                         Menu {
                             title: "Tile Size"
-                            enabled: !root.onFavoritesTab
+                            enabled: root.tileTarget !== ""
                             MenuItem {
                                 text: "Extra small"
-                                icon.name: root.topTileLevel === -2 ? "checkmark" : ""
-                                onTriggered: root.setTileLevel("top", -2)
+                                icon.name: root.levelFor(root.tileTarget) === -2 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel(root.tileTarget, -2)
                             }
                             MenuItem {
                                 text: "Small"
-                                icon.name: root.topTileLevel === -1 ? "checkmark" : ""
-                                onTriggered: root.setTileLevel("top", -1)
+                                icon.name: root.levelFor(root.tileTarget) === -1 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel(root.tileTarget, -1)
                             }
                             MenuItem {
                                 text: "Normal"
-                                icon.name: root.topTileLevel === 0 ? "checkmark" : ""
-                                onTriggered: root.setTileLevel("top", 0)
+                                icon.name: root.levelFor(root.tileTarget) === 0 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel(root.tileTarget, 0)
                             }
                             MenuItem {
                                 text: "Large"
-                                icon.name: root.topTileLevel === 1 ? "checkmark" : ""
-                                onTriggered: root.setTileLevel("top", 1)
+                                icon.name: root.levelFor(root.tileTarget) === 1 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel(root.tileTarget, 1)
                             }
                             MenuItem {
                                 text: "Extra large"
-                                icon.name: root.topTileLevel === 2 ? "checkmark" : ""
-                                onTriggered: root.setTileLevel("top", 2)
+                                icon.name: root.levelFor(root.tileTarget) === 2 ? "checkmark" : ""
+                                onTriggered: root.setTileLevel(root.tileTarget, 2)
                             }
                         }
                         MenuSeparator {}
@@ -458,6 +452,7 @@ Kirigami.ApplicationWindow {
                     icon.name: "tag"
                     display: AbstractButton.IconOnly
                     visible: pageStack.currentItem !== null && pageStack.currentItem.isGridPage === true
+                             && !(root.onFavoritesTab && pageStack.depth === 1)
                     checkable: true
                     checked: pageStack.currentItem !== null && pageStack.currentItem.browseOpen === true
                     ToolTip.visible: hovered
@@ -482,6 +477,7 @@ Kirigami.ApplicationWindow {
                     visible: pageStack.currentItem !== null
                              && pageStack.currentItem.filterCategory !== undefined
                              && (pageStack.currentItem.isSearch === false || pageStack.currentItem.isTagPage === true)
+                             && !(root.onFavoritesTab && pageStack.depth === 1)
                     onClicked: sortMenu.popup(sortButton, 0, sortButton.height)
 
                     Menu {
@@ -633,7 +629,7 @@ Kirigami.ApplicationWindow {
     Connections {
         target: mediaModel
         function onFolderPathChanged() {
-            subfolderModel.load(mediaModel.folderPath)
+            if (mediaModel.sources.length === 0) subfolderModel.load(mediaModel.folderPath)
         }
     }
 
@@ -698,6 +694,8 @@ Kirigami.ApplicationWindow {
 
     Component.onCompleted: {
         loadTileLevels()
+        pageStack.push(mediaGridComponent, { isRoot: true, filterCategory: folderModel.currentCategory })
+        root.loadRoot()
         searchModel.indexLibrary()
     }
 
@@ -815,12 +813,24 @@ Kirigami.ApplicationWindow {
 
     VirtualPickerDialog { id: virtualPicker; objectName: "virtualPicker" }
 
+    LibraryDialog {
+        id: libraryDialog
+        folders: folderModel
+        tabName: root.tabTitle(folderModel.currentCategory)
+        onAddRequested: filePicker.openFolderDialog()
+        onRemoveRequested: function(path) {
+            folderModel.removeFolder(path)
+            if (pageStack.depth === 1) root.loadRoot()
+        }
+    }
+
     FilePicker {
         id: filePicker
         onFolderSelected: function(selectedFolder) {
             // Favorites is a virtual tab, not a folder category
             if (root.onFavoritesTab) return
             folderModel.addFolder(selectedFolder, folderModel.currentCategory)
+            if (pageStack.depth === 1) root.loadRoot()
             searchModel.indexLibrary()
         }
         onFolderRejected: function(problem) { showPassiveNotification(problem, 12000) }
@@ -840,7 +850,7 @@ Kirigami.ApplicationWindow {
                 // Not image-x-generic(-symbolic): in Breeze that falls back to a coloured
                 // (green) file-type icon, unlike the single-colour icons of the other tabs
                 icon.name: "viewimage"
-                text: "Photos"
+                text: "Images"
                 checked: folderModel.currentCategory === "photos"
                 onTriggered: switchTab("photos")
             },
@@ -1048,6 +1058,8 @@ Kirigami.ApplicationWindow {
             subfolderModel.loadVirtual(root.currentVirtual)
         } else if (root.searchState) {
             root.refreshSearch()
+        } else if (root.rootShown) {
+            root.loadRoot()
         }
         if (root.onFavoritesTab) {
             favoritesView.refresh()
@@ -1136,6 +1148,7 @@ Kirigami.ApplicationWindow {
 
     // Makes mediaModel and subfolderModel hold this virtual folder
     function loadVirtual(virtualId, category) {
+        root.rootShown = false
         root.currentFolder = null
         root.currentVirtual = virtualId
         gridCategory(category)
@@ -1169,9 +1182,48 @@ Kirigami.ApplicationWindow {
             loadVirtual(page.virtualId, page.filterCategory)
         } else if (page.isSearch) {
             refreshSearch()
+        } else if (page.isRoot) {
+            loadRoot()
         } else if (page.folderPath) {
             loadFolder(page.folderPath, page.filterCategory)
         }
+    }
+
+    function tabTitle(category) {
+        return ({ photos: "Images", videos: "Videos", manga: "Manga", books: "EBooks", favorites: "Favorites" })[category] || ""
+    }
+
+    // A tab's top level: what is in all its library folders together (their folders and series, then each
+    // one's loose files under its name), or one of them alone (a chip, or a tab with a single folder)
+    function loadRoot() {
+        var page = pageStack.get(0)
+        var category = folderModel.currentCategory
+        var groups = folderModel.sourceGroups()
+        root.sourceList = groups.all
+        root.currentVirtual = -1
+        if (page) {
+            page.title = tabTitle(category)
+            page.filterCategory = category === "favorites" ? "" : category
+        }
+        gridCategory(category)
+        var active = page ? page.activeSource : ""
+        if (active !== "" && !groups.all.some(function(s) { return s.path === active })) {
+            active = ""                                  // that folder left the library
+            if (page) page.activeSource = ""
+        }
+        if (active === "" && groups.expand.length === 1 && groups.tiles.length === 0) active = groups.expand[0]
+        if (category !== "favorites" && active !== "") {
+            root.currentFolder = active
+            if (page) page.folderPath = active
+            mediaModel.openFolder(active)
+        } else {
+            root.currentFolder = null
+            if (page) page.folderPath = null
+            var expand = category === "favorites" ? [] : groups.expand
+            mediaModel.openSources(expand)
+            subfolderModel.loadSources(expand, category === "favorites" ? [] : groups.tiles)
+        }
+        root.rootShown = true
     }
 
     function switchTab(category) {
@@ -1188,6 +1240,9 @@ Kirigami.ApplicationWindow {
                 poppedPage.destroy()
             }
         }
+        var top = pageStack.get(0)
+        if (top) top.activeSource = ""
+        root.loadRoot()
     }
 
     // ---- Search ----------------------------------------------------------
@@ -1229,6 +1284,7 @@ Kirigami.ApplicationWindow {
 
     // Hits as {ids, series}: the series a search found are tiles, not their chapters (see SearchModel.searchHits)
     function showHits(hits, sorted) {
+        root.rootShown = false
         if (sorted) mediaModel.load_media_ids_sorted(hits.ids)
         else mediaModel.load_media_ids(hits.ids)
         subfolderModel.loadSeries(hits.series)    // after the media: loading them closes the folder, which clears the tiles
@@ -1452,6 +1508,7 @@ Kirigami.ApplicationWindow {
 
     // Makes mediaModel hold this folder, filtered for the category.
     function loadFolder(folderPath, category) {
+        root.rootShown = false
         root.currentFolder = folderPath
         root.currentVirtual = -1
         mediaModel.openFolder(folderPath)       // shown at once from the library, scanned in the background
@@ -1469,41 +1526,6 @@ Kirigami.ApplicationWindow {
             filterCategory: category,
             crumbs: (parentCrumbs || []).concat([folderTitle(folderPath)])
         })
-    }
-
-    pageStack.initialPage: Kirigami.ScrollablePage {
-        title: root.onFavoritesTab ? "Favorites" : "Collections"
-        padding: 0      // the tiles inset themselves, so this lines up with the folder grids
-
-        FolderGridView {
-            anchors.fill: parent
-            model: folderModel
-            visible: !root.onFavoritesTab
-
-            removeMode: root.isRemoveMode
-            onRemoveModeExitRequested: root.isRemoveMode = false
-            tileLevel: root.topTileLevel
-            coverRevision: root.coverRevision
-            onCoverPickerRequested: function(filePath) { root.pickCoverOfFile(filePath) }
-
-            onAddFolderRequested: filePicker.openFolderDialog()
-
-            onFolderClicked: function(folderPath) {
-                openMediaGrid(folderPath, folderModel.currentCategory)
-            }
-
-            onSingleFileRequested: function(folderPath) {
-                var file = folderModel.openSingleFile(folderPath)
-                if (file !== "") root.openFile(file)
-                else openMediaGrid(folderPath, folderModel.currentCategory)   // it has gained files since: just browse it
-            }
-
-            onSeriesRequested: function(folderPath, which) {
-                var chapter = folderModel.openSeries(folderPath, which)
-                if (chapter !== "") root.openFile(chapter)
-                else openMediaGrid(folderPath, folderModel.currentCategory)   // no chapter files: just browse it
-            }
-        }
     }
 
     // The Favorites tab: every favorite, grouped by type. It sits over the page
@@ -1549,6 +1571,9 @@ Kirigami.ApplicationWindow {
             // Set by openMediaGrid: which folder this page shows, the category
             // it was filtered for, and the breadcrumb names down to it.
             readonly property bool isGridPage: true
+            // the tab's top level (the first page): its library folders; activeSource is the one chip picked ("": all)
+            property bool isRoot: false
+            property string activeSource: ""
             property var folderPath: null
             property string filterCategory: ""
             property var crumbs: []
@@ -1590,6 +1615,10 @@ Kirigami.ApplicationWindow {
                 target: pageStack
                 function onCurrentItemChanged() {
                     if (pageStack.currentItem !== gridPage) return
+                    if (gridPage.isRoot) {
+                        if (!root.rootShown) root.loadRoot()
+                        return
+                    }
                     if (gridPage.isSearch) {
                         root.searchState = gridPage.savedSearch
                         return
@@ -1612,6 +1641,31 @@ Kirigami.ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: 0
+
+                // A tab's top level: one chip per library folder, to see that one alone
+                Flow {
+                    objectName: "sourceChips"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 24
+                    Layout.rightMargin: 24
+                    Layout.topMargin: 14
+                    spacing: 8
+                    visible: gridPage.isRoot && root.sourceList.length > 1 && !root.onFavoritesTab
+                    Repeater {
+                        model: parent.visible ? [{ path: "", name: "All" }].concat(root.sourceList) : []
+                        delegate: Kirigami.Chip {
+                            required property var modelData
+                            text: modelData.name
+                            closable: false
+                            checkable: true
+                            checked: gridPage.activeSource === modelData.path
+                            onClicked: {
+                                gridPage.activeSource = modelData.path
+                                root.loadRoot()
+                            }
+                        }
+                    }
+                }
 
                 MediaGridView {
                     id: gridView

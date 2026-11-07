@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 COVER = "cover"
 PICTURE = "picture"
+HEADER = "header"             # a title over a group of tiles (no tiles in it)
 
 COVER_ASPECT = 2 / 3          # width / height of a cover
 MIN_ASPECT = 3 / 4            # a picture is never drawn narrower than this (a tall strip is cropped to it)...
@@ -27,6 +28,7 @@ PICTURE_GAP = 6               # between pictures, across and down
 COVER_GAP = 20                # between covers, across
 COVER_ROW_GAP = 22            # between rows of covers (their names sit in it)
 GROUP_GAP = 28                # between the covers and the pictures
+HEADER_HEIGHT = 30            # a group's title, and the space under it
 
 
 @dataclass
@@ -38,6 +40,7 @@ class Row:
     label: float
     widths: list = field(default_factory=list)
     xs: list = field(default_factory=list)
+    title: str = ""
 
     @property
     def count(self):
@@ -94,19 +97,24 @@ def _picture_rows(aspects, start, y, width, target):
     return rows, y - PICTURE_GAP
 
 
-def build(shapes, width, picture_height, cover_width, cover_label):
-    """`shapes`: (kind, aspect) per tile. Returns (rows, content height)."""
+def build(shapes, width, picture_height, cover_width, cover_label, titles=None):
+    """`shapes`: (kind, aspect) per tile. `titles`: {index: title} for groups that start at that tile under a
+    title of their own. Returns (rows, content height)."""
     rows, y = [], 0.0
     if width <= 0:
         return rows, 0.0
+    titles = titles or {}
     i = 0
     while i < len(shapes):
         kind = shapes[i][0]
-        j = i
-        while j < len(shapes) and shapes[j][0] == kind:
+        j = i + 1
+        while j < len(shapes) and shapes[j][0] == kind and j not in titles:
             j += 1
         if rows:
             y += GROUP_GAP
+        if i in titles:
+            rows.append(Row(HEADER, i, y, HEADER_HEIGHT, 0.0, [], [], titles[i]))
+            y += HEADER_HEIGHT
         if kind == COVER:
             run, y = _cover_rows(j - i, i, y, width, cover_width, cover_label)
         else:

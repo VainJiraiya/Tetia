@@ -182,6 +182,16 @@ class GridModel(QAbstractListModel):
             found.append((tileLayout.PICTURE, aspect))
         return found
 
+    def sections(self):
+        """{row: title} where a group of files starts under its own title: on a tab's top level, each library
+        folder's loose files ("Loose in Anime art · 1,204"). Nothing when only one folder's files are shown."""
+        if self._media is None or not hasattr(self._media, "sourceGroups") or len(self._media.sources) < 2:
+            return {}
+        titles = {}
+        for row, name, count in self._media.sourceGroups():
+            titles[self._folder_count + row] = "Loose in %s \u00B7 %s" % (name, f"{count:,}")
+        return titles
+
     @Slot(int, result="QVariantMap")
     def get(self, row: int):
         """Every role of one row by name, in one call (a tile reads its data with this)."""

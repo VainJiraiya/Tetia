@@ -114,6 +114,8 @@ class SubfolderModel(QAbstractListModel):
         self._db = get_database()
         self._parent_dir = ""
         self._series_paths: list[str] = []   # search results: these series as tiles, no folder open
+        self._source_dirs: list[str] = []    # a tab's top level: the folders whose subfolders are shown together
+        self._source_tiles: list[str] = []   # ...and library folders shown as a tile of their own (a series)
         self._virtual_id = -1           # >= 0: the tiles of that virtual folder, not of a real one
         self._filter_mode = MediaModel.FilterMode.All
         self._dirs: list[dict] = []   # {"path", "name", "count"}
@@ -169,8 +171,9 @@ class SubfolderModel(QAbstractListModel):
             key = covers.folder_key(path)
             return self._meta.get(key) or self._db.get_collection_meta(key)
 
+        parent = entry.get("parent", self._parent_dir)
         return covers.tile_picture(entry["path"], self._extensions() & _PICTURE_EXTENSIONS, meta_for,
-                                   {os.path.realpath(self._parent_dir)} if self._parent_dir else set())
+                                   {os.path.realpath(parent)} if parent else set())
 
     def data(self, index, role):
         if not index.isValid() or not (0 <= index.row() < len(self._dirs)):
@@ -262,6 +265,18 @@ class SubfolderModel(QAbstractListModel):
         self._parent_dir = covers.folder_key(folder)
         self._virtual_id = -1
         self._series_paths = []
+        self._source_dirs, self._source_tiles = [], []
+        self._reload()
+
+    @Slot(list, list)
+    def loadSources(self, folders: list, tiles: list):
+        """A tab's top level: the subfolders (and virtual folders) of every library folder in `folders`, together,
+        and the library folders in `tiles` (series, one-file folders) as tiles of their own."""
+        self._parent_dir = ""
+        self._virtual_id = -1
+        self._series_paths = []
+        self._source_dirs = [covers.folder_key(str(f)) for f in folders or []]
+        self._source_tiles = [covers.folder_key(str(f)) for f in tiles or []]
         self._reload()
 
     @Slot(int)
@@ -270,6 +285,7 @@ class SubfolderModel(QAbstractListModel):
         self._parent_dir = ""
         self._virtual_id = int(vfolder_id)
         self._series_paths = []
+        self._source_dirs, self._source_tiles = [], []
         self._reload()
 
     @Slot(list)
@@ -279,6 +295,7 @@ class SubfolderModel(QAbstractListModel):
         self._parent_dir = ""
         self._virtual_id = -1
         self._series_paths = [covers.folder_key(str(f)) for f in folders or []]
+        self._source_dirs, self._source_tiles = [], []
         self._reload()
 
     # ---- the tiles of a virtual folder ----------------------------------------------------------------
@@ -313,9 +330,11 @@ class SubfolderModel(QAbstractListModel):
         return {"virtual": vid, "path": "virtual:%d" % vid, "name": row["name"], "count": len(matching),
                 "hero": hero, "cover": cover}
 
-    def _folder_entry(self, path: str, extensions, placed) -> dict | None:
-        """The tile of a real subfolder (None if nothing matching is left in it)."""
-        if not _has_match(path, extensions, {os.path.realpath(self._parent_dir or path)}, placed=placed):
+    def _folder_entry(self, path: str, extensions, placed, parent=None) -> dict | None:
+        """The tile of a real subfolder (None if nothing matching is left in it). `parent` (the folder it is in)
+        seeds the loop guard, so a link back up to it adds nothing; None: the open folder."""
+        parent = self._parent_dir if parent is None else parent
+        if not _has_match(path, extensions, {os.path.realpath(parent)} if parent else set(), placed=placed):
             if not virtualfolders.has_roots_under(self._db, path):
                 return None
         own_files, _ = _scan(path)
@@ -332,6 +351,8 @@ class SubfolderModel(QAbstractListModel):
                 found = self._entries_in_virtual(extensions)
             elif self._parent_dir:
                 found = self._entries_in_folder(extensions)
+            elif self._source_dirs or self._source_tiles:
+                found = self._entries_in_sources(extensions)
             elif self._series_paths:
                 found = sorted(({"path": p, "name": os.path.basename(p.rstrip(os.sep)), "count": len(series.chapters(p))}
                                 for p in self._series_paths), key=lambda e: covers.natural_key(e["name"]))
@@ -348,21 +369,38 @@ class SubfolderModel(QAbstractListModel):
         self._meta = meta
         self.endResetModel()
 
-    def _entries_in_folder(self, extensions) -> list:
-        placed_folders = virtualfolders.placed_folder_keys(self._db)
-        placed = (virtualfolders.placed_paths_under(self._db, self._parent_dir), placed_folders)
+    def _entries_in_sources(self, extensions) -> list:
         found = []
-        _, names = _scan(self._parent_dir)
+        for folder in self._source_dirs:
+            for entry in self._entries_in_folder(extensions, folder):
+                entry["parent"] = folder
+                found.append(entry)
+        placed = (set(), virtualfolders.placed_folder_keys(self._db))
+        for folder in self._source_tiles:
+            if os.path.isdir(folder):
+                entry = self._folder_entry(folder, extensions, placed, "")
+                if entry:
+                    entry["parent"] = ""
+                    found.append(entry)
+        found.sort(key=lambda e: covers.natural_key(e["name"]))
+        return found
+
+    def _entries_in_folder(self, extensions, parent=None) -> list:
+        parent = self._parent_dir if parent is None else parent
+        placed_folders = virtualfolders.placed_folder_keys(self._db)
+        placed = (virtualfolders.placed_paths_under(self._db, parent), placed_folders)
+        found = []
+        _, names = _scan(parent)
         for name in names:
-            path = os.path.join(self._parent_dir, name)
+            path = os.path.join(parent, name)
             if covers.folder_key(path) in placed_folders:
                 continue                       # it was put in a virtual folder
             # Seeded with the parent so a symlink back up to it adds nothing
             # (deeper loops still end: the walk is depth-capped).
-            entry = self._folder_entry(path, extensions, placed)
+            entry = self._folder_entry(path, extensions, placed, parent)
             if entry:
                 found.append(entry)
-        for row in virtualfolders.roots_at(self._db, self._parent_dir):
+        for row in virtualfolders.roots_at(self._db, parent):
             entry = self._virtual_entry(row, extensions)
             if entry:
                 found.append(entry)

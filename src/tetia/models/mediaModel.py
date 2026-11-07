@@ -3,11 +3,13 @@
 
 import hashlib
 import logging
+import os
 import sys
 from enum import IntEnum
 from pathlib import Path
 import sqlite3
 import threading
+import weakref
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -23,6 +25,7 @@ from PySide6.QtCore import (
     QUrl,
 )
 from PySide6.QtQml import QmlElement
+from shiboken6 import isValid
 
 from tetia.models import covers, profiles, series, virtualfolders
 from tetia.models.database import Database, get_database
@@ -37,6 +40,15 @@ QML_IMPORT_NAME = "Tetia"
 QML_IMPORT_MAJOR_VERSION = 1
 
 logger = logging.getLogger(__name__)
+
+# every media model, so a test can stop their background scans when it ends
+_instances = weakref.WeakSet()
+
+
+def stop_all_scans():
+    for model in list(_instances):
+        if isValid(model):
+            model._stop_scan()
 
 # Registers this Python class as a usable QML element
 @QmlElement
@@ -84,6 +96,7 @@ class MediaModel(QAbstractListModel):
     sortModeChanged = Signal()
     folderPathChanged = Signal()
     scanningChanged = Signal()
+    sourcesChanged = Signal()
     _scanDone = Signal(int, object)     # (scan generation, the four lists or None), from the scan thread
 
     # Initializes the class instance and sets up default internal variables
@@ -120,8 +133,10 @@ class MediaModel(QAbstractListModel):
         self._scan_stop = threading.Event()
         self._scan_thread = None
         self._scanning = False
+        self._sources: list[str] = []     # a tab's top level: the library folders whose contents are shown together
         self._scanDone.connect(self._apply_scan)
         profiles.add_release_hook(self._stop_scan, order=0)
+        _instances.add(self)
 
         # Videos' lengths and picture sizes are learned in the background; the page catches up a moment later
         self._learned_timer = QTimer(self)
@@ -271,6 +286,67 @@ class MediaModel(QAbstractListModel):
         self._show_lists(known)
         self._start_scan(folder_directory)
 
+    @Slot(list)
+    def openSources(self, locations: list):
+        """A tab's top level: the files lying directly in each of these library folders, kept together by folder
+        (each group under its folder's name), shown at once from the library and scanned in the background."""
+        folders = []
+        for location in locations or []:
+            folder = Path(QUrl(str(location)).toLocalFile() or str(location))
+            if folder.is_dir():
+                folders.append(folder)
+        self._cancel_scan()
+        self._current_folder_path = ""
+        self._virtual_id = -1
+        self._sortable_ids = True
+        self._sources = [str(f) for f in folders]
+        watched = self._file_system_watcher.directories()
+        if watched:
+            self._file_system_watcher.removePaths(watched)
+        if self._sources and not self._released:
+            self._file_system_watcher.addPaths(self._sources)
+        try:
+            known = self._merge([known_items(self._db, f) for f in folders])
+        except sqlite3.Error as e:
+            logger.error("Failed to read what is known of the library folders: %s", e)
+            known = ([], [], [], [])
+        self._show_lists(known)
+        self.sourcesChanged.emit()
+        if folders:
+            self._start_scan(folders)
+
+    @staticmethod
+    def _merge(per_folder):
+        """One set of four lists from several folders' scans; each item remembers which folder (its index)."""
+        merged = ([], [], [], [])
+        for index, lists in enumerate(per_folder):
+            for kind, items in enumerate(lists):
+                for item in items:
+                    item["source"] = index
+                merged[kind].extend(items)
+        return merged
+
+    def _leave_sources(self):
+        if self._sources:
+            self._sources = []
+            self.sourcesChanged.emit()
+
+    @Property(list, notify=sourcesChanged)
+    def sources(self):
+        """The library folders shown together (a tab's top level), as paths; empty otherwise."""
+        return list(self._sources)
+
+    def sourceGroups(self):
+        """For the page's layout: [(first row, folder name, how many)] of each folder's files, in order."""
+        groups = []
+        for row, item in enumerate(self._visible_items):
+            index = item.get("source", 0)
+            if not groups or groups[-1][3] != index:
+                name = os.path.basename(self._sources[index].rstrip(os.sep)) if index < len(self._sources) else ""
+                groups.append([row, name, 0, index])
+            groups[-1][2] += 1
+        return [(row, name, count) for row, name, count, _ in groups]
+
     def _enter_folder(self, qurl_string: str):
         """Make `qurl_string` the open folder (and watch it); the folder as a Path, or None if it isn't one."""
         if not qurl_string:
@@ -280,6 +356,7 @@ class MediaModel(QAbstractListModel):
             logger.info("Not a folder: %s", folder_directory)
             return None
         self._cancel_scan()
+        self._leave_sources()
         # Kept exactly as chosen, since QML reads it back through folderPath
         self._current_folder_path = str(folder_directory)
         self._virtual_id = -1
@@ -308,18 +385,23 @@ class MediaModel(QAbstractListModel):
             self._scanning = scanning
             self.scanningChanged.emit()
 
-    def _start_scan(self, folder_directory: Path):
+    def _start_scan(self, folder_directory):
+        """Scan a folder (or, for a tab's top level, a list of them) in the background."""
         self._cancel_scan()
         if self._released:
             return
         generation, stop = self._scan_generation, self._scan_stop
         hash_fn = self._compute_content_hash
+        folders = list(folder_directory) if isinstance(folder_directory, (list, tuple)) else None
 
         def work():
             db = None
             try:
                 db = Database()      # a connection of its own: sqlite connections are per-thread
-                lists = scan_folder(db, folder_directory, hash_fn, stop.is_set)
+                if folders is None:
+                    lists = scan_folder(db, folder_directory, hash_fn, stop.is_set)
+                else:
+                    lists = self._merge([scan_folder(db, f, hash_fn, stop.is_set) for f in folders])
             except ScanStopped:
                 return
             except Exception:
@@ -328,7 +410,7 @@ class MediaModel(QAbstractListModel):
             finally:
                 if db is not None:
                     db.close()
-            if not stop.is_set():
+            if not stop.is_set() and isValid(self):       # (the model may be gone by now)
                 self._scanDone.emit(generation, lists)
 
         self._scan_thread = threading.Thread(target=work, name="folder-scan", daemon=True)
@@ -401,7 +483,9 @@ class MediaModel(QAbstractListModel):
         if self._released:
             return
         # Scans the folder again in the background; the page keeps showing what it has meanwhile
-        if modified_directory_path == self._current_folder_path:
+        if self._sources and modified_directory_path in self._sources:
+            self._start_scan([Path(f) for f in self._sources])
+        elif modified_directory_path == self._current_folder_path:
             self._start_scan(Path(modified_directory_path))
 
     # Rebuilds the active grid display list according to the current filter mode setting
@@ -421,6 +505,10 @@ class MediaModel(QAbstractListModel):
             MediaModel.SortMode.SmallestFirst: lambda i: (i.get("size", 0), name(i)),
         }
         return sorted(items, key=keys[mode])
+
+    def _grouped(self, items: list) -> list:
+        """On a tab's top level the files stay together by library folder (a stable sort keeps their order)."""
+        return sorted(items, key=lambda item: item.get("source", 0)) if self._sources else items
 
     def _folder_is_series(self) -> bool:
         try:
@@ -469,7 +557,7 @@ class MediaModel(QAbstractListModel):
                 + self._all_books
             )
 
-        self._visible_items = self._sorted(self._visible_items)
+        self._visible_items = self._grouped(self._sorted(self._visible_items))
         self._attach_playback()
         unknown = [QUrl(item["uniform_resource_identifier"]).toLocalFile() for item in self._visible_items
                    if item.get("is_video") and not item.get("width")]
@@ -552,6 +640,7 @@ class MediaModel(QAbstractListModel):
         if existing_watched:
             self._file_system_watcher.removePaths(existing_watched)
         self._cancel_scan()
+        self._leave_sources()
         self._current_folder_path = ""
         self._virtual_id = -1
         self._sortable_ids = False
@@ -590,6 +679,7 @@ class MediaModel(QAbstractListModel):
         if existing_watched:
             self._file_system_watcher.removePaths(existing_watched)
         self._cancel_scan()
+        self._leave_sources()
         self._current_folder_path = ""
         self._virtual_id = int(vfolder_id)
         self._sortable_ids = False

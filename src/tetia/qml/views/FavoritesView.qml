@@ -29,8 +29,7 @@ Rectangle {
 
     signal imageClicked(int index)
     signal openExternally(string fileUri)
-    // A favorited folder was clicked; folderUri is a file:// URI, the same
-    // form FolderGridView's folderClicked carries.
+    // A favorited folder was clicked; folderUri is a file:// URI (what openMediaGrid takes).
     signal collectionClicked(string folderUri)
     // a favorited show (a video series) opens its own page, never as a folder
     signal showRequested(string folderUri)

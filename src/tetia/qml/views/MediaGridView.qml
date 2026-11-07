@@ -813,11 +813,25 @@ Flickable {
             required property var tileWidths
             required property var tileXs
             required property int tileCount
+            required property string rowTitle
 
             x: grid.edge
             y: grid.topPad + rowY
             width: grid.width - 2 * grid.edge
             height: rowHeight + rowLabel
+
+            // a group's title: on a tab's top level, whose loose files these are
+            Text {
+                visible: rowItem.rowKind === "header"
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 8
+                text: rowItem.rowTitle
+                color: palette.text
+                opacity: 0.75
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+            }
 
             Repeater {
                 model: rowItem.tileCount
