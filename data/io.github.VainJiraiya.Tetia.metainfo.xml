@@ -81,6 +81,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.3.2" date="2026-11-07">
+      <description>
+        <p>Folders open at once and are checked for changes in the background, so big folders on slow drives no longer freeze the window. Switching out of a vault profile waits for Tetia's own work to let go of the vault before locking it. Thumbnails and reader pages are drawn at the size the screen needs. Player and purge mode fixes.</p>
+      </description>
+    </release>
     <release version="0.3.1" date="2026-11-07">
       <description>
         <p>Fixes switching to a private profile in installs that start Tetia through a wrapper (such as the Nix package): the window closed and Tetia never reopened in the profile. It now restarts the same way it was started.</p>
