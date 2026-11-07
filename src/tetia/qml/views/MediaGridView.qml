@@ -7,9 +7,15 @@ import org.kde.kirigami 2.20 as Kirigami
 import Tetia 1.0
 import "thumbUri.js" as ThumbUri
 
-// The grid of media tiles. It is only the grid: the tag panel lives next to it
+// The media page's tiles. It is only the tiles: the tag panel lives next to it
 // in main.qml, so it never ends up inside this Flickable's scrolling content.
-GridView {
+//
+// The tiles are laid out by TileRows (tileLayout.py): folders, series, comics and books as portrait covers in
+// even rows, with their names under them; images and videos in their own shape, in rows that fill the width.
+// The content height is exact and only the rows near the window exist, so a big folder costs no more than a
+// small one. (Not a GridView: its cells are all one size. Not a ListView: it only estimates the height of rows
+// it has not made yet, and these differ.)
+Flickable {
     id: grid
 
     // Emitted when a tile is tapped, routed by the tapped item's own type
@@ -62,40 +68,28 @@ GridView {
     property int coverRevision: 0
     readonly property string revisionSuffix: coverRevision > 0 ? "?v=" + coverRevision : ""
 
-    // Tile size: -2 .. +2. Each step is two tiles more or fewer in a row, and the counts are even (with a 2560 px
-    // wide window the levels have 16, 14, 12, 10 and 8 tiles per row, the top-level grid 14, 12, 10, 8 and 6): the
-    // page centre then falls between two tiles and the eye scans tile by tile. The widths below are the smallest
-    // a cell may be (the cell then stretches a little to fill the row). thumbHint is the thumbnail size to ask
-    // for.
+    // The rows (the grid model's tiles: folder tiles first, then files)
+    property var model: null
+    readonly property int count: tileRows.itemCount
+
+    // Tile size: -2 .. +2. Pictures: the height their rows aim for. Covers: the narrowest a cover may be (a full
+    // shelf stretches its covers a little to meet both edges). The thumbnail asked for is worked out per tile
+    // from its size on screen (ThumbUri.tierFor), so a picture is never stretched.
     property int tileLevel: 0
-    readonly property real minCell: [155, 178, 205, 245, 300][tileLevel + 2]
-    // The thumbnail size to ask for is worked out from the picture as drawn, in real screen pixels, rounded up to a
-    // cache size (128, 256, 512 or 1024), so a picture is never stretched. Files are fitted in the tile; a folder's
-    // cover (a 3:4 tile that the cover fills) needs its height.
-    readonly property int thumbHint: ThumbUri.tierFor(Math.ceil((cellWidth - 2 * inset - 8) * Screen.devicePixelRatio))
-    readonly property int heroThumbHint: ThumbUri.tierFor(Math.ceil((cellWidth - 2 * inset) * 4 / 3 * Screen.devicePixelRatio))
-    // Even the smallest size is big enough for a (shortened) name
+    readonly property real pictureHeight: [130, 160, 190, 235, 290][tileLevel + 2]
+    readonly property real coverWidth: [118, 136, 158, 190, 232][tileLevel + 2]
+    // under a cover: its name (two lines for a file; a folder's name and what it holds)
+    readonly property real coverLabel: 44
     readonly property bool showLabels: true
 
-    // Exposed properties
-    // Layout: one rule shared with FolderGridView (keep them in sync). A tile sits `inset` inside its cell, and
-    // the grid keeps `edge` on the left and right, so a tile is edge + inset = 24 px from the wall and from the
-    // header, whatever the tile size or the window. The cells stretch a little to fill the width, instead of
-    // leaving a leftover gap that would grow and shrink with the tile size.
-    readonly property real edge: 12
-    readonly property real inset: 12
-    // The badges (a folder's count, the selection check, the virtual folder mark) sit in a strip along the top of
-    // every tile, files included, so the pictures of all tiles line up and a badge never touches a picture.
-    // They shrink with the tile, but not below a readable size, and are never bigger than at tile size 0.
-    readonly property int badgeFont: Math.max(9, Math.min(11, Math.round(11 * cellWidth / 180)))
-    readonly property color badgeColor: Qt.rgba(0, 0, 0, 0.5)
-    readonly property int badgeHeight: Math.round(badgeFont * 1.9)
-    // the badges' margin
-    readonly property int badgeMargin: Math.round(badgeFont * 0.55)
-    // the badge, with the same margin above it and below it (between the badge and the picture)
-    readonly property int strip: badgeHeight + 2 * badgeMargin
-    property int columns: Math.max(1, Math.floor((width - 2 * edge) / minCell))
-    property real sidePadding: edge
+    // Tiles are `edge` from the left and right walls and `topPad` from the header
+    readonly property real edge: 24
+    readonly property real topPad: 20
+    // Badges sit on the picture, in its corners, one at most per corner
+    readonly property int badgeFont: 11
+    readonly property color badgeColor: Qt.rgba(0, 0, 0, 0.6)
+    readonly property int badgeHeight: 20
+    readonly property int badgeMargin: 6
     property bool tagMode: false
     // Select mode: the same click and drag selection as tag mode, for moving things into virtual
     // folders. Folder tiles can be selected in it, and in tag mode (only a folder shown as a series takes tags).
@@ -250,6 +244,14 @@ GridView {
         return Qt.point(p.x + grid.contentX, p.y + grid.contentY)
     }
 
+    // A video's length as 0:42, 12:30 or 1:04:09
+    function lengthText(seconds) {
+        var s = Math.round(seconds)
+        var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60
+        var two = function(n) { return (n < 10 ? "0" : "") + n }
+        return h > 0 ? h + ":" + two(m) + ":" + two(r) : m + ":" + two(r)
+    }
+
     function sameIds(a, b) {
         if (a.length !== b.length) return false
         for (var i = 0; i < a.length; i++) {
@@ -264,29 +266,17 @@ GridView {
         var y0 = Math.min(dragStart.y, dragEnd.y)
         var y1 = Math.max(dragStart.y, dragEnd.y)
 
-        // Tiles sit `inset` px inside their cells (see the delegates)
-        var inset = grid.inset
-        var firstCol = Math.max(0, Math.floor((x0 - sidePadding) / cellWidth))
-        var lastCol = Math.min(columns - 1, Math.floor((x1 - sidePadding) / cellWidth))
-        var firstRow = Math.max(0, Math.floor(y0 / cellHeight))
-        var lastRow = Math.floor(y1 / cellHeight)
-
+        // the layout knows where every tile is (in its own coordinates: the content less the margins)
+        var touched = tileRows.hitTest(x0 - grid.edge, y0 - grid.topPad, x1 - grid.edge, y1 - grid.topPad)
         var ids = dragBase.slice()
         var keys = dragBaseTiles.slice()
-        for (var r = firstRow; r <= lastRow; r++) {
-            for (var c = firstCol; c <= lastCol; c++) {
-                var row = r * columns + c
-                if (row >= grid.count) break
-                var left = sidePadding + c * cellWidth + inset
-                var top = r * cellHeight + inset
-                if (left + cellWidth - 2 * inset <= x0 || left >= x1) continue
-                if (top + cellHeight - 2 * inset <= y0 || top >= y1) continue
-                var id = mediaIdAt(row)
-                if (id !== null && id !== undefined && ids.indexOf(id) < 0) ids.push(id)
-                if (grid.selecting) {
-                    var key = tileKeyAt(row)
-                    if (key !== "" && keys.indexOf(key) < 0) keys.push(key)
-                }
+        for (var t = 0; t < touched.length; t++) {
+            var row = touched[t]
+            var id = mediaIdAt(row)
+            if (id !== null && id !== undefined && ids.indexOf(id) < 0) ids.push(id)
+            if (grid.selecting) {
+                var key = tileKeyAt(row)
+                if (key !== "" && keys.indexOf(key) < 0) keys.push(key)
             }
         }
         var changed = !sameIds(ids, selectedIds) || !sameIds(keys, selectedTiles)
@@ -791,388 +781,552 @@ GridView {
         }
     }
 
-    // ---- Grid ------------------------------------------------------------
+    // ---- Layout -----------------------------------------------------------
 
-    // Cell height leaves room for both the picture and the file name
-    cellWidth: (width - 2 * edge) / columns
-    cellHeight: showLabels ? Math.round(cellWidth * 185 / 160) : cellWidth
-    topMargin: edge
-    bottomMargin: edge
+    TileRows {
+        id: tileRows
+        source: grid.model
+        width: Math.max(0, grid.width - 2 * grid.edge)
+        pictureHeight: grid.pictureHeight
+        coverWidth: grid.coverWidth
+        coverLabel: grid.coverLabel
+        onLayoutUpdated: grid.syncViewport()
+    }
+
+    function syncViewport() {
+        tileRows.setViewport(grid.contentY - grid.topPad, grid.height)
+    }
+    onContentYChanged: syncViewport()
+    onHeightChanged: syncViewport()
+    Component.onCompleted: syncViewport()
+
+    contentWidth: width
+    contentHeight: tileRows.contentHeight + 2 * topPad
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     ScrollBar.vertical: ScrollBar {}
 
-    // The delegate dictates how every individual item in the model is drawn
-    delegate: Item {
-        id: tile
-        width: grid.cellWidth
-        height: grid.cellHeight
+    // the rows near the window (TileRows adds and drops them as the page scrolls)
+    Repeater {
+        model: tileRows
 
-        readonly property bool selected: grid.selecting && grid.selectedIds.indexOf(model.mediaId) >= 0
+        delegate: Item {
+            id: rowItem
+            required property string rowKind
+            required property int rowStart
+            required property real rowY
+            required property real rowHeight
+            required property real rowLabel
+            required property var tileWidths
+            required property var tileXs
+            required property int tileCount
 
-        // Row in the media model: the grid's rows start with the folder tiles
-        readonly property int fileIndex: index - grid.model.folderCount
+            x: grid.edge
+            y: grid.topPad + rowY
+            width: grid.width - 2 * grid.edge
+            height: rowHeight + rowLabel
 
+            Repeater {
+                model: rowItem.tileCount
 
-        // A subfolder tile, drawn like a file tile; the count badge marks it as a folder
-        Component {
-            id: folderCard
+                delegate: Item {
+                    id: tile
+                    required property int index
+                    readonly property int itemIndex: rowItem.rowStart + index
+                    // Row in the media model: the grid's rows start with the folder tiles
+                    readonly property int fileIndex: itemIndex - (grid.model ? grid.model.folderCount : 0)
+                    // everything about this tile, read again whenever a tile's data changed (a favorite, a bar)
+                    readonly property var d: { tileRows.revision; return grid.model ? grid.model.get(itemIndex) : ({}) }
+                    readonly property bool selected: grid.selecting && d.mediaId !== null && d.mediaId !== undefined
+                                                     && grid.selectedIds.indexOf(d.mediaId) >= 0
+                    readonly property real pictureHeight: rowItem.rowHeight
+                    // the thumbnail to ask for: the tile's longer side in real pixels, rounded up to a cache size
+                    readonly property int thumbSize: ThumbUri.tierFor(Math.ceil(Math.max(width, pictureHeight) * Screen.devicePixelRatio))
 
-            Rectangle {
-                id: folderTile
-                // A series (a folder of chapters) or a folder holding one file is drawn exactly
-                // like a single file: no outline, no bold name, and (series) the count badge only on hover
-                readonly property bool asFile: model.subfolderIsSeries === true || !!model.subfolderSingleFile
-                readonly property bool isVirtual: model.subfolderIsVirtual === true
-                readonly property bool picked: grid.selecting && (grid.selectedTiles.indexOf(String(model.subfolderPath)) >= 0
-                    || (grid.tagMode && model.subfolderSingleFileId >= 0 && grid.selectedIds.indexOf(model.subfolderSingleFileId) >= 0))
-                radius: 6
-                color: picked ? Qt.alpha(palette.highlight, 0.18)
-                              : Qt.alpha(palette.text, folderHover.hovered ? 0.07 : 0)
-                border.width: picked ? 2 : 0
-                border.color: palette.highlight
+                    x: rowItem.tileXs[index]
+                    width: rowItem.tileWidths[index]
+                    height: rowItem.height
 
-                HoverHandler {
-                    id: folderHover
-                    cursorShape: Qt.PointingHandCursor
-                }
-
-                ToolTip.visible: folderHover.hovered && !grid.showLabels
-                ToolTip.delay: 700
-                ToolTip.text: model.subfolderName || ""
-
-                Image {
-                    id: folderHero
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: folderNameText.top
-                    anchors.margins: 4
-                    anchors.topMargin: grid.strip
-                    anchors.bottomMargin: 6
-                    source: model.subfolderHero && model.subfolderHero.length > 0
-                            ? "image://thumbnail/" + ThumbUri.fromPath(model.subfolderHero) + grid.revisionSuffix : ""
-                    sourceSize: Qt.size(grid.heroThumbHint, grid.heroThumbHint)
-                    fillMode: Image.PreserveAspectFit
-                    asynchronous: true
-                }
-
-                Kirigami.Icon {
-                    anchors.centerIn: folderHero
-                    width: Math.min(folderHero.width, folderHero.height) * 0.5
-                    height: width
-                    source: "folder"
-                    opacity: 0.5
-                    visible: folderHero.status !== Image.Ready && !folderTile.asFile
-                }
-
-                Rectangle {
-                    id: countPill
-                    anchors.top: parent.top
-                    anchors.right: parent.right
-                    anchors.margins: grid.badgeMargin
-                    width: Math.max(height, folderCountText.implicitWidth + grid.badgeFont)
-                    height: grid.badgeHeight
-                    radius: height / 2
-                    color: grid.badgeColor
-                    // A series shows its chapter count only on hover: the one tell that it is not a single file
-                    visible: model.subfolderCount > 0 && grid.showLabels && !model.subfolderSingleFile
-                             && (!folderTile.asFile || folderHover.hovered) && !folderTile.picked
-
-                    Text {
-                        id: folderCountText
-                        anchors.centerIn: parent
-                        text: model.subfolderCount
-                        color: "white"
-                        font.pixelSize: grid.badgeFont
-                        font.bold: true
+                    Loader {
+                        anchors.fill: parent
+                        sourceComponent: tile.d.isFolder === true ? folderTile
+                                         : (rowItem.rowKind === "cover" ? coverFileTile : pictureTile)
                     }
-                }
 
-                // Marks a virtual folder (it exists only in Tetia)
-                Rectangle {
-                    // only on hover: on every tile it clutters the pictures
-                    visible: folderTile.isVirtual && grid.showLabels && folderHover.hovered
-                    anchors.top: parent.top
-                    anchors.right: parent.right
-                    anchors.topMargin: grid.badgeMargin
-                    // in the badge row, to the left of the count (or the selection check), so it never lies on the picture
-                    anchors.rightMargin: grid.badgeMargin + (checkPill.visible ? checkPill.width + grid.badgeMargin
-                                                             : (countPill.visible ? countPill.width + grid.badgeMargin : 0))
-                    width: Math.max(height, virtualMark.implicitWidth + grid.badgeFont)
-                    height: grid.badgeHeight
-                    radius: height / 2
-                    color: grid.badgeColor
-                    Text {
-                        id: virtualMark
-                        anchors.centerIn: parent
-                        text: "\u25C7"
-                        color: "white"
-                        font.pixelSize: grid.badgeFont
-                        font.bold: true
-                    }
-                }
+                    // ---- A folder, a series, a virtual folder: a portrait cover, its name and what it holds ----
+                    Component {
+                        id: folderTile
 
-                // Selection check badge (top-right), like a file's
-                Rectangle {
-                    id: checkPill
-                    anchors.top: parent.top
-                    anchors.right: parent.right
-                    anchors.margins: grid.badgeMargin
-                    width: grid.badgeHeight
-                    height: grid.badgeHeight
-                    radius: height / 2
-                    color: palette.highlight
-                    visible: folderTile.picked
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2713"
-                        color: palette.highlightedText
-                        font.pixelSize: grid.badgeFont
-                        font.bold: true
-                    }
-                }
+                        Item {
+                            id: folderItem
+                            readonly property bool asFile: tile.d.subfolderIsSeries === true || !!tile.d.subfolderSingleFile
+                            readonly property bool isVirtual: tile.d.subfolderIsVirtual === true
+                            readonly property bool picked: grid.selecting && (grid.selectedTiles.indexOf(String(tile.d.subfolderPath)) >= 0
+                                || (grid.tagMode && tile.d.subfolderSingleFileId >= 0 && grid.selectedIds.indexOf(tile.d.subfolderSingleFileId) >= 0))
 
-                Text {
-                    id: folderNameText
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 4
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: 4
-                    anchors.rightMargin: 4
-                    text: model.subfolderName
-                    color: palette.text
-                    font.bold: !folderTile.asFile
-                    font.pixelSize: 12
-                    visible: grid.showLabels
-                    height: grid.showLabels ? implicitHeight : 0
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideMiddle
-                }
+                            HoverHandler {
+                                id: folderHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
 
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    onClicked: function(mouse) {
-                        if (mouse.button === Qt.RightButton && folderTile.isVirtual) {
-                            virtualMenu.virtualId = model.subfolderVirtualId
-                            virtualMenu.virtualName = model.subfolderName
-                            virtualMenu.hasCover = grid.subfolderBackend
-                                ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
-                            virtualMenu.popup()
-                        } else if (mouse.button === Qt.RightButton) {
-                            subfolderMenu.folderPath = model.subfolderPath
-                            subfolderMenu.isFavorite = model.subfolderFavorite
-                            subfolderMenu.isSeries = !!model.subfolderIsSeries
-                            subfolderMenu.isShow = !!model.subfolderIsShow
-                            subfolderMenu.isSingle = !!model.subfolderSingleFile
-                            subfolderMenu.singleFile = model.subfolderSingleFile || ""
-                            subfolderMenu.singleId = model.subfolderSingleFileId
-                            subfolderMenu.heroPath = model.subfolderHero || ""
-                            subfolderMenu.hasCustomCover = grid.subfolderBackend
-                                ? grid.subfolderBackend.hasCustomCover(model.subfolderPath) : false
-                            subfolderMenu.popup()
-                        } else if (grid.selecting) {
-                            grid.forceActiveFocus()
-                            var key = String(model.subfolderPath)
-                            if (grid.tagMode && model.subfolderIsSeries !== true) {
-                                // a one-file folder is its file: select it like a file tile
-                                if (model.subfolderSingleFileId >= 0) {
-                                    if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)
-                                            || grid.selectedIds.indexOf(model.subfolderSingleFileId) >= 0)
-                                        grid.toggleSelection(model.subfolderSingleFileId)
-                                    else
-                                        grid.setSelection([model.subfolderSingleFileId])
+                            // A real or virtual folder (not a series, not a one-file folder) has the edges of the
+                            // covers behind it showing above: you can tell a folder from a book at a glance
+                            Repeater {
+                                model: folderItem.asFile ? 0 : 2
+                                Rectangle {
+                                    required property int index
+                                    x: (index === 0 ? 16 : 8)
+                                    y: (index === 0 ? -9 : -4)
+                                    width: parent.width - 2 * x
+                                    height: 24
+                                    radius: 6
+                                    color: Qt.alpha(palette.text, index === 0 ? 0.16 : 0.24)
                                 }
-                                return
                             }
-                            if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier) || grid.selectedTiles.indexOf(key) >= 0) {
-                                grid.toggleTile(key)
-                            } else {
-                                grid.selectedIds = []
-                                grid.setTiles([key])
+
+                            Rectangle {
+                                id: folderCover
+                                width: parent.width
+                                height: tile.pictureHeight
+                                radius: 6
+                                color: Qt.tint(palette.window, Qt.alpha(palette.text, 0.08))
+
+                                Kirigami.ShadowedImage {
+                                    id: folderHero
+                                    anchors.fill: parent
+                                    radius: 6
+                                    source: tile.d.subfolderHero && tile.d.subfolderHero.length > 0
+                                            ? "image://thumbnail/" + ThumbUri.fromPath(tile.d.subfolderHero) + grid.revisionSuffix : ""
+                                    sourceSize: Qt.size(tile.thumbSize, tile.thumbSize)
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                }
+
+                                Kirigami.Icon {
+                                    anchors.centerIn: parent
+                                    width: parent.width * 0.4
+                                    height: width
+                                    source: "folder"
+                                    opacity: 0.5
+                                    visible: folderHero.status !== Image.Ready && !folderItem.asFile
+                                }
+
+                                // hover and selection: a ring in the highlight colour
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 6
+                                    color: folderItem.picked ? Qt.alpha(palette.highlight, 0.25) : "transparent"
+                                    border.width: folderItem.picked ? 3 : (folderHover.hovered ? 2 : 0)
+                                    border.color: palette.highlight
+                                }
+
+                                // Selection check badge (top-right)
+                                Rectangle {
+                                    anchors.top: parent.top
+                                    anchors.right: parent.right
+                                    anchors.margins: grid.badgeMargin
+                                    width: grid.badgeHeight
+                                    height: grid.badgeHeight
+                                    radius: height / 2
+                                    color: palette.highlight
+                                    visible: folderItem.picked
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "✓"
+                                        color: palette.highlightedText
+                                        font.pixelSize: grid.badgeFont
+                                        font.bold: true
+                                    }
+                                }
                             }
-                        } else {
-                            if (folderTile.isVirtual) grid.virtualFolderClicked(model.subfolderVirtualId, model.subfolderName)
-                            else if (model.subfolderIsShow) grid.showRequested(model.subfolderPath)
-                            else if (model.subfolderIsSeries) grid.subfolderSeriesRequested(model.subfolderPath, "resume")
-                            else if (model.subfolderSingleFile) grid.subfolderSingleFileRequested(model.subfolderPath)
-                            else grid.subfolderClicked(model.subfolderPath)
+
+                            Column {
+                                anchors.top: folderCover.bottom
+                                anchors.topMargin: 6
+                                width: parent.width
+                                spacing: 1
+
+                                Row {
+                                    width: parent.width
+                                    spacing: 4
+                                    Kirigami.Icon {
+                                        id: virtualMark
+                                        visible: folderItem.isVirtual
+                                        width: visible ? 14 : 0
+                                        height: 14
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        source: "link"
+                                        color: palette.highlight
+                                    }
+                                    Text {
+                                        width: parent.width - virtualMark.width - (virtualMark.visible ? parent.spacing : 0)
+                                        text: tile.d.subfolderName || ""
+                                        color: palette.text
+                                        font.pixelSize: 13
+                                        font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: {
+                                        var n = tile.d.subfolderCount || 0
+                                        // (a folder holding only folders counts 0 files: nothing to say yet)
+                                        if (tile.d.subfolderSingleFile || n === 0) return folderItem.isVirtual ? "Virtual folder" : ""
+                                        if (tile.d.subfolderIsSeries) return n + (tile.d.subfolderIsShow ? (n === 1 ? " episode" : " episodes")
+                                                                                                         : (n === 1 ? " chapter" : " chapters"))
+                                        return (folderItem.isVirtual ? "Virtual folder · " : "") + n + (n === 1 ? " item" : " items")
+                                    }
+                                    visible: text !== ""
+                                    color: palette.text
+                                    opacity: 0.7
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: function(mouse) {
+                                    var d = tile.d
+                                    if (mouse.button === Qt.RightButton && folderItem.isVirtual) {
+                                        virtualMenu.virtualId = d.subfolderVirtualId
+                                        virtualMenu.virtualName = d.subfolderName
+                                        virtualMenu.hasCover = grid.subfolderBackend
+                                            ? grid.subfolderBackend.hasCustomCover(d.subfolderPath) : false
+                                        virtualMenu.popup()
+                                    } else if (mouse.button === Qt.RightButton) {
+                                        subfolderMenu.folderPath = d.subfolderPath
+                                        subfolderMenu.isFavorite = d.subfolderFavorite
+                                        subfolderMenu.isSeries = !!d.subfolderIsSeries
+                                        subfolderMenu.isShow = !!d.subfolderIsShow
+                                        subfolderMenu.isSingle = !!d.subfolderSingleFile
+                                        subfolderMenu.singleFile = d.subfolderSingleFile || ""
+                                        subfolderMenu.singleId = d.subfolderSingleFileId
+                                        subfolderMenu.heroPath = d.subfolderHero || ""
+                                        subfolderMenu.hasCustomCover = grid.subfolderBackend
+                                            ? grid.subfolderBackend.hasCustomCover(d.subfolderPath) : false
+                                        subfolderMenu.popup()
+                                    } else if (grid.selecting) {
+                                        grid.forceActiveFocus()
+                                        var key = String(d.subfolderPath)
+                                        if (grid.tagMode && d.subfolderIsSeries !== true) {
+                                            // a one-file folder is its file: select it like a file tile
+                                            if (d.subfolderSingleFileId >= 0) {
+                                                if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)
+                                                        || grid.selectedIds.indexOf(d.subfolderSingleFileId) >= 0)
+                                                    grid.toggleSelection(d.subfolderSingleFileId)
+                                                else
+                                                    grid.setSelection([d.subfolderSingleFileId])
+                                            }
+                                            return
+                                        }
+                                        if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier) || grid.selectedTiles.indexOf(key) >= 0) {
+                                            grid.toggleTile(key)
+                                        } else {
+                                            grid.selectedIds = []
+                                            grid.setTiles([key])
+                                        }
+                                    } else {
+                                        if (folderItem.isVirtual) grid.virtualFolderClicked(d.subfolderVirtualId, d.subfolderName)
+                                        else if (d.subfolderIsShow) grid.showRequested(d.subfolderPath)
+                                        else if (d.subfolderIsSeries) grid.subfolderSeriesRequested(d.subfolderPath, "resume")
+                                        else if (d.subfolderSingleFile) grid.subfolderSingleFileRequested(d.subfolderPath)
+                                        else grid.subfolderClicked(d.subfolderPath)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- A comic or a book: its cover, its name under it ----
+                    Component {
+                        id: coverFileTile
+
+                        Item {
+                            id: bookTile
+                            HoverHandler {
+                                id: coverHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
+
+                            Rectangle {
+                                id: bookCover
+                                width: parent.width
+                                height: tile.pictureHeight
+                                radius: 6
+                                color: Qt.tint(palette.window, Qt.alpha(palette.text, 0.08))
+
+                                Kirigami.ShadowedImage {
+                                    anchors.fill: parent
+                                    radius: 6
+                                    source: tile.d.fileUri ? "image://thumbnail/" + tile.d.fileUri + grid.revisionSuffix : ""
+                                    sourceSize: Qt.size(tile.thumbSize, tile.thumbSize)
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                }
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 6
+                                    color: tile.selected ? Qt.alpha(palette.highlight, 0.25) : "transparent"
+                                    border.width: tile.selected ? 3 : (coverHover.hovered ? 2 : 0)
+                                    border.color: palette.highlight
+                                }
+                                Rectangle {
+                                    anchors.top: parent.top
+                                    anchors.right: parent.right
+                                    anchors.margins: grid.badgeMargin
+                                    width: grid.badgeHeight
+                                    height: grid.badgeHeight
+                                    radius: height / 2
+                                    color: palette.highlight
+                                    visible: tile.selected
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "✓"
+                                        color: palette.highlightedText
+                                        font.pixelSize: grid.badgeFont
+                                        font.bold: true
+                                    }
+                                }
+                            }
+
+                            Text {
+                                anchors.top: bookCover.bottom
+                                anchors.topMargin: 6
+                                width: parent.width
+                                text: grid.titleOf(tile.d.fileName)
+                                color: palette.text
+                                font.pixelSize: 13
+                                font.weight: Font.DemiBold
+                                wrapMode: Text.Wrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: function(mouse) { grid.fileTileClicked(tile, mouse) }
+                            }
+                        }
+                    }
+
+                    // ---- An image or a video, in its own shape; its name only on hover ----
+                    Component {
+                        id: pictureTile
+
+                        Item {
+                            id: pictureItem
+                            readonly property bool isVideo: tile.d.isVideo === true
+                            // a video thumbnail has film-strip edges (the shared cache's standard look): badges keep off them
+                            readonly property real side: isVideo ? Math.max(grid.badgeMargin, Math.round(width * 0.075)) : grid.badgeMargin
+
+                            HoverHandler {
+                                id: pictureHover
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                            ToolTip.visible: pictureHover.hovered && nameOnHover.truncated
+                            ToolTip.delay: 700
+                            ToolTip.text: tile.d.fileName || ""
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 6
+                                color: Qt.tint(palette.window, Qt.alpha(palette.text, 0.08))
+                            }
+
+                            Kirigami.ShadowedImage {
+                                id: picture
+                                anchors.fill: parent
+                                radius: 6
+                                source: tile.d.fileUri ? "image://thumbnail/" + tile.d.fileUri + grid.revisionSuffix : ""
+                                sourceSize: Qt.size(tile.thumbSize, tile.thumbSize)
+                                // the tile has the picture's own shape (only extreme ones are held in): filling it
+                                // shows the whole picture
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                            }
+
+                            // on hover: the name (and a star) over a shade at the bottom
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: Math.min(parent.height, 44)
+                                radius: 6
+                                visible: pictureHover.hovered && !grid.selecting
+                                gradient: Gradient {
+                                    GradientStop { position: 0.0; color: "transparent" }
+                                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.72) }
+                                }
+                                Text {
+                                    id: nameOnHover
+                                    anchors.left: parent.left
+                                    anchors.right: starButton.left
+                                    anchors.bottom: parent.bottom
+                                    anchors.leftMargin: 8
+                                    anchors.bottomMargin: 7
+                                    text: tile.d.fileName || ""
+                                    color: "white"
+                                    font.pixelSize: 12
+                                    elide: Text.ElideMiddle
+                                }
+                                Kirigami.Icon {
+                                    id: starButton
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    anchors.rightMargin: 6
+                                    anchors.bottomMargin: 5
+                                    width: 18
+                                    height: 18
+                                    source: tile.d.isFavorite ? "starred-symbolic" : "non-starred-symbolic"
+                                    color: "white"
+                                    TapHandler {
+                                        onTapped: if (grid.mediaBackend) grid.mediaBackend.setFavorite(tile.d.mediaId, !tile.d.isFavorite)
+                                    }
+                                    ToolTip.visible: starHover.hovered
+                                    ToolTip.delay: 500
+                                    ToolTip.text: tile.d.isFavorite ? "Remove from favorites" : "Add to favorites"
+                                    HoverHandler { id: starHover }
+                                }
+                            }
+
+                            // A video's length, bottom right (its one badge)
+                            Rectangle {
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                anchors.rightMargin: pictureItem.side
+                                anchors.bottomMargin: grid.badgeMargin + (barShade.visible ? 4 : 0)
+                                visible: pictureItem.isVideo && tile.d.duration > 0 && !(pictureHover.hovered && !grid.selecting)
+                                width: lengthText.implicitWidth + 10
+                                height: 18
+                                radius: 4
+                                color: grid.badgeColor
+                                Text {
+                                    id: lengthText
+                                    anchors.centerIn: parent
+                                    text: grid.lengthText(tile.d.duration || 0)
+                                    color: "white"
+                                    font.pixelSize: grid.badgeFont
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+
+                            // How far a long video was watched: a thin bar along the bottom
+                            Rectangle {
+                                id: barShade
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: 4
+                                visible: pictureItem.isVideo && tile.d.watchFraction > 0 && !tile.d.isWatched
+                                color: Qt.rgba(0, 0, 0, 0.5)
+                                Rectangle {
+                                    width: parent.width * (tile.d.watchFraction || 0)
+                                    height: parent.height
+                                    color: palette.highlight
+                                }
+                            }
+
+                            // A long video watched to the end (top left)
+                            Rectangle {
+                                anchors.top: parent.top
+                                anchors.left: parent.left
+                                anchors.margins: grid.badgeMargin
+                                anchors.leftMargin: pictureItem.side
+                                width: grid.badgeHeight
+                                height: grid.badgeHeight
+                                radius: height / 2
+                                color: grid.badgeColor
+                                visible: pictureItem.isVideo && tile.d.isWatched === true
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✓"
+                                    color: "white"
+                                    font.pixelSize: grid.badgeFont
+                                    font.bold: true
+                                }
+                            }
+
+                            // hover and selection
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 6
+                                color: tile.selected ? Qt.alpha(palette.highlight, 0.25) : "transparent"
+                                border.width: tile.selected ? 3 : (pictureHover.hovered ? 2 : 0)
+                                border.color: palette.highlight
+                            }
+                            Rectangle {
+                                anchors.top: parent.top
+                                anchors.right: parent.right
+                                anchors.margins: grid.badgeMargin
+                                anchors.rightMargin: pictureItem.side
+                                width: grid.badgeHeight
+                                height: grid.badgeHeight
+                                radius: height / 2
+                                color: palette.highlight
+                                visible: tile.selected
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✓"
+                                    color: palette.highlightedText
+                                    font.pixelSize: grid.badgeFont
+                                    font.bold: true
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                // the star takes its own clicks
+                                onClicked: function(mouse) { grid.fileTileClicked(tile, mouse) }
+                                z: -1
+                            }
                         }
                     }
                 }
             }
         }
+    }
 
-        // Shift the visual contents to center the whole block of columns
-        // (avoids dynamic margins breaking the scroll position).
-        Item {
-            x: grid.sidePadding
-            width: parent.width
-            height: parent.height
+    // A comic's or book's title for under its cover: the file name without its extension
+    function titleOf(fileName) {
+        var name = String(fileName || "")
+        var dot = name.lastIndexOf(".")
+        return dot > 0 ? name.substring(0, dot) : name
+    }
 
-
-            Loader {
-                anchors.fill: parent
-                anchors.margins: grid.inset
-                active: model.isFolder === true
-                sourceComponent: folderCard
+    // Routes a click on a file tile to whichever signal matches its type (or to the selection)
+    function fileTileClicked(tile, mouse) {
+        grid.forceActiveFocus()
+        var d = tile.d
+        if (mouse.button === Qt.RightButton) {
+            grid.openContextMenu(d.mediaId,
+                d.isVideo ? "video" : (d.isComic ? "comic" : (d.isBook ? "ebook" : "image")), tile.fileIndex,
+                d.isVideo && d.watchFraction > 0 && !d.isWatched)
+        } else if (grid.selecting) {
+            if ((mouse.modifiers & Qt.ShiftModifier) && grid.selectedIds.length > 0) {
+                // Range from the last selected item to this one
+                var anchorRow = grid.rowOfMediaId(grid.selectedIds[grid.selectedIds.length - 1])
+                if (anchorRow >= 0) grid.addRangeSelection(anchorRow, tile.itemIndex)
+            } else if (mouse.modifiers & Qt.ControlModifier) {
+                grid.toggleSelection(d.mediaId)
+            } else if (grid.selectedIds.indexOf(d.mediaId) >= 0) {
+                grid.toggleSelection(d.mediaId)
+            } else {
+                grid.selectedTiles = []
+                grid.setSelection([d.mediaId])
             }
-
-            Rectangle {
-                id: card
-                visible: !model.isFolder
-                anchors.fill: parent
-                anchors.margins: grid.inset
-                radius: 6
-                color: tile.selected ? Qt.alpha(palette.highlight, 0.18)
-                                     : Qt.alpha(palette.text, hover.hovered ? 0.07 : 0)
-                border.width: tile.selected ? 2 : 0
-                border.color: palette.highlight
-
-                HoverHandler {
-                    id: hover
-                    cursorShape: Qt.PointingHandCursor
-                }
-
-                ToolTip.visible: hover.hovered && (fileNameText.truncated || !grid.showLabels)
-                ToolTip.delay: 700
-                ToolTip.text: model.fileName || ""
-
-                Image {
-                    id: thumbnail
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: fileNameText.top
-                    anchors.margins: 4
-                    anchors.topMargin: grid.strip
-                    anchors.bottomMargin: 6
-
-                    source: model.isFolder ? "" : "image://thumbnail/" + model.fileUri + grid.revisionSuffix
-                    sourceSize: grid.thumbHint > 0 ? Qt.size(grid.thumbHint, grid.thumbHint) : Qt.size(0, 0)
-
-                    // Scale down so the entire picture fits without cropping
-                    fillMode: Image.PreserveAspectFit
-                    asynchronous: true
-                }
-
-                Text {
-                    id: fileNameText
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 4
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: 4
-                    anchors.rightMargin: 4
-
-                    text: model.fileName || ""
-                    color: palette.text
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideMiddle
-                    font.pixelSize: 12
-                    visible: grid.showLabels
-                    height: grid.showLabels ? implicitHeight : 0
-                }
-
-                // How far a video was watched: a bar along the bottom edge of its picture
-                Rectangle {
-                    readonly property bool partway: model.isVideo === true && model.watchFraction > 0 && !model.isWatched
-                    visible: partway && thumbnail.paintedWidth > 0
-                    x: thumbnail.x + (thumbnail.width - thumbnail.paintedWidth) / 2
-                    y: thumbnail.y + (thumbnail.height + thumbnail.paintedHeight) / 2 - height
-                    width: thumbnail.paintedWidth
-                    height: 4
-                    color: Qt.rgba(0, 0, 0, 0.55)
-                    Rectangle {
-                        width: parent.width * (model.watchFraction || 0)
-                        height: parent.height
-                        color: palette.highlight
-                    }
-                }
-
-                // A video watched to the end (top-left, in the badge strip)
-                Rectangle {
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.margins: grid.badgeMargin
-                    width: grid.badgeHeight
-                    height: grid.badgeHeight
-                    radius: height / 2
-                    color: grid.badgeColor
-                    visible: model.isVideo === true && model.isWatched === true
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2713"
-                        color: "white"
-                        font.pixelSize: grid.badgeFont
-                        font.bold: true
-                    }
-                }
-
-                // Selection check badge (top-right)
-                Rectangle {
-                    anchors.top: parent.top
-                    anchors.right: parent.right
-                    anchors.margins: grid.badgeMargin
-                    width: grid.badgeHeight
-                    height: grid.badgeHeight
-                    radius: height / 2
-                    color: palette.highlight
-                    visible: tile.selected
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2713"
-                        color: palette.highlightedText
-                        font.pixelSize: grid.badgeFont
-                        font.bold: true
-                    }
-                }
-
-                // Routes the tap to whichever signal matches this item's type.
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-
-                    onClicked: function(mouse) {
-                        grid.forceActiveFocus()
-
-                        if (mouse.button === Qt.RightButton) {
-                            grid.openContextMenu(model.mediaId,
-                                model.isVideo ? "video"
-                                : (model.isComic ? "comic"
-                                : (model.isBook ? "ebook" : "image")), tile.fileIndex,
-                                model.isVideo && model.watchFraction > 0 && !model.isWatched)
-                        } else if (grid.selecting) {
-                            if ((mouse.modifiers & Qt.ShiftModifier) && grid.selectedIds.length > 0) {
-                                // Range from the last selected item to this one
-                                var anchorRow = grid.rowOfMediaId(grid.selectedIds[grid.selectedIds.length - 1])
-                                if (anchorRow >= 0) {
-                                    grid.addRangeSelection(anchorRow, index)
-                                }
-                            } else if (mouse.modifiers & Qt.ControlModifier) {
-                                grid.toggleSelection(model.mediaId)
-                            } else if (grid.selectedIds.indexOf(model.mediaId) >= 0) {
-                                grid.toggleSelection(model.mediaId)
-                            } else {
-                                grid.selectedTiles = []
-                                grid.setSelection([model.mediaId])
-                            }
-                        } else if (model.isVideo) {
-                            grid.videoClicked(tile.fileIndex)
-                        } else if (model.isComic) {
-                            grid.comicClicked(tile.fileIndex)
-                        } else if (model.isBook) {
-                            grid.bookClicked(tile.fileIndex)
-                        } else {
-                            grid.imageClicked(tile.fileIndex)
-                        }
-                    }
-                }
-            }
+        } else if (d.isVideo) {
+            grid.videoClicked(tile.fileIndex)
+        } else if (d.isComic) {
+            grid.comicClicked(tile.fileIndex)
+        } else if (d.isBook) {
+            grid.bookClicked(tile.fileIndex)
+        } else {
+            grid.imageClicked(tile.fileIndex)
         }
     }
 }

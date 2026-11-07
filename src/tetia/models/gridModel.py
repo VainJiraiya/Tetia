@@ -11,6 +11,7 @@ numbers; `folderCount` is the offset between the two.
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, Qt, Signal, Slot, Property
 from PySide6.QtQml import QmlElement
 
+from tetia.models import tileLayout
 from tetia.models.mediaModel import MediaModel
 
 QML_IMPORT_NAME = "Tetia"
@@ -152,7 +153,36 @@ class GridModel(QAbstractListModel):
             R.WatchFractionRole: b"watchFraction",
             R.IsWatchedRole: b"isWatched",
             R.AspectRole: b"aspect",
+            R.DurationRole: b"duration",
         }
         for role, (name, _) in _SUB_ROLES.items():
             names[role] = name
         return names
+
+    # ---- for the page's layout (TileRows) and its tiles -------------------------------------------
+
+    def shapes(self):
+        """(kind, aspect) of every row, for tileLayout: folder tiles, comics and books are covers; images and
+        videos are pictures in their own shape (a shape not known yet is guessed: square, a video 16:9)."""
+        found = [(tileLayout.COVER, tileLayout.COVER_ASPECT)] * self._folder_count
+        items = self._media._visible_items if self._media is not None else []
+        for item in items:
+            if item.get("is_comic") or item.get("is_book"):
+                found.append((tileLayout.COVER, tileLayout.COVER_ASPECT))
+                continue
+            width, height = item.get("width") or 0, item.get("height") or 0
+            if width > 0 and height > 0:
+                aspect = width / height
+            else:
+                aspect = 16 / 9 if item.get("is_video") else 1.0
+            found.append((tileLayout.PICTURE, aspect))
+        return found
+
+    @Slot(int, result="QVariantMap")
+    def get(self, row: int):
+        """Every role of one row by name, in one call (a tile reads its data with this)."""
+        if not 0 <= row < self.rowCount():
+            return {}
+        index = self.index(row)
+        return {name.decode(): self.data(index, role) for role, name in self.roleNames().items()}
+

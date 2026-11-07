@@ -54,6 +54,7 @@ class MediaModel(QAbstractListModel):
         WatchFractionRole = Qt.UserRole + 9    # how much of a video was watched, 0..1 (0: not started)
         IsWatchedRole = Qt.UserRole + 10       # a video watched to the end
         AspectRole = Qt.UserRole + 11          # width / height of the picture as shown; 0 while not known
+        DurationRole = Qt.UserRole + 12        # a video's length in seconds; 0 while not known
 
     # Defines the available view filtering modes
     class FilterMode(IntEnum):
@@ -182,6 +183,9 @@ class MediaModel(QAbstractListModel):
         elif data_role == MediaModel.Roles.IsWatchedRole:
             return current_item.get("watched", False)
 
+        elif data_role == MediaModel.Roles.DurationRole:
+            return float(current_item.get("duration", 0.0))
+
         elif data_role == MediaModel.Roles.AspectRole:
             width, height = current_item.get("width") or 0, current_item.get("height") or 0
             return width / height if width > 0 and height > 0 else 0.0
@@ -207,6 +211,7 @@ class MediaModel(QAbstractListModel):
             MediaModel.Roles.WatchFractionRole: b"watchFraction",
             MediaModel.Roles.IsWatchedRole: b"isWatched",
             MediaModel.Roles.AspectRole: b"aspect",
+            MediaModel.Roles.DurationRole: b"duration",
         }
 
     # --- Hashing ---
@@ -487,6 +492,7 @@ class MediaModel(QAbstractListModel):
             item["watched"] = bool(record and record["finished"])
             item["watch_fraction"] = (progress_fraction(record["position"], record["duration"], record["finished"])
                                       if record else 0.0)
+            item["duration"] = record["duration"] if record else 0.0
 
     def _refresh_videos(self):
         """The background probe learned more about some videos: their shape and length (no reset)."""
@@ -506,7 +512,7 @@ class MediaModel(QAbstractListModel):
         self._attach_playback()
         self.dataChanged.emit(self.index(rows[0]), self.index(rows[-1]),
                               [MediaModel.Roles.AspectRole, MediaModel.Roles.WatchFractionRole,
-                               MediaModel.Roles.IsWatchedRole])
+                               MediaModel.Roles.IsWatchedRole, MediaModel.Roles.DurationRole])
 
     @Slot()
     def refreshPlayback(self):

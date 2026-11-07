@@ -23,7 +23,7 @@ def _register_qml_types():
     (module "Tetia"). Must run after the profile has been chosen."""
     from tetia.models import (  # noqa: F401
         coverPicker, favoritesModel, file_picker, folderModel, gridModel, mediaActions,
-        mediaModel, metadataModel, player, playbackStore, profileModel, purgeSession, readerSession, searchModel, showModel, subfolderModel, tagModel, uiSettings, virtualFolderService, wheelZoom,
+        mediaModel, metadataModel, player, playbackStore, profileModel, purgeSession, readerSession, searchModel, showModel, subfolderModel, tagModel, tileRows, uiSettings, virtualFolderService, wheelZoom,
     )
 
 
