@@ -113,36 +113,42 @@ Kirigami.Page {
 
     // ---- keys ----------------------------------------------------------------------------------
 
+    // The item that holds the keyboard focus when nothing else wants it (returned to after a dialog)
     Item {
         id: keys
         objectName: "purgeKeys"
         anchors.fill: parent
         focus: true
-        // Backspace, Escape and Alt+Left are also "go back" shortcuts elsewhere in the app. Say these keys are ours
-        // so they reach onPressed below, instead of leaving the page without asking.
-        Keys.onShortcutOverride: function(event) {
-            var plain = event.modifiers === Qt.NoModifier
-            if ((plain && (event.key === Qt.Key_Backspace || event.key === Qt.Key_Escape))
-                    || (event.key === Qt.Key_Left && (event.modifiers & Qt.AltModifier))) {
-                event.accepted = true
-            }
-        }
-        Keys.onPressed: function(event) {
-            if (review.opened) return
-            // Ctrl, Alt and Meta combinations are not ours (Alt+Left would otherwise count as a swipe)
-            if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) { event.accepted = true; return }
-            switch (event.key) {
-            case Qt.Key_Left:      root.flyOff("trash"); break
-            case Qt.Key_Right:     root.flyOff("keep"); break
-            case Qt.Key_Backspace: if (!root.flying) session.undo(); break
-            case Qt.Key_Up:        if (!root.flying) session.goBack(); break
-            case Qt.Key_Down:      if (!root.flying) session.goForward(); break
-            case Qt.Key_Escape:    root.requestCancel(); break
-            case Qt.Key_I:         root.showMetadata = !root.showMetadata; break
-            default: return
-            }
+    }
+
+    // The keys are handled here, on the page, and not on the item above: a key pressed while a button has the focus
+    // (after Tab) travels up from the button to the page, so the arrows keep working. Handled on a sibling item they
+    // would never arrive once a button had the focus.
+    //
+    // Backspace, Escape and Alt+Left are also "go back" shortcuts elsewhere in the app. Say these keys are ours
+    // so they reach onPressed below, instead of leaving the page without asking.
+    Keys.onShortcutOverride: function(event) {
+        var plain = event.modifiers === Qt.NoModifier
+        if ((plain && (event.key === Qt.Key_Backspace || event.key === Qt.Key_Escape))
+                || (event.key === Qt.Key_Left && (event.modifiers & Qt.AltModifier))) {
             event.accepted = true
         }
+    }
+    Keys.onPressed: function(event) {
+        if (review.opened) return
+        // Ctrl, Alt and Meta combinations are not ours (Alt+Left would otherwise count as a swipe)
+        if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) { event.accepted = true; return }
+        switch (event.key) {
+        case Qt.Key_Left:      root.flyOff("trash"); break
+        case Qt.Key_Right:     root.flyOff("keep"); break
+        case Qt.Key_Backspace: if (!root.flying) session.undo(); break
+        case Qt.Key_Up:        if (!root.flying) session.goBack(); break
+        case Qt.Key_Down:      if (!root.flying) session.goForward(); break
+        case Qt.Key_Escape:    root.requestCancel(); break
+        case Qt.Key_I:         root.showMetadata = !root.showMetadata; break
+        default: return
+        }
+        event.accepted = true
     }
 
     // ---- the strip that says this is not the viewer -------------------------------------------------
@@ -168,6 +174,8 @@ Kirigami.Page {
             anchors.rightMargin: Kirigami.Units.largeSpacing
 
             Button {
+
+                focusPolicy: Qt.TabFocus      // Tab reaches it; a click does not take the keys away
                 text: "Cancel"
                 icon.name: "dialog-cancel"
                 onClicked: root.requestCancel()
@@ -189,6 +197,7 @@ Kirigami.Page {
             }
             Item { Layout.fillWidth: true }
             Button {
+                focusPolicy: Qt.TabFocus      // Tab reaches it; a click does not take the keys away
                 text: "Review now"
                 icon.name: "go-next"
                 enabled: session.trashCount > 0 && !root.flying
@@ -336,6 +345,7 @@ Kirigami.Page {
 
         // the buttons from the viewer: look at the next or the previous waiting picture without deciding
         RoundButton {
+            focusPolicy: Qt.TabFocus      // Tab reaches it; a click does not take the keys away
             anchors.left: parent.left
             anchors.leftMargin: 16
             anchors.verticalCenter: parent.verticalCenter
@@ -349,6 +359,7 @@ Kirigami.Page {
             onClicked: session.goBack()
         }
         RoundButton {
+            focusPolicy: Qt.TabFocus      // Tab reaches it; a click does not take the keys away
             anchors.right: parent.right
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
@@ -364,6 +375,7 @@ Kirigami.Page {
 
         // the metadata button, as in the viewer: file size and dimensions help you decide
         ToolButton {
+            focusPolicy: Qt.TabFocus      // Tab reaches it; a click does not take the keys away
             id: infoButton
             anchors.top: parent.top
             anchors.right: parent.right
@@ -432,6 +444,8 @@ Kirigami.Page {
             spacing: Kirigami.Units.largeSpacing
 
             Button {
+
+                focusPolicy: Qt.TabFocus      // Tab reaches it; a click does not take the keys away
                 text: "Trash"
                 icon.name: "edit-delete"
                 icon.color: Kirigami.Theme.negativeTextColor
@@ -443,6 +457,7 @@ Kirigami.Page {
                 ToolTip.text: "Mark for the Trash (Left)"
             }
             Button {
+                focusPolicy: Qt.TabFocus      // Tab reaches it; a click does not take the keys away
                 text: "Undo"
                 icon.name: "edit-undo"
                 enabled: session.canUndo && !root.flying
@@ -452,6 +467,7 @@ Kirigami.Page {
                 ToolTip.text: "Bring back the last image (Backspace)"
             }
             Button {
+                focusPolicy: Qt.TabFocus      // Tab reaches it; a click does not take the keys away
                 text: "Keep"
                 icon.name: "dialog-ok-apply"
                 icon.color: Kirigami.Theme.positiveTextColor

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # Run by tests/test_scripts.py (pytest), or directly:  TETIA_SRC=src python tests/scripts/db_lock.py
-# Uses a throwaway HOME, so it never touches your real data.
+# Uses a throwaway HOME (and ignores XDG_*), so it never touches your real data.
 # Tests that TagModel and MediaModel can interleave DB writes without
 # "database is locked" errors (the bug fixed in Problem 2 step a).
 import os, sys, tempfile, shutil, sqlite3
@@ -10,6 +10,8 @@ from pathlib import Path
 
 HOME = tempfile.mkdtemp(prefix="home")
 os.environ["HOME"] = HOME
+for _name in ("XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
+    os.environ.pop(_name, None)      # Tetia keeps its data there before ~/.local/share: never in the real folders
 sys.path.insert(0, os.environ["TETIA_SRC"])
 
 from PySide6.QtCore import QCoreApplication

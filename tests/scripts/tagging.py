@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # Run by tests/test_scripts.py (pytest), or directly:  TETIA_SRC=src python tests/scripts/tagging.py
-# Uses a throwaway HOME, so it never touches your real data.
+# Uses a throwaway HOME (and ignores XDG_*), so it never touches your real data.
 import os, sys, tempfile, shutil, sqlite3
 from pathlib import Path
 
 HOME = tempfile.mkdtemp(prefix="home")
 os.environ["HOME"] = HOME           # Database() writes under ~/.local/share, so this is isolated
+for _name in ("XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
+    os.environ.pop(_name, None)      # Tetia keeps its data there before ~/.local/share: never in the real folders
 sys.path.insert(0, os.environ["TETIA_SRC"])   # e.g. TETIA_SRC=~/Projects/Tetia/src
 
 from PySide6.QtCore import QCoreApplication

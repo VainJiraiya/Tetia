@@ -9,6 +9,8 @@ from pathlib import Path
 
 HOME = tempfile.mkdtemp(prefix="home")
 os.environ["HOME"] = HOME
+for _name in ("XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
+    os.environ.pop(_name, None)      # Tetia keeps its data there before ~/.local/share: never in the real folders
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 SRC = os.environ["TETIA_SRC"]
 sys.path.insert(0, SRC)
