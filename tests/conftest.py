@@ -33,6 +33,9 @@ def isolated_environment(tmp_path, monkeypatch):
     monkeypatch.setattr(profiles, "_release_hooks", list(profiles._release_hooks))
     database.reset_singleton()
     yield home
+    from tetia.models import playbackStore
+    if playbackStore._prober is not None:
+        playbackStore._prober.stop()        # its thread holds the database of the test that started it
     database.reset_singleton()
 
 

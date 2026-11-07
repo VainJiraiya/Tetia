@@ -18,13 +18,14 @@ from PySide6.QtCore import (
     Qt,
     Signal,
     Slot,
+    QTimer,
     QUrl,
 )
 from PySide6.QtQml import QmlElement
 
 from tetia.models import covers, profiles, series, virtualfolders
 from tetia.models.database import get_database
-from tetia.models.playbackStore import progress_fraction
+from tetia.models.playbackStore import progress_fraction, prober
 from tetia.models.scanner import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
     VIDEO_EXTENSIONS, kind_from_ext, scan_folder,
@@ -51,6 +52,7 @@ class MediaModel(QAbstractListModel):
         RatingRole = Qt.UserRole + 8
         WatchFractionRole = Qt.UserRole + 9    # how much of a video was watched, 0..1 (0: not started)
         IsWatchedRole = Qt.UserRole + 10       # a video watched to the end
+        AspectRole = Qt.UserRole + 11          # width / height of the picture as shown; 0 while not known
 
     # Defines the available view filtering modes
     class FilterMode(IntEnum):
@@ -109,6 +111,13 @@ class MediaModel(QAbstractListModel):
         self._released = False
         profiles.add_release_hook(self._release_watchers, order=0)
 
+        # Videos' lengths and picture sizes are learned in the background; the page catches up a moment later
+        self._learned_timer = QTimer(self)
+        self._learned_timer.setSingleShot(True)
+        self._learned_timer.setInterval(400)
+        self._learned_timer.timeout.connect(self._refresh_videos)
+        prober().learned.connect(self._learned_timer.start)
+
     # --- QAbstractListModel Overrides ---
 
     # Returns the total number of items currently visible in the model for QML to render
@@ -162,6 +171,10 @@ class MediaModel(QAbstractListModel):
         elif data_role == MediaModel.Roles.IsWatchedRole:
             return current_item.get("watched", False)
 
+        elif data_role == MediaModel.Roles.AspectRole:
+            width, height = current_item.get("width") or 0, current_item.get("height") or 0
+            return width / height if width > 0 and height > 0 else 0.0
+
         # Returns rating (-1 means NULL/unrated in QML)
         elif data_role == MediaModel.Roles.RatingRole:
             rating = current_item.get("rating")
@@ -182,6 +195,7 @@ class MediaModel(QAbstractListModel):
             MediaModel.Roles.RatingRole: b"rating",
             MediaModel.Roles.WatchFractionRole: b"watchFraction",
             MediaModel.Roles.IsWatchedRole: b"isWatched",
+            MediaModel.Roles.AspectRole: b"aspect",
         }
 
     # --- Hashing ---
@@ -363,6 +377,10 @@ class MediaModel(QAbstractListModel):
 
         self._visible_items = self._sorted(self._visible_items)
         self._attach_playback()
+        unknown = [QUrl(item["uniform_resource_identifier"]).toLocalFile() for item in self._visible_items
+                   if item.get("is_video") and not item.get("width")]
+        if unknown:
+            prober().request(unknown)
 
         # Unfreezes Qt UI updates and tells QML to redraw the grid view
         self.endResetModel()
@@ -380,6 +398,26 @@ class MediaModel(QAbstractListModel):
             item["watched"] = bool(record and record["finished"])
             item["watch_fraction"] = (progress_fraction(record["position"], record["duration"], record["finished"])
                                       if record else 0.0)
+
+    def _refresh_videos(self):
+        """The background probe learned more about some videos: their shape and length (no reset)."""
+        rows = [row for row, item in enumerate(self._visible_items) if item.get("is_video")]
+        if not rows:
+            return
+        try:
+            stored = self._db.get_media_rows([self._visible_items[row]["media_id"] for row in rows])
+        except sqlite3.Error as e:
+            logger.error("Failed to read video sizes: %s", e)
+            return
+        for row in rows:
+            found = stored.get(self._visible_items[row]["media_id"])
+            if found is not None:
+                self._visible_items[row]["width"] = found["width"] or 0
+                self._visible_items[row]["height"] = found["height"] or 0
+        self._attach_playback()
+        self.dataChanged.emit(self.index(rows[0]), self.index(rows[-1]),
+                              [MediaModel.Roles.AspectRole, MediaModel.Roles.WatchFractionRole,
+                               MediaModel.Roles.IsWatchedRole])
 
     @Slot()
     def refreshPlayback(self):
@@ -437,6 +475,8 @@ class MediaModel(QAbstractListModel):
                 "is_book": kind == "ebook",
                 "is_favorite": row["favorite"],
                 "rating": row["rating"],
+                "width": row["width"] or 0,
+                "height": row["height"] or 0,
             }
             {"image": images, "video": videos, "comic": comics, "ebook": books}[kind].append(item)
 
@@ -469,6 +509,8 @@ class MediaModel(QAbstractListModel):
                 "is_book": kind == "ebook",
                 "is_favorite": row["favorite"],
                 "rating": row["rating"],
+                "width": row["width"] or 0,
+                "height": row["height"] or 0,
             }
             try:
                 info = Path(row["path"]).stat()

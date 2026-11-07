@@ -59,6 +59,129 @@ def _path(location: str) -> str:
     return QUrl(location).toLocalFile() if location.startswith("file:") else location
 
 
+def picture_size(width: float, height: float, rotate: float):
+    """(width, height) of a video as shown: a quarter turn in its metadata (phone videos) swaps them."""
+    if not width or not height:
+        return None
+    width, height = int(round(width)), int(round(height))
+    return (height, width) if int(rotate or 0) % 180 == 90 else (width, height)
+
+
+class Prober(QObject):
+    """Learns, in the background, how long each video is and the size of its picture, for videos the library
+    does not know that of yet: one mpv opens each file once. Shared by everything that shows videos (one
+    thread, one queue); `learned` is emitted (on the main thread) after each file."""
+    learned = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._queue: list[str] = []
+        self._thread = None
+        profiles.add_release_hook(self.stop, order=0)
+
+    def needs(self, path: str) -> bool:
+        db = get_database()
+        found = db.get_media_by_path(os.path.realpath(path))
+        if found is None:
+            return False
+        record = db.get_playback(found[0])
+        return not record or record["duration"] <= 0 or db.get_media_size(found[0]) is None
+
+    def request(self, paths: list):
+        """Queue the videos among `paths` (local paths) whose length or picture size is not known yet."""
+        wanted = [p for p in paths if self.needs(p)]
+        if not wanted or not mpv.available():
+            return
+        with self._lock:
+            self._queue.extend(p for p in wanted if p not in self._queue)
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._worker, name="video-probe", daemon=True)
+            self._thread.start()
+
+    def stop(self):
+        """Stop and wait (before a vault is locked: it holds the files open)."""
+        self._stop.set()
+        with self._lock:
+            self._queue.clear()
+        thread = self._thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=15)
+
+    def _wait(self, engine, read, seconds):
+        end = time.time() + seconds
+        while time.time() < end and not self._stop.is_set():
+            value = read()
+            if value is not None:
+                return value
+            time.sleep(0.02)
+        return None
+
+    def _worker(self):
+        db = engine = None
+        try:
+            db = Database()       # a connection of its own: sqlite connections are per-thread
+            engine = mpv.Mpv({"vo": "null", "ao": "null", "terminal": "no", "idle": "yes", "hwdec": "no",
+                              "audio-display": "no", "sub-auto": "no", "audio-file-auto": "no", "load-scripts": "no",
+                              "pause": "yes"})
+            while not self._stop.is_set():
+                with self._lock:
+                    if not self._queue:
+                        self._thread = None       # under the lock: request() starts a new one if it queues more now
+                        return
+                    path = self._queue.pop(0)
+                found = db.get_media_by_path(os.path.realpath(path))
+                if found is None or not engine.command("loadfile", path, "replace"):
+                    continue
+                # until the new file is the current one, mpv still answers for the one before it; a file it can't
+                # open leaves it idle (no need to wait the full time for that)
+                started = time.time()
+
+                def length_or_failed():
+                    if engine.get("path") == path:
+                        return engine.get_double("duration")
+                    if time.time() - started > 0.3 and engine.get_flag("idle-active"):
+                        return -1.0
+                    return None
+                length = self._wait(engine, length_or_failed, 5)
+                if length is None or length < 0:
+                    continue
+                # the shown size comes with the first decoded frame; the stream's own size is the fallback
+                size = self._wait(engine, lambda: picture_size(engine.get_double("video-params/dw"),
+                                                               engine.get_double("video-params/dh"),
+                                                               engine.get_double("video-params/rotate")), 1.5)
+                if size is None:
+                    size = picture_size(engine.get_double("width"), engine.get_double("height"), 0) or (0, 0)
+                try:
+                    if length > 0:
+                        db.set_duration(found[0], length)
+                    db.set_media_size(found[0], *size)     # (0, 0): no picture (sound only); not asked again
+                except sqlite3.Error as e:
+                    logger.warning("Saving what was learned about a video failed: %s", e)
+                    continue
+                self.learned.emit()
+        except Exception:
+            logger.exception("Learning about videos failed")
+        finally:
+            if engine is not None:
+                engine.close()
+            if db is not None:
+                db.close()
+
+
+_prober = None
+
+
+def prober() -> Prober:
+    global _prober
+    if _prober is None:
+        _prober = Prober()
+    return _prober
+
+
 @QmlElement
 class PlaybackStore(QObject):
     durationsChanged = Signal()
@@ -66,11 +189,7 @@ class PlaybackStore(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._db = get_database()
-        self._stop = threading.Event()
-        self._lock = threading.Lock()
-        self._queue: list[str] = []
-        self._thread = None
-        profiles.add_release_hook(self.stop_probe, order=0)
+        prober().learned.connect(self.durationsChanged)
 
     @Property(float, constant=True)
     def clipSeconds(self):
@@ -180,67 +299,7 @@ class PlaybackStore(QObject):
     @Slot(list)
     def probe(self, locations: list):
         """Find out how long these videos are, in the background (those not known yet); emits durationsChanged."""
-        wanted = []
-        for loc in locations:
-            media_id = self._media_id(loc)
-            if media_id is None:
-                continue
-            record = self._db.get_playback(media_id)
-            if not record or record["duration"] <= 0:
-                wanted.append(_path(loc))
-        if not wanted or not mpv.available():
-            return
-        with self._lock:
-            self._queue.extend(p for p in wanted if p not in self._queue)
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._stop.clear()
-            self._thread = threading.Thread(target=self._probe_worker, name="duration-probe", daemon=True)
-            self._thread.start()
+        prober().request([_path(loc) for loc in locations])
 
     def stop_probe(self):
-        """Stop the probe and wait for it (before a vault is locked: it holds the files open)."""
-        self._stop.set()
-        thread = self._thread
-        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=15)
-
-    def _probe_worker(self):
-        db = engine = None
-        try:
-            db = Database()       # a connection of its own: sqlite connections are per-thread
-            engine = mpv.Mpv({"vo": "null", "ao": "null", "terminal": "no", "idle": "yes", "hwdec": "no",
-                              "audio-display": "no", "sub-auto": "no", "audio-file-auto": "no", "load-scripts": "no",
-                              "pause": "yes"})
-            while not self._stop.is_set():
-                with self._lock:
-                    if not self._queue:
-                        self._thread = None       # under the lock: probe() starts a new one if it queues more now
-                        return
-                    path = self._queue.pop(0)
-                found = db.get_media_by_path(os.path.realpath(path))
-                if found is None or not engine.command("loadfile", path, "replace"):
-                    continue
-                end = time.time() + 5
-                length = None
-                while time.time() < end and not self._stop.is_set():
-                    # until the new file is the current one, mpv still answers for the one before it
-                    if engine.get("path") == path:
-                        length = engine.get_double("duration")
-                        if length is not None:
-                            break
-                    time.sleep(0.02)
-                if length and length > 0:
-                    try:
-                        db.set_duration(found[0], length)
-                    except sqlite3.Error as e:
-                        logger.warning("Saving a length failed: %s", e)
-                        continue
-                    self.durationsChanged.emit()
-        except Exception:
-            logger.exception("Finding video lengths failed")
-        finally:
-            if engine is not None:
-                engine.close()
-            if db is not None:
-                db.close()
+        prober().stop()

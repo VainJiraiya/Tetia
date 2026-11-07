@@ -180,10 +180,10 @@ def delete(db, vid: int):
 # ---- what is in a virtual folder ----------------------------------------------------------------------------
 
 def member_rows(db, vid: int) -> list:
-    """[{id, path, name, kind, favorite, rating}] for the files placed directly in `vid` (files that are
-    missing from the disk are left out), in natural name order."""
+    """[{id, path, name, kind, favorite, rating, width, height}] for the files placed directly in `vid` (files
+    that are missing from the disk are left out), in natural name order."""
     rows = db.conn.execute(
-        "SELECT m.id, m.path, m.name, m.kind, m.favorite, m.rating FROM media_placement p "
+        "SELECT m.id, m.path, m.name, m.kind, m.favorite, m.rating, m.width, m.height FROM media_placement p "
         "JOIN media m ON m.id = p.media_id WHERE p.vfolder_id = ? AND m.missing = 0", (int(vid),)).fetchall()
     return sorted((dict(r) for r in rows), key=lambda r: covers.natural_key(r["name"]))
 

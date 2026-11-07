@@ -6,6 +6,8 @@ grid (MediaModel) and the background indexer share, so a file is recognised the
 same way (including renames) whichever one sees it first."""
 from pathlib import Path
 
+from PySide6.QtGui import QImageIOHandler, QImageReader
+
 from tetia.models import covers
 
 # Defines sets of allowed file extensions for images and videos
@@ -46,6 +48,19 @@ def kind_from_ext(ext: str) -> str:
     return "image"
 
 
+def image_size(path: str):
+    """(width, height) of an image as it is shown (an EXIF quarter turn swaps them), read from the file's header
+    only; None if it can't be read."""
+    reader = QImageReader(path)
+    size = reader.size()
+    if not size.isValid() or size.isEmpty():
+        return None
+    width, height = size.width(), size.height()
+    if reader.transformation() & QImageIOHandler.Transformation.TransformationRotate90:
+        width, height = height, width
+    return width, height
+
+
 class ScanStopped(Exception):
     """The scan was asked to stop (before it changed anything)."""
 
@@ -71,7 +86,10 @@ def scan_folder(db, folder_directory: Path, hash_fn, should_stop=None):
     # Hash new and changed files BEFORE the transaction opens: reading a
     # couple of MB per file can take a while, and the write lock must not be
     # held that long (the indexer thread and the UI scan share the database).
+    # The same goes for an image's size (its header), read when the file is new,
+    # changed, or was stored before sizes were kept.
     memo = {}
+    sizes = {}
     try:
         for entry in folder_directory.iterdir():
             if entry.is_file() and not entry.name.startswith(".") and entry.suffix.lower() in ALL_MEDIA_EXTENSIONS:
@@ -81,6 +99,9 @@ def scan_folder(db, folder_directory: Path, hash_fn, should_stop=None):
                 info = entry.stat()
                 if not db.get_stored_hash(path, info.st_size, int(info.st_mtime)):
                     memo[path] = hash_fn(path)
+                if entry.suffix.lower() in IMAGE_EXTENSIONS:
+                    stored = db.get_stored_size(path, info.st_size, int(info.st_mtime))
+                    sizes[path] = (stored, False) if stored else (image_size(path), True)
     except OSError:
         pass
     real_hash_fn = hash_fn
@@ -149,6 +170,12 @@ def scan_folder(db, folder_directory: Path, hash_fn, should_stop=None):
                         kind, file_size, file_mtime, content_hash
                     )
 
+                picture, fresh = sizes.get(abs_path, (None, False))
+                if picture is not None and fresh:
+                    db.set_media_size(media_id, *picture)
+                elif is_video:
+                    picture = db.get_media_size(media_id)        # learned by the background probe, if it ran
+
                 item_metadata = {
                     "media_id": media_id,
                     "uniform_resource_identifier": directory_item.as_uri(),
@@ -160,6 +187,8 @@ def scan_folder(db, folder_directory: Path, hash_fn, should_stop=None):
                     "is_book": is_book,
                     "is_favorite": favorite,
                     "rating": rating,
+                    "width": picture[0] if picture else 0,
+                    "height": picture[1] if picture else 0,
                 }
 
                 # Sorts item into whichever list matches its extension

@@ -127,6 +127,7 @@ class Database:
             (11, self._migrate_v11),
             (12, self._migrate_v12),
             (13, self._migrate_v13),
+            (14, self._migrate_v14),
         )
         for target, step in steps:
             if version < target:
@@ -345,6 +346,16 @@ class Database:
                 updated  TEXT
             );
         """)
+
+    def _migrate_v14(self):
+        # The picture's size as shown (EXIF or video rotation applied), so a page can lay files out in their own
+        # shape before any thumbnail exists, and when Tetia first saw the file ("Recently added"; for files
+        # already known, their modification time is the best guess)
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(media)")}
+        for name in ("width", "height", "added_at"):
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE media ADD COLUMN {name} INTEGER")
+        self.conn.execute("UPDATE media SET added_at = mtime WHERE added_at IS NULL")
 
     def close(self):
         self.conn.close()
@@ -608,6 +619,25 @@ class Database:
         row = cursor.fetchone()
         return row[0] if row and row[0] else ""
 
+    def get_stored_size(self, path: str, size: int, mtime: int):
+        """(width, height) stored for this path if the file is unchanged (same size and mtime) and its picture
+        size is known; None otherwise (the file must be read)."""
+        row = self.conn.execute(
+            "SELECT width, height FROM media WHERE path = ? AND size = ? AND mtime = ? AND width IS NOT NULL",
+            (path, size, mtime)).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def get_media_size(self, media_id: int):
+        """(width, height), or None while it is not known."""
+        row = self.conn.execute("SELECT width, height FROM media WHERE id = ? AND width IS NOT NULL",
+                                (int(media_id),)).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def set_media_size(self, media_id: int, width: int, height: int):
+        """The picture's size as shown. Inside a scan this joins the scan's transaction."""
+        self._write(lambda: self.conn.execute(
+            "UPDATE media SET width = ?, height = ? WHERE id = ?", (int(width), int(height), int(media_id))))
+
     def get_media_by_path(self, path: str):
         """Return (id, favorite, rating) for this path, or None if there is no row."""
         cursor = self.conn.cursor()
@@ -617,10 +647,10 @@ class Database:
 
     def upsert_media(self, path: str, name: str, kind: str, size: int, mtime: int, content_hash: str):
         """Insert a new row or update the existing row for this path in place
-        (id, favorite and rating are kept). Returns (id, favorite, rating)."""
+        (id, favorite, rating and when it was first seen are kept). Returns (id, favorite, rating)."""
         cursor = self.conn.execute("""
-            INSERT INTO media (path, name, kind, size, mtime, content_hash, favorite, rating, missing)
-            VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 0)
+            INSERT INTO media (path, name, kind, size, mtime, content_hash, favorite, rating, missing, added_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 0, CAST(strftime('%s', 'now') AS INTEGER))
             ON CONFLICT(path) DO UPDATE SET
                 name = excluded.name,
                 kind = excluded.kind,
@@ -1066,14 +1096,14 @@ class Database:
         return [(row[0], row[1]) for row in self.conn.execute(sql, params).fetchall()]
 
     def get_media_rows(self, media_ids) -> dict[int, dict]:
-        """{id: {path, name, kind, favorite, rating}} for the given ids."""
+        """{id: {path, name, kind, favorite, rating, width, height}} for the given ids."""
         ids = [int(i) for i in media_ids]
         rows = {}
         for start in range(0, len(ids), 500):
             chunk = ids[start:start + 500]
             marks = ",".join("?" * len(chunk))
             cursor = self.conn.execute(
-                f"SELECT id, path, name, kind, favorite, rating FROM media WHERE id IN ({marks})",
+                f"SELECT id, path, name, kind, favorite, rating, width, height FROM media WHERE id IN ({marks})",
                 chunk)
             rows.update({row["id"]: dict(row) for row in cursor.fetchall()})
         return rows

@@ -151,6 +151,7 @@ class GridModel(QAbstractListModel):
             R.RatingRole: b"rating",
             R.WatchFractionRole: b"watchFraction",
             R.IsWatchedRole: b"isWatched",
+            R.AspectRole: b"aspect",
         }
         for role, (name, _) in _SUB_ROLES.items():
             names[role] = name
