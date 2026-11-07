@@ -4,6 +4,7 @@
 """Reads one folder into the database: the part of a scan that both the media
 grid (MediaModel) and the background indexer share, so a file is recognised the
 same way (including renames) whichever one sees it first."""
+import threading
 from pathlib import Path
 
 from PySide6.QtGui import QImageIOHandler, QImageReader
@@ -65,7 +66,69 @@ class ScanStopped(Exception):
     """The scan was asked to stop (before it changed anything)."""
 
 
+def _item(media_id, path: Path, size, mtime, kind, favorite, rating, width, height) -> dict:
+    return {
+        "media_id": media_id,
+        "uniform_resource_identifier": path.as_uri(),
+        "file_name": path.name,
+        "size": size,
+        "mtime": mtime,
+        "is_video": kind == "video",
+        "is_comic": kind == "comic",
+        "is_book": kind == "ebook",
+        "is_favorite": favorite,
+        "rating": rating,
+        "width": width or 0,
+        "height": height or 0,
+    }
+
+
+def _split(items):
+    lists = ([], [], [], [])
+    for item in items:
+        lists[1 if item["is_video"] else 2 if item["is_comic"] else 3 if item["is_book"] else 0].append(item)
+    return lists
+
+
+def known_items(db, folder_directory: Path):
+    """What the library already knows is directly inside this folder (no file is read): the same four lists as
+    scan_folder, so a page can show them at once while the folder is scanned in the background."""
+    prefix = str(folder_directory.resolve()).rstrip("/") + "/"
+    upper = prefix[:-1] + chr(ord("/") + 1)
+    rows = db.conn.execute(
+        "SELECT id, path, name, kind, size, mtime, favorite, rating, width, height FROM media "
+        "WHERE missing = 0 AND path >= ? AND path < ?", (prefix, upper)).fetchall()
+    rows = [r for r in rows if "/" not in r["path"][len(prefix):] and not r["name"].startswith(".")]
+    rows.sort(key=lambda r: covers.natural_key(r["name"]))
+    # addressed through the folder as it was asked for (a link stays a link), as a scan addresses them
+    return _split(_item(r["id"], folder_directory / r["name"], r["size"], r["mtime"], r["kind"], r["favorite"],
+                        r["rating"], r["width"], r["height"]) for r in rows)
+
+
+# One scan of a folder at a time: the background indexer and an open page often reach the same folder together,
+# and the second one then finds everything already fingerprinted instead of reading the files again
+_folder_locks: dict[str, threading.Lock] = {}
+_folder_locks_guard = threading.Lock()
+
+
+def _folder_lock(directory: Path) -> threading.Lock:
+    with _folder_locks_guard:
+        return _folder_locks.setdefault(str(directory), threading.Lock())
+
+
 def scan_folder(db, folder_directory: Path, hash_fn, should_stop=None):
+    """scan_folder_unlocked, one at a time per folder (a second caller waits, then has little left to do)."""
+    lock = _folder_lock(folder_directory.resolve())
+    while not lock.acquire(timeout=0.1):
+        if should_stop is not None and should_stop():
+            raise ScanStopped()
+    try:
+        return scan_folder_unlocked(db, folder_directory, hash_fn, should_stop)
+    finally:
+        lock.release()
+
+
+def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
     """Upsert every media file directly inside `folder_directory` into the
     database (one transaction) and mark vanished ones missing. Returns four
     lists of item dicts: images, videos, comics, books.
@@ -176,20 +239,8 @@ def scan_folder(db, folder_directory: Path, hash_fn, should_stop=None):
                 elif is_video:
                     picture = db.get_media_size(media_id)        # learned by the background probe, if it ran
 
-                item_metadata = {
-                    "media_id": media_id,
-                    "uniform_resource_identifier": directory_item.as_uri(),
-                    "file_name": directory_item.name,
-                    "size": file_size,
-                    "mtime": file_mtime,
-                    "is_video": is_video,
-                    "is_comic": is_comic,
-                    "is_book": is_book,
-                    "is_favorite": favorite,
-                    "rating": rating,
-                    "width": picture[0] if picture else 0,
-                    "height": picture[1] if picture else 0,
-                }
+                item_metadata = _item(media_id, directory_item, file_size, file_mtime, kind, favorite, rating,
+                                      *(picture or (0, 0)))
 
                 # Sorts item into whichever list matches its extension
                 if is_image:

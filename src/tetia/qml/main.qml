@@ -1451,7 +1451,7 @@ Kirigami.ApplicationWindow {
     function loadFolder(folderPath, category) {
         root.currentFolder = folderPath
         root.currentVirtual = -1
-        mediaModel.load_from_qurl(folderPath)
+        mediaModel.openFolder(folderPath)       // shown at once from the library, scanned in the background
         gridCategory(category)
     }
 
@@ -1729,6 +1729,20 @@ Kirigami.ApplicationWindow {
                     wrapMode: Text.WordWrap
                     opacity: 0.7
                     text: "This virtual folder is empty.\nIn the folder it was made in, select items and choose \u201CAdd to virtual folder\u201D."
+                }
+
+                // A folder opened for the first time is read in the background: say so instead of looking empty
+                RowLayout {
+                    objectName: "scanningHint"
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredHeight: visible ? implicitHeight + Kirigami.Units.gridUnit * 3 : 0
+                    visible: !!gridPage.folderPath && mediaModel.scanning && gridView.count === 0
+                    spacing: Kirigami.Units.smallSpacing
+                    BusyIndicator { running: parent.visible }
+                    Label {
+                        text: "Reading this folder\u2026"
+                        opacity: 0.7
+                    }
                 }
 
                 // Select mode's actions, under the grid

@@ -7,6 +7,7 @@ import sys
 from enum import IntEnum
 from pathlib import Path
 import sqlite3
+import threading
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -24,11 +25,11 @@ from PySide6.QtCore import (
 from PySide6.QtQml import QmlElement
 
 from tetia.models import covers, profiles, series, virtualfolders
-from tetia.models.database import get_database
+from tetia.models.database import Database, get_database
 from tetia.models.playbackStore import progress_fraction, prober
 from tetia.models.scanner import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
-    VIDEO_EXTENSIONS, kind_from_ext, scan_folder,
+    VIDEO_EXTENSIONS, ScanStopped, kind_from_ext, known_items, scan_folder,
 )
 
 # Sets the QML import module configuration so QML files can write "import Tetia 1.0"
@@ -81,6 +82,8 @@ class MediaModel(QAbstractListModel):
     filterModeChanged = Signal()
     sortModeChanged = Signal()
     folderPathChanged = Signal()
+    scanningChanged = Signal()
+    _scanDone = Signal(int, object)     # (scan generation, the four lists or None), from the scan thread
 
     # Initializes the class instance and sets up default internal variables
     def __init__(self, parent_object: QObject = None):
@@ -110,6 +113,14 @@ class MediaModel(QAbstractListModel):
         self._file_system_watcher.directoryChanged.connect(self._on_directory_changed)
         self._released = False
         profiles.add_release_hook(self._release_watchers, order=0)
+
+        # An opened folder is shown from what the library knows, then scanned in the background
+        self._scan_generation = 0
+        self._scan_stop = threading.Event()
+        self._scan_thread = None
+        self._scanning = False
+        self._scanDone.connect(self._apply_scan)
+        profiles.add_release_hook(self._stop_scan, order=0)
 
         # Videos' lengths and picture sizes are learned in the background; the page catches up a moment later
         self._learned_timer = QTimer(self)
@@ -232,55 +243,132 @@ class MediaModel(QAbstractListModel):
     # Receives a file URL string from QML or Python, parses the folder, and extracts file data
     @Slot(str)
     def load_from_qurl(self, qurl_string: str):
-        print(f"[MEDIA] load_from_qurl called with: {qurl_string}")
-        # Stops execution early if an empty path string was passed in
+        """Scan a folder and show it, all before returning (the file watcher's reloads and tests use this;
+        a page uses openFolder, which does not make the window wait)."""
+        folder_directory = self._enter_folder(qurl_string)
+        if folder_directory is None:
+            return
+        self._show_lists(scan_folder(self._db, folder_directory, self._compute_content_hash))
+
+    @Slot(str)
+    def openFolder(self, qurl_string: str):
+        """Show a folder at once from what the library already knows about it, and scan it in the background
+        (reading and fingerprinting new files can take a long while on a slow drive). The page updates when the
+        scan is done, and only if something changed; `scanning` is true meanwhile."""
+        folder_directory = self._enter_folder(qurl_string)
+        if folder_directory is None:
+            return
+        try:
+            known = known_items(self._db, folder_directory)
+        except sqlite3.Error as e:
+            logger.error("Failed to read what is known of %s: %s", folder_directory, e)
+            known = ([], [], [], [])
+        self._show_lists(known)
+        self._start_scan(folder_directory)
+
+    def _enter_folder(self, qurl_string: str):
+        """Make `qurl_string` the open folder (and watch it); the folder as a Path, or None if it isn't one."""
         if not qurl_string:
-            print("[MEDIA] Empty path, returning")
-            return
-
-        # Converts QUrl string (file://) into a standard system path string
-        clean_path_string = (
-            QUrl(qurl_string).toLocalFile() or qurl_string
-        )
-        folder_directory = Path(clean_path_string)
-        print(f"[MEDIA] Resolved path: {folder_directory}, is_dir: {folder_directory.is_dir()}")
-
-        # Stops execution if the target path is not a valid directory on disk
+            return None
+        folder_directory = Path(QUrl(qurl_string).toLocalFile() or qurl_string)
         if not folder_directory.is_dir():
-            print("[MEDIA] Path is not a directory, returning")
-            return
-
+            logger.info("Not a folder: %s", folder_directory)
+            return None
+        self._cancel_scan()
         # Kept exactly as chosen, since QML reads it back through folderPath
         self._current_folder_path = str(folder_directory)
         self._virtual_id = -1
         self._sortable_ids = False
 
-        # Stored media paths are resolved (symlinks followed), so database
-        # comparisons for this folder must use the resolved form as well
-        scan_directory = folder_directory.resolve()
-
-        # Unsubscribes watcher from previously monitored folders if any exist
         existing_watched_directories = self._file_system_watcher.directories()
         if existing_watched_directories:
             self._file_system_watcher.removePaths(existing_watched_directories)
-
-        # Subscribes watcher to start monitoring the newly selected directory path
         self._file_system_watcher.addPath(self._current_folder_path)
+        return folder_directory
 
-        (
-            temporary_images_list,
-            temporary_videos_list,
-            temporary_comics_list,
-            temporary_books_list,
-        ) = scan_folder(self._db, folder_directory, self._compute_content_hash)
-
+    def _show_lists(self, lists):
         # What was put in a virtual folder is shown there, no longer here
-        self._all_images, self._all_videos, self._all_comics, self._all_books = self._without_placed(
-            temporary_images_list, temporary_videos_list, temporary_comics_list, temporary_books_list)
-
-        # Refreshes the active grid display list and notifies QML of path changes
+        self._all_images, self._all_videos, self._all_comics, self._all_books = self._without_placed(*lists)
         self._update_visible_items()
         self.folderPathChanged.emit()
+
+    # --- The background scan ---
+
+    @Property(bool, notify=scanningChanged)
+    def scanning(self):
+        return self._scanning
+
+    def _set_scanning(self, scanning: bool):
+        if scanning != self._scanning:
+            self._scanning = scanning
+            self.scanningChanged.emit()
+
+    def _start_scan(self, folder_directory: Path):
+        self._cancel_scan()
+        if self._released:
+            return
+        generation, stop = self._scan_generation, self._scan_stop
+        hash_fn = self._compute_content_hash
+
+        def work():
+            db = None
+            try:
+                db = Database()      # a connection of its own: sqlite connections are per-thread
+                lists = scan_folder(db, folder_directory, hash_fn, stop.is_set)
+            except ScanStopped:
+                return
+            except Exception:
+                logger.exception("Scanning %s failed", folder_directory)
+                lists = None
+            finally:
+                if db is not None:
+                    db.close()
+            if not stop.is_set():
+                self._scanDone.emit(generation, lists)
+
+        self._scan_thread = threading.Thread(target=work, name="folder-scan", daemon=True)
+        self._set_scanning(True)
+        self._scan_thread.start()
+
+    def _cancel_scan(self):
+        """Forget a scan still running (its result would be for a page no longer shown)."""
+        self._scan_stop.set()
+        self._scan_stop = threading.Event()
+        self._scan_generation += 1
+        self._set_scanning(False)
+
+    def _stop_scan(self):
+        """Stop a running scan and wait for it (before a vault is locked: it holds files and the database)."""
+        self._cancel_scan()
+        thread = self._scan_thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=15)
+
+    @staticmethod
+    def _signature(lists):
+        return [[(i["media_id"], i["file_name"], i.get("size"), i.get("mtime")) for i in items] for items in lists]
+
+    def _apply_scan(self, generation: int, lists):
+        if generation != self._scan_generation:
+            return                                   # another folder (or a search) is shown now
+        self._set_scanning(False)
+        if lists is None:
+            return
+        fresh = self._without_placed(*lists)
+        shown = (self._all_images, self._all_videos, self._all_comics, self._all_books)
+        if self._signature(fresh) != self._signature(shown):
+            self._show_lists(lists)
+            return
+        # Nothing came or went: only what the scan learned on the way (an image's size), without a reset
+        known = {item["media_id"]: item for items in fresh for item in items}
+        changed = []
+        for row, item in enumerate(self._visible_items):
+            new = known.get(item.get("media_id"))
+            if new is not None and (new["width"], new["height"]) != (item.get("width", 0), item.get("height", 0)):
+                item["width"], item["height"] = new["width"], new["height"]
+                changed.append(row)
+        if changed:
+            self.dataChanged.emit(self.index(changed[0]), self.index(changed[-1]), [MediaModel.Roles.AspectRole])
 
     def _without_placed(self, *lists):
         ids = [item["media_id"] for items in lists for item in items if item.get("media_id") is not None]
@@ -307,8 +395,9 @@ class MediaModel(QAbstractListModel):
     def _on_directory_changed(self, modified_directory_path: str):
         if self._released:
             return
-        # Re-runs folder parsing using the modified directory path
-        self.load_from_qurl(modified_directory_path)
+        # Scans the folder again in the background; the page keeps showing what it has meanwhile
+        if modified_directory_path == self._current_folder_path:
+            self._start_scan(Path(modified_directory_path))
 
     # Rebuilds the active grid display list according to the current filter mode setting
     def _sorted(self, items: list) -> list:
@@ -456,6 +545,7 @@ class MediaModel(QAbstractListModel):
         existing_watched = self._file_system_watcher.directories()
         if existing_watched:
             self._file_system_watcher.removePaths(existing_watched)
+        self._cancel_scan()
         self._current_folder_path = ""
         self._virtual_id = -1
         self._sortable_ids = False
@@ -493,6 +583,7 @@ class MediaModel(QAbstractListModel):
         existing_watched = self._file_system_watcher.directories()
         if existing_watched:
             self._file_system_watcher.removePaths(existing_watched)
+        self._cancel_scan()
         self._current_folder_path = ""
         self._virtual_id = int(vfolder_id)
         self._sortable_ids = False
