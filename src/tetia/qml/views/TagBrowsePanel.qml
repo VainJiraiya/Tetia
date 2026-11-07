@@ -33,6 +33,8 @@ Rectangle {
 
     signal closeRequested()
     signal tagChosen(string category, string name)
+    // the "-" on a tag: show the items without it (a booru's exclude)
+    signal tagExcluded(string category, string name)
     signal tagRemoved(string category, string name)
 
     implicitWidth: 320
@@ -100,6 +102,7 @@ Rectangle {
         property int count: 0
         property color accent: Kirigami.Theme.highlightColor
         signal clicked()
+        signal excluded()
 
         implicitHeight: Kirigami.Units.gridUnit + Kirigami.Units.largeSpacing
         implicitWidth: chipRow.implicitWidth + Kirigami.Units.largeSpacing * 2
@@ -127,6 +130,11 @@ Rectangle {
                 color: Kirigami.Theme.textColor
                 opacity: 0.65
             }
+            // room for the exclude mark, kept so the chip does not change size on hover
+            Item {
+                Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                Layout.preferredHeight: Kirigami.Units.iconSizes.small
+            }
         }
 
         MouseArea {
@@ -136,9 +144,27 @@ Rectangle {
             cursorShape: Qt.PointingHandCursor
             onClicked: chip.clicked()
         }
-        ToolTip.visible: area.containsMouse
+        Kirigami.Icon {
+            id: excludeMark
+            anchors.right: parent.right
+            anchors.rightMargin: Kirigami.Units.largeSpacing
+            anchors.verticalCenter: parent.verticalCenter
+            width: Kirigami.Units.iconSizes.small
+            height: width
+            source: "list-remove"
+            opacity: excludeArea.containsMouse ? 1 : (area.containsMouse ? 0.6 : 0.25)
+            MouseArea {
+                id: excludeArea
+                anchors.fill: parent
+                anchors.margins: -3
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: chip.excluded()
+            }
+        }
+        ToolTip.visible: area.containsMouse || excludeArea.containsMouse
         ToolTip.delay: 600
-        ToolTip.text: "Show the items with this tag"
+        ToolTip.text: excludeArea.containsMouse ? "Leave out the items with this tag" : "Show the items with this tag"
     }
 
     // A chosen tag: the tag editor's chip, with its remove button
@@ -277,6 +303,7 @@ Rectangle {
                                     count: modelData.count
                                     accent: root.categoryColor(group.modelData.category)
                                     onClicked: root.tagChosen(group.modelData.category, modelData.name)
+                                    onExcluded: root.tagExcluded(group.modelData.category, modelData.name)
                                 }
                             }
                         }

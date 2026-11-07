@@ -331,6 +331,14 @@ class MediaModel(QAbstractListModel):
             self._sources = []
             self.sourcesChanged.emit()
 
+    @Slot(result="QVariantMap")
+    def kindCounts(self) -> dict:
+        """How many of each kind the page holds, whatever the filter (for a results page's type chips)."""
+        pdfs = sum(1 for item in self._all_books if Path(item["file_name"]).suffix.lower() in MANGA_TAB_EXTENSIONS)
+        return {"all": len(self._all_images) + len(self._all_videos) + len(self._all_comics) + len(self._all_books),
+                "images": len(self._all_images), "videos": len(self._all_videos),
+                "manga": len(self._all_comics) + pdfs, "books": len(self._all_books)}
+
     @Property(list, notify=sourcesChanged)
     def sources(self):
         """The library folders shown together (a tab's top level), as paths; empty otherwise."""

@@ -782,6 +782,7 @@ Kirigami.ApplicationWindow {
         property var onNamed: null          // function(name): the error text, or "" when it worked
         property string problem: ""
         property string okText: ""          // the button's word ("" : Create, or Rename for a rename)
+        property bool tagHints: false       // a search is typed: suggest tags for the word being typed
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {
@@ -806,9 +807,33 @@ Kirigami.ApplicationWindow {
                 id: nameField
                 objectName: "nameField"
                 Layout.fillWidth: true
-                placeholderText: "Name"
-                maximumLength: 100
+                placeholderText: nameDialog.tagHints ? "Tags, e.g. character:raphtalia -rating:explicit" : "Name"
+                maximumLength: nameDialog.tagHints ? 1000 : 100
                 onAccepted: nameDialog.accept()
+                // the word being typed (after the last space)
+                readonly property string lastWord: text.substring(text.lastIndexOf(" ") + 1)
+            }
+            // A search being typed: tags that fit the word, to click instead of typing them out
+            Flow {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+                visible: nameDialog.tagHints && hintRepeater.count > 0
+                Repeater {
+                    id: hintRepeater
+                    model: nameDialog.tagHints && nameField.lastWord.replace(/^[-~]+/, "").length >= 1
+                           ? searchModel.suggest(nameField.lastWord).slice(0, 8) : []
+                    delegate: Kirigami.Chip {
+                        required property var modelData
+                        text: modelData.label
+                        closable: false
+                        checkable: false
+                        onClicked: {
+                            var t = nameField.text
+                            nameField.text = t.substring(0, t.lastIndexOf(" ") + 1) + modelData.insert + " "
+                            nameField.forceActiveFocus()
+                        }
+                    }
+                }
             }
             Label {
                 Layout.fillWidth: true
@@ -1090,9 +1115,10 @@ Kirigami.ApplicationWindow {
 
     // ---- Virtual folders ----------------------------------------------------------------------------
 
-    function askName(title, initial, onNamed, okText) {
+    function askName(title, initial, onNamed, okText, tagHints) {
         nameDialog.title = title
         nameDialog.okText = okText || ""
+        nameDialog.tagHints = tagHints === true
         nameDialog.onNamed = onNamed
         nameField.text = initial
         nameDialog.open()
@@ -1241,7 +1267,7 @@ Kirigami.ApplicationWindow {
         askName("Board search (tags, like the search bar)", info.query || "", function(query) {
             boardService.setQuery(boardId, query)
             return ""
-        }, "Save")
+        }, "Save", true)
     }
 
     // A new board (put these files on it), then open it
@@ -1387,7 +1413,9 @@ Kirigami.ApplicationWindow {
             pageStack.push(mediaGridComponent, {
                 title: searchTitle(query, total),
                 isSearch: true,
-                searchScope: scope
+                searchScope: scope,
+                savedSearch: root.searchState,   // (the page puts it back whenever it is on top)
+                browseOpen: true                 // the tags of the results, to narrow them down (like a booru)
             })
         }
     }
@@ -1408,9 +1436,29 @@ Kirigami.ApplicationWindow {
     // Shows the items with the chosen tags, staying in the grid: in the library folder this page is in, and in
     // the same kind of items (the tab). Clicking a tag chooses it; on a page that already shows the results of
     // tags, the next tag narrows them. The tag browser stays open: it is closed only by its own button.
+    // A tag as a search term (quoted when it has spaces)
+    function tagTerm(category, name) {
+        return category + ":" + (name.indexOf(" ") >= 0 ? '"' + name + '"' : name)
+    }
+
+    // The "-" on a tag in the sidebar: the same items without the ones that have it
+    function excludeTag(category, name) {
+        var page = pageStack.currentItem
+        if (!page || page.isGridPage !== true) return
+        var base = ""
+        if (page.isSearch && !page.isTagPage && root.searchState) base = root.searchState.query
+        else if (page.isTagPage) base = page.browsedTags.map(function(t) { return tagTerm(t.category, t.name) }).join(" ")
+        runSearch((base + " -" + tagTerm(category, name)).trim())
+    }
+
     function browseTag(category, name) {
         var page = pageStack.currentItem
         if (!page || page.isGridPage !== true) return
+        // a typed search: the tag narrows it, like a booru's "+"
+        if (page.isSearch && !page.isTagPage && root.searchState) {
+            runSearch(root.searchState.query + " " + tagTerm(category, name))
+            return
+        }
         var chosen = page.isTagPage ? page.browsedTags.slice() : []
         for (var i = 0; i < chosen.length; i++) {
             if (chosen[i].category === category && chosen[i].name === name) return
@@ -1724,6 +1772,23 @@ Kirigami.ApplicationWindow {
                 anchors.fill: parent
                 spacing: 0
 
+                // Browsing by tag: a sidebar on the left (the tags of what the page shows, with counts)
+                TagBrowsePanel {
+                    objectName: "tagBrowsePanel"
+                    Layout.fillHeight: true
+                    Layout.preferredWidth: implicitWidth
+                    visible: gridPage.browseOpen
+                    mediaBackend: mediaModel
+                    subfolderBackend: subfolderModel
+                    tagBackend: tagModel
+                    onCloseRequested: gridPage.browseOpen = false
+                    selected: gridPage.browsedTags
+                    onTagChosen: function(category, name) { root.browseTag(category, name) }
+                    onTagRemoved: function(category, name) { root.unbrowseTag(category, name) }
+                    onTagExcluded: function(category, name) { root.excludeTag(category, name) }
+                    dockedRight: false
+                }
+
               ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -1849,6 +1914,27 @@ Kirigami.ApplicationWindow {
                     Layout.rightMargin: 24
                     Layout.topMargin: 10
                     visible: gridPage.isSearch && root.searchState !== null && (root.searchState.query || "") !== ""
+                    // what kind of results to show, with how many of each
+                    Repeater {
+                        model: {
+                            gridView.count                      // counted again when the results change
+                            var c = mediaModel.kindCounts()
+                            return [{ mode: MediaModel.All, name: "All", n: c.all },
+                                    { mode: MediaModel.ImagesOnly, name: "Images", n: c.images },
+                                    { mode: MediaModel.VideosOnly, name: "Videos", n: c.videos },
+                                    { mode: MediaModel.MangaOnly, name: "Manga", n: c.manga },
+                                    { mode: MediaModel.BooksOnly, name: "EBooks", n: c.books }]
+                                   .filter(function(k) { return k.mode === MediaModel.All || k.n > 0 })
+                        }
+                        delegate: Kirigami.Chip {
+                            required property var modelData
+                            text: modelData.name + "  " + modelData.n
+                            closable: false
+                            checkable: true
+                            checked: mediaModel.filterMode === modelData.mode
+                            onClicked: mediaModel.filterMode = modelData.mode
+                        }
+                    }
                     Item { Layout.fillWidth: true }
                     Button {
                         objectName: "saveAsBoard"
@@ -2190,19 +2276,6 @@ Kirigami.ApplicationWindow {
                     onCloseRequested: gridPage.metadataMediaId = -1
                 }
 
-                TagBrowsePanel {
-                    objectName: "tagBrowsePanel"
-                    Layout.fillHeight: true
-                    Layout.preferredWidth: implicitWidth
-                    visible: gridPage.browseOpen
-                    mediaBackend: mediaModel
-                    subfolderBackend: subfolderModel
-                    tagBackend: tagModel
-                    onCloseRequested: gridPage.browseOpen = false
-                    selected: gridPage.browsedTags
-                    onTagChosen: function(category, name) { root.browseTag(category, name) }
-                    onTagRemoved: function(category, name) { root.unbrowseTag(category, name) }
-                }
 
                 // Shown for the whole of tag mode (not only while something is
                 // selected) so the grid doesn't resize on every click.
