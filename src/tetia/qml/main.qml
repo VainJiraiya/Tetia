@@ -7,6 +7,7 @@ import QtQuick.Layouts
 import org.kde.kirigami 2.20 as Kirigami
 import Tetia 1.0
 import "./views"
+import "views/thumbUri.js" as ThumbUri
 
 Kirigami.ApplicationWindow {
     id: root
@@ -1206,6 +1207,8 @@ Kirigami.ApplicationWindow {
             page.filterCategory = category === "favorites" ? "" : category
         }
         gridCategory(category)
+        subfolderModel.formatFilter = page ? page.formatFilter : ""
+        if (page) page.continueItems = folderModel.continueReading(8)
         var active = page ? page.activeSource : ""
         if (active !== "" && !groups.all.some(function(s) { return s.path === active })) {
             active = ""                                  // that folder left the library
@@ -1509,6 +1512,7 @@ Kirigami.ApplicationWindow {
     // Makes mediaModel hold this folder, filtered for the category.
     function loadFolder(folderPath, category) {
         root.rootShown = false
+        subfolderModel.formatFilter = ""
         root.currentFolder = folderPath
         root.currentVirtual = -1
         mediaModel.openFolder(folderPath)       // shown at once from the library, scanned in the background
@@ -1574,6 +1578,9 @@ Kirigami.ApplicationWindow {
             // the tab's top level (the first page): its library folders; activeSource is the one chip picked ("": all)
             property bool isRoot: false
             property string activeSource: ""
+            // Manga and EBooks: the series format picked over the top level ("": all), and what is partway
+            property string formatFilter: ""
+            property var continueItems: []
             property var folderPath: null
             property string filterCategory: ""
             property var crumbs: []
@@ -1617,6 +1624,7 @@ Kirigami.ApplicationWindow {
                     if (pageStack.currentItem !== gridPage) return
                     if (gridPage.isRoot) {
                         if (!root.rootShown) root.loadRoot()
+                        else gridPage.continueItems = folderModel.continueReading(8)     // back from the reader
                         return
                     }
                     if (gridPage.isSearch) {
@@ -1642,13 +1650,19 @@ Kirigami.ApplicationWindow {
                 Layout.fillHeight: true
                 spacing: 0
 
-                // A tab's top level: one chip per library folder, to see that one alone
-                Flow {
-                    objectName: "sourceChips"
+                // A tab's top level: one chip per library folder (to see that one alone), and in Manga and EBooks
+                // the series format to show
+                RowLayout {
+                    readonly property bool formats: gridPage.isRoot && (gridPage.filterCategory === "manga" || gridPage.filterCategory === "books")
                     Layout.fillWidth: true
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
                     Layout.topMargin: 14
+                    visible: !root.onFavoritesTab && (sourceChips.visible || formats)
+                Flow {
+                    id: sourceChips
+                    objectName: "sourceChips"
+                    Layout.fillWidth: true
                     spacing: 8
                     visible: gridPage.isRoot && root.sourceList.length > 1 && !root.onFavoritesTab
                     Repeater {
@@ -1662,6 +1676,129 @@ Kirigami.ApplicationWindow {
                             onClicked: {
                                 gridPage.activeSource = modelData.path
                                 root.loadRoot()
+                            }
+                        }
+                    }
+                }
+                Item { Layout.fillWidth: !sourceChips.visible }
+                Button {
+                    id: formatButton
+                    objectName: "formatButton"
+                    visible: parent.formats
+                    text: "Format: " + (gridPage.formatFilter === "" ? "All"
+                          : gridPage.formatFilter.charAt(0).toUpperCase() + gridPage.formatFilter.slice(1))
+                    icon.name: "view-filter"
+                    onClicked: formatMenu.popup(formatButton, 0, formatButton.height)
+                    Menu {
+                        id: formatMenu
+                        MenuItem {
+                            text: "All"
+                            checkable: true
+                            checked: gridPage.formatFilter === ""
+                            onTriggered: { gridPage.formatFilter = ""; root.loadRoot() }
+                        }
+                        MenuSeparator {}
+                        Instantiator {
+                            model: subfolderModel.formats()
+                            delegate: MenuItem {
+                                required property var modelData
+                                text: modelData.name
+                                checkable: true
+                                checked: gridPage.formatFilter === modelData.key
+                                onTriggered: { gridPage.formatFilter = modelData.key; root.loadRoot() }
+                            }
+                            onObjectAdded: function(i, item) { formatMenu.insertItem(i + 2, item) }
+                            onObjectRemoved: function(i, item) { formatMenu.removeItem(item) }
+                        }
+                    }
+                }
+                }
+
+                // Manga and EBooks: what you are partway through, most recent first
+                ColumnLayout {
+                    objectName: "continueReading"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 24
+                    Layout.rightMargin: 24
+                    Layout.topMargin: 14
+                    spacing: 8
+                    visible: gridPage.isRoot && gridPage.continueItems.length > 0 && gridPage.formatFilter === ""
+                             && (gridPage.filterCategory === "manga" || gridPage.filterCategory === "books")
+                    Label {
+                        text: "Continue reading"
+                        font.weight: Font.DemiBold
+                    }
+                    Row {
+                        id: continueCards
+                        Layout.fillWidth: true
+                        spacing: 16
+                        readonly property int fits: Math.max(1, Math.floor((width + spacing) / (320 + spacing)))
+                        Repeater {
+                            model: gridPage.continueItems.slice(0, continueCards.fits)
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: 320
+                                height: 100
+                                radius: 8
+                                color: cardHover.hovered ? Qt.tint(Kirigami.Theme.backgroundColor, Qt.alpha(Kirigami.Theme.highlightColor, 0.12))
+                                                         : Kirigami.Theme.backgroundColor
+                                border.width: 1
+                                border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
+                                HoverHandler { id: cardHover; cursorShape: Qt.PointingHandCursor }
+                                TapHandler {
+                                    onTapped: {
+                                        if (modelData.kind === "series") {
+                                            var chapter = subfolderModel.openSeries(modelData.uri, "resume")
+                                            if (chapter !== "") root.openFile(chapter)
+                                        } else {
+                                            root.openFile(modelData.uri)
+                                        }
+                                    }
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+                                    spacing: 12
+                                    Kirigami.ShadowedImage {
+                                        Layout.preferredWidth: 56
+                                        Layout.preferredHeight: 84
+                                        radius: 4
+                                        source: "image://thumbnail/" + ThumbUri.fromPath(modelData.cover)
+                                        sourceSize: Qt.size(256, 256)
+                                        fillMode: Image.PreserveAspectCrop
+                                        asynchronous: true
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 3
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: modelData.name
+                                            font.weight: Font.DemiBold
+                                            elide: Text.ElideRight
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: modelData.where
+                                            opacity: 0.7
+                                            font: Kirigami.Theme.smallFont
+                                            elide: Text.ElideRight
+                                        }
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            Layout.topMargin: 6
+                                            height: 4
+                                            radius: 2
+                                            color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
+                                            Rectangle {
+                                                width: parent.width * Math.min(1, modelData.fraction)
+                                                height: parent.height
+                                                radius: 2
+                                                color: Kirigami.Theme.highlightColor
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

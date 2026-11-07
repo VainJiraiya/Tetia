@@ -151,6 +151,52 @@ class FolderModel(QAbstractListModel):
         "previous"."""
         return series.open_series(self.db, folder_path, which)
 
+    @Slot(int, result=list)
+    def continueReading(self, limit: int = 8) -> list:
+        """What is partway in this tab, most recently read first: a series (where its next chapter is) or a single
+        book (which page). [{kind ("series"|"book"), uri, name, cover (a local path), where, fraction}]."""
+        extensions = CATEGORY_EXTENSIONS.get(self._current_category)
+        if not extensions or self._current_category not in ("manga", "books"):
+            return []
+        roots = [covers.folder_key(f["path"]).rstrip(os.sep) + os.sep for f in self._folders]
+        found, seen = [], set()
+        try:
+            recent = self.db.recent_reading()
+        except sqlite3.Error as e:
+            logger.error("Failed to read what was read lately: %s", e)
+            return []
+        for row in recent:
+            path = row["path"]
+            if Path(path).suffix.lower() not in extensions or not any(path.startswith(r) for r in roots):
+                continue
+            folder = os.path.dirname(path)
+            meta = self.db.get_collection_meta(covers.folder_key(folder))
+            if meta["is_series"]:
+                if folder in seen:
+                    continue
+                seen.add(folder)
+                progress = series.progress(self.db, folder)
+                if progress["finished"] or not progress["total"]:
+                    continue
+                at = min(progress["total"] - progress["left"] + 1, progress["total"])
+                cover = covers.tile_picture(folder, extensions & covers.ANY_PICTURE_EXTENSIONS,
+                                            lambda p: self.db.get_collection_meta(covers.folder_key(p)), set())
+                found.append({"kind": "series", "uri": covers.folder_uri(folder), "name": os.path.basename(folder),
+                              "cover": cover or path, "where": "Chapter %d of %d" % (at, progress["total"]),
+                              "fraction": progress["fraction"]})
+            else:
+                if row["finished"] or path in seen:
+                    continue
+                seen.add(path)
+                total = row["total"] or 0
+                found.append({"kind": "book", "uri": QUrl.fromLocalFile(path).toString(QUrl.FullyEncoded),
+                              "name": Path(path).stem, "cover": path,
+                              "where": ("Page %d of %d" % (row["page"] + 1, total)) if total else "",
+                              "fraction": (row["page"] + 1) / total if total else 0.0})
+            if len(found) >= limit:
+                break
+        return found
+
     @Slot(result="QVariantMap")
     def sourceGroups(self):
         """The tab's library folders for its top level: {"all": [{path, name}], "expand": [...], "tiles": [...]}.

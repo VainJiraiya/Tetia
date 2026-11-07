@@ -16,7 +16,7 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QUrl, Signal, Slot, Property
 from PySide6.QtQml import QmlElement
 
-from tetia.models import covers, series, virtualfolders
+from tetia.models import covers, reader, series, virtualfolders
 from tetia.models.database import get_database
 from tetia.models.mediaModel import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
@@ -106,8 +106,10 @@ class SubfolderModel(QAbstractListModel):
         LeftRole = Qt.UserRole + 14            # a series: chapters or episodes not read or watched to the end (-1: none)
         ProgressRole = Qt.UserRole + 15        # a series: how far, 0..1
         FinishedRole = Qt.UserRole + 16        # a series read or watched to the end
+        FormatRole = Qt.UserRole + 17          # a series' format (manga, webtoon...): "" when not said
 
     filterModeChanged = Signal()
+    formatFilterChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -119,6 +121,7 @@ class SubfolderModel(QAbstractListModel):
         self._virtual_id = -1           # >= 0: the tiles of that virtual folder, not of a real one
         self._filter_mode = MediaModel.FilterMode.All
         self._dirs: list[dict] = []   # {"path", "name", "count"}
+        self._format_filter = ""      # "": every tile; a format: only the series of that format
         self._meta: dict = {}
         covers.notifier.changed.connect(self._on_collection_changed)
 
@@ -215,6 +218,10 @@ class SubfolderModel(QAbstractListModel):
             if "folders" not in entry:
                 entry["folders"] = len(_scan(entry["path"])[1])
             return entry["folders"]
+        if role == self.Roles.FormatRole:
+            if virtual is not None or not self._is_series(entry):
+                return ""
+            return self._meta.get(covers.folder_key(entry["path"]), {}).get("format") or ""
         if role in (self.Roles.LeftRole, self.Roles.ProgressRole, self.Roles.FinishedRole):
             if not self._is_series(entry):
                 return {self.Roles.LeftRole: -1, self.Roles.ProgressRole: 0.0, self.Roles.FinishedRole: False}[role]
@@ -243,6 +250,7 @@ class SubfolderModel(QAbstractListModel):
             self.Roles.LeftRole: b"left",
             self.Roles.ProgressRole: b"progress",
             self.Roles.FinishedRole: b"finished",
+            self.Roles.FormatRole: b"format",
         }
 
     @Slot()
@@ -364,6 +372,10 @@ class SubfolderModel(QAbstractListModel):
         except sqlite3.Error as e:
             logger.error("Failed to load subfolder covers/favorites: %s", e)
             meta = {}
+        if self._format_filter:
+            found = [e for e in found if e.get("virtual") is None
+                     and meta.get(covers.folder_key(e["path"]), {}).get("is_series")
+                     and meta.get(covers.folder_key(e["path"]), {}).get("format") == self._format_filter]
         self.beginResetModel()
         self._dirs = found
         self._meta = meta
@@ -444,6 +456,7 @@ class SubfolderModel(QAbstractListModel):
                     self.Roles.LeftRole,
                     self.Roles.ProgressRole,
                     self.Roles.FinishedRole,
+                    self.Roles.FormatRole,
                 ])
             elif key.startswith(own + os.sep):
                 idx = self.index(row)
@@ -488,6 +501,36 @@ class SubfolderModel(QAbstractListModel):
     @Slot(str, bool)
     def setSeries(self, folder_path: str, is_series: bool):
         series.set_series(self._db, folder_path, is_series)
+
+    @Slot(str, str)
+    def setFormat(self, folder_path: str, fmt: str):
+        """Say what kind of series a folder is (reader.FORMATS; "" to forget it)."""
+        key = covers.folder_key(folder_path)
+        try:
+            self._db.set_collection_format(key, fmt if fmt in reader.FORMATS else None)
+        except sqlite3.Error as e:
+            logger.error("Failed to set the format of %s: %s", key, e)
+            return
+        covers.notifier.changed.emit(key)
+        if self._format_filter:
+            self._reload()
+
+    @Slot(result=list)
+    def formats(self) -> list:
+        """[{key, name}] of every format, for menus."""
+        return [{"key": key, "name": reader.FORMAT_NAMES[key]} for key in reader.FORMATS]
+
+    @Property(str, notify=formatFilterChanged)
+    def formatFilter(self) -> str:
+        return self._format_filter
+
+    @formatFilter.setter
+    def formatFilter(self, fmt: str):
+        fmt = fmt if fmt in reader.FORMATS else ""
+        if fmt != self._format_filter:
+            self._format_filter = fmt
+            self.formatFilterChanged.emit()
+            self._reload()
 
     @Slot(str, result=list)
     def episodeUris(self, folder_path: str) -> list:

@@ -128,6 +128,7 @@ class Database:
             (12, self._migrate_v12),
             (13, self._migrate_v13),
             (14, self._migrate_v14),
+            (15, self._migrate_v15),
         )
         for target, step in steps:
             if version < target:
@@ -357,6 +358,12 @@ class Database:
                 self.conn.execute(f"ALTER TABLE media ADD COLUMN {name} INTEGER")
         self.conn.execute("UPDATE media SET added_at = mtime WHERE added_at IS NULL")
 
+    def _migrate_v15(self):
+        # What kind of series a folder is (manga, manhwa, webtoon...): how the reader opens it, and a filter
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(collection)")}
+        if "format" not in columns:
+            self.conn.execute("ALTER TABLE collection ADD COLUMN format TEXT")
+
     def close(self):
         self.conn.close()
 
@@ -421,6 +428,13 @@ class Database:
                 if row["opened"]:
                     started.add(row["path"])
         return done, started
+
+    def recent_reading(self, limit: int = 60) -> list[dict]:
+        """The books read most recently, newest first: [{path, page, total, finished}] (files still there)."""
+        rows = self.conn.execute(
+            "SELECT m.path, r.page, r.total, r.finished FROM reading_progress r JOIN media m ON m.id = r.media_id "
+            "WHERE m.missing = 0 ORDER BY r.updated DESC LIMIT ?", (int(limit),)).fetchall()
+        return [dict(row) for row in rows]
 
     def get_progress_many(self, media_ids) -> dict:
         """{media_id: progress} for the books that have one."""
@@ -522,7 +536,8 @@ class Database:
         """{'cover_path', 'favorite', 'is_series', 'last_read'} (defaults if no row)."""
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT cover_path, favorite, is_series, last_read, rating, description FROM collection WHERE path = ?", (path,))
+            "SELECT cover_path, favorite, is_series, last_read, rating, description, format FROM collection WHERE path = ?",
+            (path,))
         row = cursor.fetchone()
         return self._meta_from_row(row) if row else self._meta_from_row(None)
 
@@ -530,10 +545,10 @@ class Database:
     def _meta_from_row(row) -> dict:
         if row is None:
             return {"cover_path": None, "favorite": False, "is_series": False, "last_read": None, "rating": None,
-                    "description": None}
+                    "description": None, "format": None}
         return {"cover_path": row["cover_path"], "favorite": bool(row["favorite"]),
                 "is_series": bool(row["is_series"]), "last_read": row["last_read"], "rating": row["rating"],
-                "description": row["description"]}
+                "description": row["description"], "format": row["format"]}
 
     def get_collections_meta(self, paths) -> dict[str, dict]:
         """get_collection_meta for many paths at once: {path: meta}."""
@@ -543,7 +558,7 @@ class Database:
             chunk = paths[start:start + 500]
             marks = ",".join("?" * len(chunk))
             cursor = self.conn.execute(
-                f"SELECT path, cover_path, favorite, is_series, last_read, rating, description FROM collection "
+                f"SELECT path, cover_path, favorite, is_series, last_read, rating, description, format FROM collection "
                 f"WHERE path IN ({marks})",
                 chunk
             )
@@ -554,7 +569,7 @@ class Database:
     def _tidy_collection(self, path: str):
         self.conn.execute(
             "DELETE FROM collection WHERE path = ? AND favorite = 0 AND cover_path IS NULL "
-            "AND is_series = 0 AND rating IS NULL AND description IS NULL",
+            "AND is_series = 0 AND rating IS NULL AND description IS NULL AND format IS NULL",
             (path,)
         )
 
@@ -564,6 +579,17 @@ class Database:
                 "INSERT INTO collection (path, favorite) VALUES (?, ?) "
                 "ON CONFLICT(path) DO UPDATE SET favorite = excluded.favorite",
                 (path, 1 if favorite else 0)
+            )
+            self._tidy_collection(path)
+        self._write(_do)
+
+    def set_collection_format(self, path: str, fmt):
+        """What kind of series a folder is (one of reader.FORMATS; None: not said)."""
+        def _do():
+            self.conn.execute(
+                "INSERT INTO collection (path, format) VALUES (?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET format = excluded.format",
+                (path, fmt or None)
             )
             self._tidy_collection(path)
         self._write(_do)

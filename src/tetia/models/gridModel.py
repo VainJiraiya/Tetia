@@ -34,6 +34,7 @@ _SUB_ROLES = {
     Qt.UserRole + 113: (b"subfolderLeft", Qt.UserRole + 14),
     Qt.UserRole + 114: (b"subfolderProgress", Qt.UserRole + 15),
     Qt.UserRole + 115: (b"subfolderFinished", Qt.UserRole + 16),
+    Qt.UserRole + 116: (b"subfolderFormat", Qt.UserRole + 17),
 }
 _IS_FOLDER = Qt.UserRole + 100
 
@@ -124,8 +125,13 @@ class GridModel(QAbstractListModel):
     def rowCount(self, parent=QModelIndex()):
         if parent.isValid():
             return 0
-        files = self._media.rowCount() if self._media is not None else 0
-        return self._folder_count + files
+        return self._folder_count + self._file_count()
+
+    def _file_count(self):
+        # while the tiles are filtered by a series format, loose files (which have none) are not shown
+        if self._media is None or (self._subs is not None and getattr(self._subs, "formatFilter", "")):
+            return 0
+        return self._media.rowCount()
 
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid() or not (0 <= index.row() < self.rowCount()):
@@ -169,7 +175,7 @@ class GridModel(QAbstractListModel):
         """(kind, aspect) of every row, for tileLayout: folder tiles, comics and books are covers; images and
         videos are pictures in their own shape (a shape not known yet is guessed: square, a video 16:9)."""
         found = [(tileLayout.COVER, tileLayout.COVER_ASPECT)] * self._folder_count
-        items = self._media._visible_items if self._media is not None else []
+        items = self._media._visible_items if self._media is not None and self._file_count() else []
         for item in items:
             if item.get("is_comic") or item.get("is_book"):
                 found.append((tileLayout.COVER, tileLayout.COVER_ASPECT))
@@ -185,7 +191,8 @@ class GridModel(QAbstractListModel):
     def sections(self):
         """{row: title} where a group of files starts under its own title: on a tab's top level, each library
         folder's loose files ("Loose in Anime art · 1,204"). Nothing when only one folder's files are shown."""
-        if self._media is None or not hasattr(self._media, "sourceGroups") or len(self._media.sources) < 2:
+        if self._media is None or not hasattr(self._media, "sourceGroups") or len(self._media.sources) < 2 \
+                or not self._file_count():
             return {}
         titles = {}
         for row, name, count in self._media.sourceGroups():

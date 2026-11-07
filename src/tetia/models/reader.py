@@ -78,6 +78,25 @@ def suggest_layout(sizes: list) -> str:
     return "strip" if ratios and statistics.median(ratios) > STRIP_RATIO else "paged"
 
 
+# What kind of series a folder is. It says how the reader opens it when nothing was remembered for the series:
+# a webtoon is one long strip; manga (and doujin, oneshots) read right to left; the rest left to right. The page
+# shapes still decide paged or strip for the others.
+FORMATS = ("manga", "manhwa", "manhua", "webtoon", "doujin", "oneshot", "artbook")
+FORMAT_NAMES = {"manga": "Manga", "manhwa": "Manhwa", "manhua": "Manhua", "webtoon": "Webtoon", "doujin": "Doujin",
+                "oneshot": "Oneshot", "artbook": "Artbook"}
+
+
+def format_defaults(fmt: str) -> dict:
+    """{layout?, direction?} a series of this format opens with (empty for no format)."""
+    if fmt == "webtoon":
+        return {"layout": "strip", "direction": "ltr"}
+    if fmt in ("manga", "doujin", "oneshot"):
+        return {"direction": "rtl"}
+    if fmt in ("manhwa", "manhua", "artbook"):
+        return {"direction": "ltr"}
+    return {}
+
+
 def suggest_direction(manga: str) -> str:
     """ComicInfo's Manga field says YesAndRightToLeft for a book read from right to left."""
     return "rtl" if (manga or "").strip().lower() == "yesandrighttoleft" else "ltr"

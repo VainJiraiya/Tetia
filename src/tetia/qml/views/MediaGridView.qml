@@ -499,6 +499,7 @@ Flickable {
         property bool isShow: false      // a series of videos
         readonly property string part: isShow ? "episode" : "chapter"
         property string heroPath: ""     // the picture this tile shows
+        property string format: ""       // a series' format ("" when not said)
 
         MenuItem {
             text: "Edit tags"
@@ -565,6 +566,15 @@ Flickable {
             onTriggered: subfolderMenu.isShow ? grid.showRequested(subfolderMenu.folderPath)
                                               : grid.subfolderClicked(subfolderMenu.folderPath)
         }
+        // what kind of series this is: how the reader opens it (manga right to left, a webtoon as a strip...).
+        // (A menu item that opens its own menu: a submenu cannot be hidden on the tiles it does not apply to.)
+        MenuItem {
+            text: "Format\u2026"
+            icon.name: "view-filter"
+            visible: subfolderMenu.isSeries && !subfolderMenu.isShow
+            height: visible ? implicitHeight : 0
+            onTriggered: formatSubmenu.popup()
+        }
         MenuSeparator { visible: subfolderMenu.isSeries }
         MenuItem {
             text: subfolderMenu.isSeries ? "Show as a folder" : "Show as a series"
@@ -573,7 +583,7 @@ Flickable {
             ToolTip.text: subfolderMenu.isSeries
                           ? "Go back to showing this as an ordinary folder you can open"
                           : (subfolderMenu.isShow || (grid.subfolderBackend !== null && grid.subfolderBackend.filterMode === MediaModel.VideosOnly)
-                             ? "Treat this folder's videos as one show: one tile that opens where you left off"
+                             ? "Treat this folder's videos as one series: one tile that opens where you left off"
                              : "Treat this folder's chapter files as one manga: one tile that opens where you left off")
             icon.name: "bookmarks-symbolic"
             // Only manga folders (chapters) and video folders (episodes) can be a series
@@ -651,6 +661,30 @@ Flickable {
             visible: grid.virtualAllowed && grid.virtualPage
             height: visible ? implicitHeight : 0
             onTriggered: { var t = grid.targetOf(-1, subfolderMenu.folderPath); grid.virtualActionRequested("remove", t.ids, t.tiles) }
+        }
+    }
+
+    // A series' format (opened from the folder menu's "Format...")
+    Menu {
+        id: formatSubmenu
+        MenuItem {
+            text: "Not set"
+            checkable: true
+            checked: subfolderMenu.format === ""
+            onTriggered: grid.subfolderBackend.setFormat(subfolderMenu.folderPath, "")
+        }
+        MenuSeparator {}
+        Instantiator {
+            model: grid.subfolderBackend ? grid.subfolderBackend.formats() : []
+            delegate: MenuItem {
+                required property var modelData
+                text: modelData.name
+                checkable: true
+                checked: subfolderMenu.format === modelData.key
+                onTriggered: grid.subfolderBackend.setFormat(subfolderMenu.folderPath, modelData.key)
+            }
+            onObjectAdded: function(i, item) { formatSubmenu.insertItem(i + 2, item) }
+            onObjectRemoved: function(i, item) { formatSubmenu.removeItem(item) }
         }
     }
 
@@ -921,8 +955,9 @@ Flickable {
         var n = d.subfolderCount || 0
         if (d.subfolderSingleFile) return ""
         if (d.subfolderIsSeries) {
-            if (d.subfolderFinished === true) return d.subfolderIsShow ? "Watched" : "Read"
-            return n + (d.subfolderIsShow ? (n === 1 ? " episode" : " episodes") : (n === 1 ? " chapter" : " chapters"))
+            var format = d.subfolderFormat ? d.subfolderFormat.charAt(0).toUpperCase() + d.subfolderFormat.slice(1) + " \u00B7 " : ""
+            if (d.subfolderFinished === true) return format + (d.subfolderIsShow ? "Watched" : "Read")
+            return format + n + (d.subfolderIsShow ? (n === 1 ? " episode" : " episodes") : (n === 1 ? " chapter" : " chapters"))
         }
         var parts = []
         if (d.subfolderIsVirtual === true) parts.push("Virtual folder")
@@ -948,6 +983,7 @@ Flickable {
             subfolderMenu.singleFile = d.subfolderSingleFile || ""
             subfolderMenu.singleId = d.subfolderSingleFileId
             subfolderMenu.heroPath = d.subfolderHero || ""
+            subfolderMenu.format = d.subfolderFormat || ""
             subfolderMenu.hasCustomCover = grid.subfolderBackend ? grid.subfolderBackend.hasCustomCover(d.subfolderPath) : false
             subfolderMenu.popup()
         } else if (grid.selecting) {

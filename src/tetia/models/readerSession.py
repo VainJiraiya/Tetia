@@ -297,8 +297,11 @@ class ReaderSession(QObject):
         self._context = reader.series_context(self._db, self._path)
         self._scope = reader.settings_scope(self._context, self._media_id, real)
         stored = reader.load_settings(self._db, self._scope)
-        self._layout = stored.get("layout") or reader.suggest_layout(book.sizes)
-        self._direction = stored.get("direction") or reader.suggest_direction(book.manga)
+        # what was remembered, else what the series' format says, else a guess from the book itself
+        fmt = self._db.get_collection_meta(covers.folder_key(self._context["folder"]))["format"] if self._context else None
+        defaults = reader.format_defaults(fmt or "")
+        self._layout = stored.get("layout") or defaults.get("layout") or reader.suggest_layout(book.sizes)
+        self._direction = stored.get("direction") or defaults.get("direction") or reader.suggest_direction(book.manga)
         self._fit = stored.get("fit") or ("width" if self._layout == "strip" else "height")
         self._remember = True
         progress = self._db.get_progress(self._media_id) if self._media_id is not None else None

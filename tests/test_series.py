@@ -65,7 +65,8 @@ def test_series_flag_and_last_read_are_stored(tmp_path):
     assert db.get_collections_meta([key])[key]["is_series"] is True
     db.set_collection_series(key, False)                  # forgets the chapter, drops the row
     assert db.get_collection_meta(key) == {"cover_path": None, "favorite": False,
-                                           "is_series": False, "last_read": None, "rating": None, "description": None}
+                                           "is_series": False, "last_read": None, "rating": None, "description": None,
+                                           "format": None}
 
 
 def test_series_survives_a_favorite_toggle(tmp_path):
