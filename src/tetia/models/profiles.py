@@ -307,11 +307,26 @@ def delete(profile_id: str) -> str:
 
 # ---- Launching ---------------------------------------------------------------
 
+def _own_launcher() -> list[str] | None:
+    """The `tetia` command this process was started with, if it was started with one.
+
+    A launcher can set up more than a bare Python interpreter has: the Nix package, for one, is a wrapper
+    that puts Tetia, PySide6 and Qt's paths in place, and `sys.executable` alone cannot import Tetia there.
+    Starting again through the same launcher gives the new process the same surroundings."""
+    argv0 = sys.argv[0] if sys.argv else ""
+    if os.path.basename(argv0) != "tetia":
+        return None                       # `python -m tetia`, a test runner, ...
+    path = argv0 if os.sep in argv0 else shutil.which(argv0)
+    if path and os.path.isfile(path) and os.access(path, os.X_OK):
+        return [os.path.abspath(path)]
+    return None
+
+
 def relaunch_command(profile_id: str) -> list[str]:
-    """argv that starts the app again, in a profile. Run as a module so it works
-    from a source tree, a virtualenv or a distro package alike. General is the
-    default, so it gets no argument at all."""
-    command = [sys.executable, "-m", "tetia"]
+    """argv that starts the app again, in a profile: through the launcher this process was started with, or as a
+    module (which works from a source tree, a virtualenv or a distro package alike). General is the default, so
+    it gets no argument at all."""
+    command = _own_launcher() or [sys.executable, "-m", "tetia"]
     if profile_id != GENERAL_ID:
         command += ["--profile", profile_id]
     return command

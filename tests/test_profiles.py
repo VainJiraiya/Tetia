@@ -79,6 +79,30 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(p.thumbnail_base(), base / "thumbnails")
         self.assertNotIn(".cache", str(p.thumbnail_base()))
 
+    def test_relaunch_goes_through_the_launcher_it_was_started_with(self):
+        # A wrapper (the Nix package) sets up what the bare interpreter cannot import: reuse it
+        with tempfile.TemporaryDirectory() as folder:
+            launcher = Path(folder) / "tetia"
+            launcher.write_text("#!/bin/sh\n")
+            launcher.chmod(0o755)
+            saved = sys.argv[:]
+            try:
+                sys.argv = [str(launcher), "--other"]
+                self.assertEqual(p.relaunch_command("general"), [str(launcher)])
+                self.assertEqual(p.relaunch_command("0123456789ab"), [str(launcher), "--profile", "0123456789ab"])
+                # not executable, missing, or not called tetia: fall back to the module
+                launcher.chmod(0o644)
+                self.assertEqual(p.relaunch_command("general")[1:], ["-m", "tetia"])
+                sys.argv = [str(Path(folder) / "nothing" / "tetia")]
+                self.assertEqual(p.relaunch_command("general")[1:], ["-m", "tetia"])
+                other = Path(folder) / "other"
+                other.write_text("#!/bin/sh\n")
+                other.chmod(0o755)
+                sys.argv = [str(other)]
+                self.assertEqual(p.relaunch_command("general")[1:], ["-m", "tetia"])
+            finally:
+                sys.argv = saved
+
     def test_relaunch_and_argument(self):
         self.assertEqual(p.relaunch_command("general")[1:], ["-m", "tetia"])
         self.assertEqual(p.relaunch_command("0123456789ab")[1:],
