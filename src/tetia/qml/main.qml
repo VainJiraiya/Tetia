@@ -314,6 +314,12 @@ Kirigami.ApplicationWindow {
                         onClosed: leftButton.lastClosedTime = Date.now()
 
                         MenuItem {
+                            text: "New Board\u2026"
+                            icon.name: "list-add"
+                            enabled: !root.onFavoritesTab
+                            onTriggered: root.newBoard([], folderModel.currentCategory)
+                        }
+                        MenuItem {
                             text: "Library Folders\u2026"
                             icon.name: "folder-add"
                             enabled: !root.onFavoritesTab
@@ -398,6 +404,10 @@ Kirigami.ApplicationWindow {
                 Label {
                     id: titleText
                     anchors.fill: parent
+                    // centred on the whole header (like the window's own title), not on the room the buttons leave
+                    readonly property real shift: headerRow.width / 2 - (titleSlot.x + titleSlot.width / 2)
+                    anchors.leftMargin: Math.max(0, 2 * shift)
+                    anchors.rightMargin: Math.max(0, -2 * shift)
                     visible: titleSlot.crumbs.length < 2
                     text: pageStack.currentItem && pageStack.currentItem.title ? pageStack.currentItem.title : "Collections"
                     font.pixelSize: 18
@@ -510,6 +520,31 @@ Kirigami.ApplicationWindow {
 
                     Menu {
                         id: sortMenu
+                        readonly property var page: pageStack.currentItem
+                        readonly property bool formats: !!page && page.isRoot === true
+                                                        && (page.filterCategory === "manga" || page.filterCategory === "books")
+                        // Manga and EBooks: show only the series of one format
+                        MenuItem {
+                            text: "Show all formats"
+                            visible: sortMenu.formats
+                            height: visible ? implicitHeight : 0
+                            icon.name: sortMenu.formats && sortMenu.page.formatFilter === "" ? "checkmark" : ""
+                            onTriggered: { sortMenu.page.formatFilter = ""; root.loadRoot() }
+                        }
+                        Instantiator {
+                            model: subfolderModel.formats()
+                            delegate: MenuItem {
+                                required property var modelData
+                                text: "Show only " + modelData.name
+                                visible: sortMenu.formats
+                                height: visible ? implicitHeight : 0
+                                icon.name: sortMenu.formats && sortMenu.page.formatFilter === modelData.key ? "checkmark" : ""
+                                onTriggered: { sortMenu.page.formatFilter = modelData.key; root.loadRoot() }
+                            }
+                            onObjectAdded: function(i, item) { sortMenu.insertItem(i + 1, item) }
+                            onObjectRemoved: function(i, item) { sortMenu.removeItem(item) }
+                        }
+                        MenuSeparator { visible: sortMenu.formats }
 
                         MenuItem {
                             text: "Default"
@@ -1511,6 +1546,15 @@ Kirigami.ApplicationWindow {
         var viewer = pageStack.currentItem
         if (!viewer || viewer.isViewer !== true) return
         var from = viewer.sourcePage
+        // Opened from results already: show this tag's results on that page instead of stacking a page per tag
+        // (cycling through tags must not leave a long trail of pages to go back through)
+        if (from && from.isSearch === true) {
+            var popped = pageStack.pop()
+            if (popped) popped.destroy()
+            if (from.isTagPage) runTagPage([{ category: category, name: name }], from)
+            else runSearch(tagTerm(category, name))
+            return
+        }
         var chosen = (from && from.isTagPage) ? from.browsedTags.slice() : []
         for (var i = 0; i < chosen.length; i++) {
             if (chosen[i].category === category && chosen[i].name === name) return
@@ -1844,8 +1888,8 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
-                    Layout.topMargin: 14
-                    visible: gridPage.isRoot && !root.onFavoritesTab
+                    Layout.topMargin: 20         // every strip over the tiles starts where the tiles would
+                    visible: sourceChips.visible
                 Flow {
                     id: sourceChips
                     objectName: "sourceChips"
@@ -1867,45 +1911,6 @@ Kirigami.ApplicationWindow {
                         }
                     }
                 }
-                Item { Layout.fillWidth: !sourceChips.visible }
-                Button {
-                    objectName: "newBoardButton"
-                    visible: gridPage.isRoot && !root.onFavoritesTab
-                    text: "New Board"
-                    icon.name: "list-add"
-                    onClicked: root.newBoard([], gridPage.filterCategory)
-                }
-                Button {
-                    id: formatButton
-                    objectName: "formatButton"
-                    visible: parent.formats
-                    text: "Format: " + (gridPage.formatFilter === "" ? "All"
-                          : gridPage.formatFilter.charAt(0).toUpperCase() + gridPage.formatFilter.slice(1))
-                    icon.name: "view-filter"
-                    onClicked: formatMenu.popup(formatButton, 0, formatButton.height)
-                    Menu {
-                        id: formatMenu
-                        MenuItem {
-                            text: "All"
-                            checkable: true
-                            checked: gridPage.formatFilter === ""
-                            onTriggered: { gridPage.formatFilter = ""; root.loadRoot() }
-                        }
-                        MenuSeparator {}
-                        Instantiator {
-                            model: subfolderModel.formats()
-                            delegate: MenuItem {
-                                required property var modelData
-                                text: modelData.name
-                                checkable: true
-                                checked: gridPage.formatFilter === modelData.key
-                                onTriggered: { gridPage.formatFilter = modelData.key; root.loadRoot() }
-                            }
-                            onObjectAdded: function(i, item) { formatMenu.insertItem(i + 2, item) }
-                            onObjectRemoved: function(i, item) { formatMenu.removeItem(item) }
-                        }
-                    }
-                }
                 }
 
                 // A board's page: what it is (its search, how many), and how its pictures are laid out
@@ -1915,7 +1920,7 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
-                    Layout.topMargin: 12
+                    Layout.topMargin: 20         // every strip over the tiles starts where the tiles would
                     visible: gridPage.boardId >= 0
                     spacing: Kirigami.Units.smallSpacing
                     Label {
@@ -1958,7 +1963,7 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
-                    Layout.topMargin: 12
+                    Layout.topMargin: 20         // every strip over the tiles starts where the tiles would
                     visible: only !== null
                     spacing: Kirigami.Units.largeSpacing
                     Rectangle {
@@ -1995,7 +2000,7 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
-                    Layout.topMargin: 10
+                    Layout.topMargin: 20         // every strip over the tiles starts where the tiles would
                     visible: gridPage.isSearch && root.searchState !== null && (root.searchState.query || "") !== ""
                     // what kind of results to show, with how many of each
                     Repeater {
@@ -2043,7 +2048,7 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
-                    Layout.topMargin: 14
+                    Layout.topMargin: 20         // every strip over the tiles starts where the tiles would
                     spacing: 8
                     visible: gridPage.isRoot && gridPage.continueItems.length > 0 && gridPage.formatFilter === ""
                              && (gridPage.filterCategory === "manga" || gridPage.filterCategory === "books")
