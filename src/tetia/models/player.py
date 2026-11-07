@@ -32,6 +32,8 @@ _API_TYPE, _GL_INIT, _GL_FBO, _FLIP_Y, _X11_DISPLAY, _WL_DISPLAY = 1, 2, 3, 4, 8
 _GET_PROC = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p)
 _UPDATE_CB = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
 
+END_MARGIN = 2.0   # a start this close to a file's end (seconds) means the remembered spot no longer fits it
+
 
 class _Param(ctypes.Structure):
     _fields_ = [("type", ctypes.c_int), ("data", ctypes.c_void_p)]
@@ -104,6 +106,8 @@ class Player(QObject):
         self._paused = False
         self._ended = False
         self._position = 0.0
+        self._start = 0.0
+        self._restarting = False
         self._duration = 0.0
         self._volume = 100.0
         self._muted = False
@@ -164,6 +168,8 @@ class Player(QObject):
         self._loaded = False
         self._ended = False
         self._position = float(start)
+        self._start = float(start)
+        self._restarting = False
         self._duration = 0.0
         self._audio, self._subs, self._track_key = [], [], None
         self._title = os.path.basename(path)
@@ -343,9 +349,23 @@ class Player(QObject):
             self._loading_ticks += 1
             if duration is not None:
                 self._loading, self._loaded, changed = False, True, True
+                if self._start > 1 and self._start >= duration - END_MARGIN:
+                    # The remembered spot is past this file's end (it was replaced by a shorter one):
+                    # start over, not at the end, which would count it as watched and move on
+                    engine.command("seek", "0", "absolute+exact")
+                    self._restarting = True
+                    self._position = 0.0
+                    self.positionChanged.emit()
             elif engine.get_flag("idle-active") and self._loading_ticks > 3:
                 self._loading = False
                 self._set_error("Couldn't play this file")
+        if self._loaded and self._restarting:
+            position = engine.get_double("time-pos")
+            if position is None or position >= (duration or 0.0) - END_MARGIN:
+                if changed:                 # until the seek lands, mpv still says "at the end": don't believe it
+                    self.stateChanged.emit()
+                return
+            self._restarting = False
         if self._loaded:
             position = engine.get_double("time-pos")
             if position is not None and abs(position - self._position) >= 0.05:

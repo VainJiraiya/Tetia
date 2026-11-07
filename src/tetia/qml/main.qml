@@ -828,8 +828,10 @@ Kirigami.ApplicationWindow {
         // Hidden while the image viewer is open -- switching categories
         // mid-zoom doesn't make sense, and the viewer wants the full window
         // height anyway. (Tested by page rather than by depth: opened from
-        // the Favorites tab the viewer is at depth 2, not 3.)
-        visible: !(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isReader === true))
+        // the Favorites tab the viewer is at depth 2, not 3.) Hidden in purge
+        // mode too: a tab would close it and drop the marks without asking.
+        visible: !(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isReader === true
+                                             || pageStack.currentItem.isPurge === true))
         actions: [
             Kirigami.Action {
                 // Not image-x-generic(-symbolic): in Breeze that falls back to a coloured

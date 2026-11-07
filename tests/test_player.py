@@ -107,6 +107,15 @@ def test_the_player_reports_the_end_and_starts_over(quiet_player, clip):
     assert wait_for(lambda: (p._poll(), not p.ended)[1])
 
 
+def test_a_start_past_the_end_starts_over_and_does_not_end(quiet_player, clip):
+    p = quiet_player
+    ends = []
+    p.endReached.connect(lambda: ends.append(1))
+    p.load(clip, 600)                      # remembered from a longer file that had this name
+    assert wait_for(lambda: (p._poll(), p.loaded and not p._restarting)[1])
+    assert p.position < 2.0 and p.ended is False and ends == []
+
+
 def test_a_file_that_cannot_play_is_an_error(quiet_player, tmp_path):
     bad = tmp_path / "broken.mkv"
     bad.write_bytes(b"not a video")

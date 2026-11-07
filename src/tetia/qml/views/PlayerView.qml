@@ -510,9 +510,17 @@ Kirigami.Page {
                         id: speedButton
                         property double closedAt: 0
                         text: (Math.round(playback.speed * 100) / 100) + "×"
-                        font.pixelSize: 13
-                        icon.color: "white"
-                        palette.buttonText: "white"
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
+                        // the KDE style ignores palette.buttonText, so the label is our own (white on the dark bar,
+                        // as heavy as the icons beside it)
+                        contentItem: Text {
+                            text: speedButton.text
+                            font: speedButton.font
+                            color: "white"
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
                         focusPolicy: Qt.NoFocus
                         ToolTip.visible: hovered && !speedMenu.visible
                         ToolTip.delay: 500
