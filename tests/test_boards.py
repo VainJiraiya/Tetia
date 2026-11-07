@@ -95,3 +95,25 @@ def test_the_service_lists_boards_and_says_when_one_changed(tmp_path, qapp):
     assert service.info(board)["name"] == "Raph" and service.info(board)["count"] == 3
     service.remove(board)
     assert service.boards("photos") == [] and changed == [board] * 4
+
+
+def test_a_tabs_top_level_shows_its_boards_first(tmp_path, qapp):
+    from tetia.models.subfolderModel import SubfolderModel
+    db, ids = _library(tmp_path)
+    (tmp_path / "Art" / "Inner").mkdir()
+    QImage(4, 4, QImage.Format_RGB32).save(str(tmp_path / "Art" / "Inner" / "x.png"))
+    boards.create(db, "Raphtalia", "character:raphtalia", "photos")
+    boards.create(db, "Clips", "", "videos")                              # another tab's: not here
+    subs = SubfolderModel()
+    subs.filterMode = int(MediaModel.FilterMode.ImagesOnly)
+    subs.boardsTab = "photos"
+    subs.load(str(tmp_path / "Art"))
+    rows = [(subs.data(subs.index(r), subs.Roles.NameRole), subs.data(subs.index(r), subs.Roles.IsBoardRole))
+            for r in range(subs.rowCount())]
+    assert rows == [("Raphtalia", True), ("Inner", False)]
+    first = subs.index(0)
+    assert subs.data(first, subs.Roles.ItemCountRole) == 2 and len(subs.data(first, subs.Roles.CollageRole)) == 2
+    assert subs.data(first, subs.Roles.PathRole).startswith("board:")
+    subs.boardsTab = ""
+    subs.load(str(tmp_path / "Art"))                                       # any other page: no boards
+    assert subs.rowCount() == 1

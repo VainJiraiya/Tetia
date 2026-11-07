@@ -63,6 +63,12 @@ Flickable {
     signal virtualRenameRequested(int virtualId, string name)
     signal virtualDeleteRequested(int virtualId, string name)
     signal virtualCoverResetRequested(int virtualId)
+    // Boards (the host does the work): open one, change its search, rename or delete it, make one
+    signal boardClicked(int boardId, string name)
+    signal boardEditRequested(int boardId)
+    signal boardRenameRequested(int boardId, string name)
+    signal boardDeleteRequested(int boardId, string name)
+    signal newBoardRequested(var ids)
 
     // A cover changed by hand: this number is added to the pictures' URLs so they reload
     property int coverRevision: 0
@@ -106,6 +112,13 @@ Flickable {
     // The SubfolderModel behind the folder tiles (favorites and covers). The
     // tiles themselves arrive through this grid's own model, ahead of the files.
     property var subfolderBackend: null
+    // BoardService, the tab whose boards "Add to board" offers, and the board this page shows (-1: none)
+    property var boardBackend: null
+    property string boardTab: ""
+    property int boardId: -1
+    // how pictures are laid out: rows (their own shape), columns or grid
+    property string layoutMode: "rows"
+    property var boardChoices: []
     property var selectedIds: []
 
     // Qt.UserRole + 1 in MediaModel: the `mediaId` role (also exposed to
@@ -128,10 +141,12 @@ Flickable {
     readonly property int tilePathRole: 357
     readonly property int tileSeriesRole: 362
     readonly property int tileSingleIdRole: 366
+    readonly property int tileBoardRole: 373
 
     function tileKeyAt(row) {
         var index = grid.model.index(row, 0)
         if (grid.model.data(index, grid.isFolderRole) !== true) return ""
+        if (grid.model.data(index, grid.tileBoardRole) === true) return ""      // a board is not moved anywhere
         var key = String(grid.model.data(index, grid.tilePathRole))
         // only a folder shown as a series takes tags
         return grid.tagMode && grid.model.data(index, grid.tileSeriesRole) !== true ? "" : key
@@ -444,6 +459,26 @@ Flickable {
             }
         }
 
+        MenuSeparator { visible: grid.boardBackend !== null }
+        MenuItem {
+            text: "Add to board\u2026"
+            icon.name: "view-media-favorite"
+            visible: grid.boardBackend !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: {
+                boardPickMenu.ids = grid.targetOf(grid.contextMenuData.mediaId, "").ids
+                grid.boardChoices = grid.boardBackend.boards(grid.boardTab).filter(function(b) { return b.id !== grid.boardId })
+                boardPickMenu.popup()
+            }
+        }
+        MenuItem {
+            text: "Remove from board"
+            icon.name: "list-remove"
+            visible: grid.boardBackend !== null && grid.boardId >= 0
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.boardBackend.removeMedia(grid.boardId, grid.targetOf(grid.contextMenuData.mediaId, "").ids)
+        }
+
         MenuSeparator { visible: grid.virtualAllowed }
         MenuItem {
             text: "Select"
@@ -472,6 +507,31 @@ Flickable {
             visible: grid.virtualAllowed && grid.virtualPage
             height: visible ? implicitHeight : 0
             onTriggered: { var t = grid.targetOf(grid.contextMenuData.mediaId, ""); grid.virtualActionRequested("remove", t.ids, t.tiles) }
+        }
+    }
+
+    // "Add to board": the tab's boards, and a new one
+    Menu {
+        id: boardPickMenu
+        property var ids: []
+        Instantiator {
+            model: grid.boardChoices
+            delegate: MenuItem {
+                required property var modelData
+                text: modelData.name
+                onTriggered: {
+                    grid.boardBackend.addMedia(modelData.id, boardPickMenu.ids)
+                    toast.show("Added to \u201C" + modelData.name + "\u201D")
+                }
+            }
+            onObjectAdded: function(i, item) { boardPickMenu.insertItem(i, item) }
+            onObjectRemoved: function(i, item) { boardPickMenu.removeItem(item) }
+        }
+        MenuSeparator { visible: grid.boardChoices.length > 0 }
+        MenuItem {
+            text: "New board\u2026"
+            icon.name: "list-add"
+            onTriggered: grid.newBoardRequested(boardPickMenu.ids)
         }
     }
 
@@ -747,9 +807,49 @@ Flickable {
         }
     }
 
+    // Right-click menu for a board tile
+    Menu {
+        id: boardMenu
+        property int boardId: -1
+        property string boardName: ""
+        MenuItem {
+            text: "Open"
+            icon.name: "document-open"
+            font.bold: true
+            onTriggered: grid.boardClicked(boardMenu.boardId, boardMenu.boardName)
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: "Edit search\u2026"
+            icon.name: "edit-find"
+            onTriggered: grid.boardEditRequested(boardMenu.boardId)
+        }
+        MenuItem {
+            text: "Rename\u2026"
+            icon.name: "edit-rename"
+            onTriggered: grid.boardRenameRequested(boardMenu.boardId, boardMenu.boardName)
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: "Delete board"
+            icon.name: "edit-delete"
+            ToolTip.visible: hovered
+            ToolTip.delay: 600
+            ToolTip.text: "A board holds no files: deleting it touches nothing else."
+            onTriggered: grid.boardDeleteRequested(boardMenu.boardId, boardMenu.boardName)
+        }
+    }
+
     // Right-click on empty space
     Menu {
         id: emptyMenu
+        MenuItem {
+            text: "New board\u2026"
+            icon.name: "list-add"
+            visible: grid.boardBackend !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.newBoardRequested([])
+        }
         MenuItem {
             text: "New virtual folder\u2026"
             icon.name: "folder-new"
@@ -817,6 +917,7 @@ Flickable {
         pictureHeight: grid.pictureHeight
         coverWidth: grid.coverWidth
         coverLabel: grid.coverLabel
+        layoutMode: grid.layoutMode
         onLayoutUpdated: grid.syncViewport()
     }
 
@@ -897,13 +998,16 @@ Flickable {
                     Component {
                         id: folderTile
                         CollectionTile {
-                            kind: tile.d.subfolderIsVirtual === true ? "virtual"
+                            kind: tile.d.subfolderIsBoard === true ? "board"
+                                  : tile.d.subfolderIsVirtual === true ? "virtual"
                                   : (tile.d.subfolderIsSeries === true ? "series"
                                   : (tile.d.subfolderSingleFile ? "single" : "folder"))
                             name: tile.d.subfolderName || ""
                             subtitle: grid.folderSubtitle(tile.d)
                             coverSource: tile.d.subfolderHero && tile.d.subfolderHero.length > 0
                                          ? "image://thumbnail/" + ThumbUri.fromPath(tile.d.subfolderHero) + grid.revisionSuffix : ""
+                            collageSources: (tile.d.subfolderCollage || []).map(function(p) {
+                                return "image://thumbnail/" + ThumbUri.fromPath(p) + grid.revisionSuffix })
                             thumbSize: tile.thumbSize
                             coverHeight: tile.pictureHeight
                             // a series: what is left (its one badge), a bar while partway, dimmed once done
@@ -953,6 +1057,7 @@ Flickable {
     // Under a folder tile: what it holds
     function folderSubtitle(d) {
         var n = d.subfolderCount || 0
+        if (d.subfolderIsBoard === true) return "Board \u00B7 " + n
         if (d.subfolderSingleFile) return ""
         if (d.subfolderIsSeries) {
             var format = d.subfolderFormat ? d.subfolderFormat.charAt(0).toUpperCase() + d.subfolderFormat.slice(1) + " \u00B7 " : ""
@@ -969,6 +1074,16 @@ Flickable {
 
     // A folder tile was clicked: open it, select it, or show its menu
     function folderTileClicked(d, mouse) {
+        if (d.subfolderIsBoard === true) {
+            if (mouse.button === Qt.RightButton) {
+                boardMenu.boardId = d.subfolderBoardId
+                boardMenu.boardName = d.subfolderName
+                boardMenu.popup()
+            } else if (!grid.selecting) {
+                grid.boardClicked(d.subfolderBoardId, d.subfolderName)
+            }
+            return
+        }
         if (mouse.button === Qt.RightButton && d.subfolderIsVirtual === true) {
             virtualMenu.virtualId = d.subfolderVirtualId
             virtualMenu.virtualName = d.subfolderName

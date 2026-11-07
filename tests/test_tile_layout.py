@@ -135,3 +135,26 @@ def test_a_shape_learned_later_lays_the_page_out_again_but_other_changes_do_not(
     assert rows.contentHeight != height
     rect = rows.tileRect(0)
     assert rect["width"] / rect["height"] == pytest.approx(0.75)
+
+
+def test_columns_put_each_picture_in_the_shortest_column():
+    rows, height = tl.build(_pictures([0.5, 1.0, 1.0, 2.0, 0.75]), 1000, 200, 150, 40, mode="columns")
+    width = rows[0].widths[0]
+    assert all(r.widths == [width] for r in rows)                     # one column width
+    for r in rows:                                                    # each as tall as its own shape
+        assert r.height == pytest.approx(width / tl.clamp_aspect(_pictures([0.5, 1.0, 1.0, 2.0, 0.75])[r.start][1]))
+    assert [r.y for r in rows] == sorted(r.y for r in rows)           # sorted by top, for the window
+    assert height == pytest.approx(max(r.bottom for r in rows))
+
+
+def test_a_tall_column_tile_starting_above_the_window_is_kept():
+    rows, _ = tl.build(_pictures([0.75] + [1.7] * 30), 600, 200, 150, 40, mode="columns")
+    tall = next(r for r in rows if r.start == 0)
+    first, last = tl.rows_between(rows, tall.y + tall.height - 10, tall.y + tall.height + 300)
+    assert tall in rows[first:last]
+
+
+def test_grid_cells_are_square():
+    rows, _ = tl.build(_pictures([0.5, 2.0, 1.0, 1.0, 1.0]), 1000, 200, 150, 40, mode="grid")
+    assert all(w == pytest.approx(r.height) for r in rows for w in r.widths)
+    assert rows[0].xs[-1] + rows[0].widths[-1] == pytest.approx(1000)

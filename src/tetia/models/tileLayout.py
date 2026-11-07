@@ -97,9 +97,42 @@ def _picture_rows(aspects, start, y, width, target):
     return rows, y - PICTURE_GAP
 
 
-def build(shapes, width, picture_height, cover_width, cover_label, titles=None):
+def _column_rows(aspects, start, y, width, target):
+    """Pictures in columns of one width, each as tall as its shape needs, the next always in the shortest column
+    (a tall picture gets more room than in a row). Each tile is a row of its own, sorted by its top."""
+    column = target * 0.85
+    count = max(1, int((width + PICTURE_GAP) // (column + PICTURE_GAP)))
+    column = (width - (count - 1) * PICTURE_GAP) / count
+    tops = [y] * count
+    rows = []
+    for k, aspect in enumerate(aspects):
+        c = min(range(count), key=lambda i: tops[i])
+        height = column / aspect
+        rows.append(Row(PICTURE, start + k, tops[c], height, 0.0, [column], [c * (column + PICTURE_GAP)]))
+        tops[c] += height + PICTURE_GAP
+    rows.sort(key=lambda r: r.y)
+    return rows, max(tops) - PICTURE_GAP
+
+
+def _grid_rows(count, start, y, width, target):
+    """Square cells, every picture cropped to fill its square: the most pictures at a glance."""
+    columns = max(1, int((width + PICTURE_GAP) // (target + PICTURE_GAP)))
+    cell = (width - (columns - 1) * PICTURE_GAP) / columns
+    rows = []
+    for first in range(0, count, columns):
+        n = min(columns, count - first)
+        rows.append(Row(PICTURE, start + first, y, cell, 0.0, [cell] * n, [i * (cell + PICTURE_GAP) for i in range(n)]))
+        y += cell + PICTURE_GAP
+    return rows, y - PICTURE_GAP
+
+
+MODES = ("rows", "columns", "grid")
+
+
+def build(shapes, width, picture_height, cover_width, cover_label, titles=None, mode="rows"):
     """`shapes`: (kind, aspect) per tile. `titles`: {index: title} for groups that start at that tile under a
-    title of their own. Returns (rows, content height)."""
+    title of their own. `mode`: how pictures are laid out (rows, columns or a square grid). Returns
+    (rows, content height)."""
     rows, y = [], 0.0
     if width <= 0:
         return rows, 0.0
@@ -117,20 +150,30 @@ def build(shapes, width, picture_height, cover_width, cover_label, titles=None):
             y += HEADER_HEIGHT
         if kind == COVER:
             run, y = _cover_rows(j - i, i, y, width, cover_width, cover_label)
+        elif mode == "columns":
+            run, y = _column_rows([clamp_aspect(a) for _, a in shapes[i:j]], i, y, width, picture_height)
+        elif mode == "grid":
+            run, y = _grid_rows(j - i, i, y, width, picture_height)
         else:
             run, y = _picture_rows([clamp_aspect(a) for _, a in shapes[i:j]], i, y, width, picture_height)
         rows.extend(run)
         i = j
-    return rows, (rows[-1].bottom if rows else 0.0)
+    return rows, (max(r.bottom for r in rows) if rows else 0.0)
 
 
-def rows_between(rows, top, bottom):
-    """(first, last + 1): the rows that reach into [top, bottom]."""
+def tallest(rows) -> float:
+    return max((row.height + row.label for row in rows), default=0.0)
+
+
+def rows_between(rows, top, bottom, reach=None):
+    """(first, last + 1): a run of rows (sorted by their top) holding every row that reaches into [top, bottom].
+    `reach` (the tallest row, see tallest()) lets a tall tile that starts above the window be found too."""
     if not rows:
         return 0, 0
+    reach = tallest(rows) if reach is None else reach
     ys = [row.y for row in rows]
-    first = max(0, bisect_right(ys, top) - 1)
-    while first < len(rows) and rows[first].bottom < top:
+    first = bisect_right(ys, top - reach)
+    while first < len(rows) and rows[first].bottom < top and rows[first].y + reach < top:
         first += 1
     last = bisect_right(ys, bottom)
     return first, max(first, last)
@@ -148,4 +191,4 @@ def hit(rows, x0, y0, x1, y1):
         for k in range(row.count):
             if row.xs[k] < right and row.xs[k] + row.widths[k] > left:
                 found.append(row.start + k)
-    return found
+    return sorted(found)

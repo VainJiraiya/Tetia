@@ -16,8 +16,9 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QUrl, Signal, Slot, Property
 from PySide6.QtQml import QmlElement
 
-from tetia.models import covers, reader, series, virtualfolders
+from tetia.models import boards, covers, reader, series, virtualfolders
 from tetia.models.database import get_database
+from tetia.models.searchModel import _Resolver
 from tetia.models.mediaModel import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
     VIDEO_EXTENSIONS, MediaModel,
@@ -107,6 +108,9 @@ class SubfolderModel(QAbstractListModel):
         ProgressRole = Qt.UserRole + 15        # a series: how far, 0..1
         FinishedRole = Qt.UserRole + 16        # a series read or watched to the end
         FormatRole = Qt.UserRole + 17          # a series' format (manga, webtoon...): "" when not said
+        IsBoardRole = Qt.UserRole + 18
+        BoardIdRole = Qt.UserRole + 19
+        CollageRole = Qt.UserRole + 20         # a board's three cover pictures (paths)
 
     filterModeChanged = Signal()
     formatFilterChanged = Signal()
@@ -122,6 +126,7 @@ class SubfolderModel(QAbstractListModel):
         self._filter_mode = MediaModel.FilterMode.All
         self._dirs: list[dict] = []   # {"path", "name", "count"}
         self._format_filter = ""      # "": every tile; a format: only the series of that format
+        self._boards_tab = ""         # a tab's top level: its boards come first among the tiles
         self._meta: dict = {}
         covers.notifier.changed.connect(self._on_collection_changed)
 
@@ -145,7 +150,7 @@ class SubfolderModel(QAbstractListModel):
     def folderKeys(self) -> list:
         """The series shown as tiles now, as file:// addresses: the only folders that carry tags."""
         return [covers.folder_uri(e["path"]) for e in self._dirs
-                if e.get("virtual") is None and self._is_series(e)]
+                if e.get("virtual") is None and e.get("board") is None and self._is_series(e)]
 
     @Slot(str, result=str)
     def openSingleFile(self, folder_path: str) -> str:
@@ -182,6 +187,8 @@ class SubfolderModel(QAbstractListModel):
         if not index.isValid() or not (0 <= index.row() < len(self._dirs)):
             return None
         entry = self._dirs[index.row()]
+        if entry.get("board") is not None:
+            return self._board_data(entry, role)
         virtual = entry.get("virtual")
         if role == self.Roles.IsVirtualRole:
             return virtual is not None
@@ -218,6 +225,8 @@ class SubfolderModel(QAbstractListModel):
             if "folders" not in entry:
                 entry["folders"] = len(_scan(entry["path"])[1])
             return entry["folders"]
+        if role == self.Roles.IsBoardRole:
+            return False
         if role == self.Roles.FormatRole:
             if virtual is not None or not self._is_series(entry):
                 return ""
@@ -251,7 +260,37 @@ class SubfolderModel(QAbstractListModel):
             self.Roles.ProgressRole: b"progress",
             self.Roles.FinishedRole: b"finished",
             self.Roles.FormatRole: b"format",
+            self.Roles.IsBoardRole: b"isBoard",
+            self.Roles.BoardIdRole: b"boardId",
+            self.Roles.CollageRole: b"collage",
         }
+
+    def _board_data(self, entry, role):
+        R = self.Roles
+        return {R.IsBoardRole: True, R.BoardIdRole: entry["board"], R.PathRole: entry["path"], R.NameRole: entry["name"],
+                R.HeroPathRole: entry["collage"][0] if entry["collage"] else "", R.ItemCountRole: entry["count"],
+                R.CollageRole: entry["collage"], R.IsFavoriteRole: False, R.HasCustomCoverRole: False,
+                R.IsSeriesRole: False, R.SingleFileRole: "", R.IsVirtualRole: False, R.VirtualIdRole: -1,
+                R.SingleFileIdRole: -1, R.IsShowRole: False, R.FolderCountRole: 0, R.LeftRole: -1,
+                R.ProgressRole: 0.0, R.FinishedRole: False, R.FormatRole: ""}.get(role)
+
+    @Property(str)
+    def boardsTab(self) -> str:
+        return self._boards_tab
+
+    @boardsTab.setter
+    def boardsTab(self, tab: str):
+        """Show this tab's boards first among the tiles ("" for none: every page but a tab's top level)."""
+        self._boards_tab = tab or ""
+
+    def _board_entries(self) -> list:
+        db = self._db
+        found = []
+        for board in boards.all_boards(db, self._boards_tab):
+            ids = boards.members(db, _Resolver(db), board["id"])
+            found.append({"board": board["id"], "path": "board:%d" % board["id"], "name": board["name"],
+                          "count": len(ids), "collage": boards.collage(db, board["id"], ids)})
+        return found
 
     @Slot()
     def refreshProgress(self):
@@ -368,12 +407,17 @@ class SubfolderModel(QAbstractListModel):
             logger.error("Failed to list the tiles: %s", e)
         try:
             meta = self._db.get_collections_meta(
-                [covers.folder_key(e["path"]) for e in found if e.get("virtual") is None])
+                [covers.folder_key(e["path"]) for e in found if e.get("virtual") is None and e.get("board") is None])
         except sqlite3.Error as e:
             logger.error("Failed to load subfolder covers/favorites: %s", e)
             meta = {}
+        if self._boards_tab and not self._format_filter:
+            try:
+                found = self._board_entries() + found
+            except sqlite3.Error as e:
+                logger.error("Failed to list the boards: %s", e)
         if self._format_filter:
-            found = [e for e in found if e.get("virtual") is None
+            found = [e for e in found if e.get("virtual") is None and e.get("board") is None
                      and meta.get(covers.folder_key(e["path"]), {}).get("is_series")
                      and meta.get(covers.folder_key(e["path"]), {}).get("format") == self._format_filter]
         self.beginResetModel()
@@ -437,7 +481,7 @@ class SubfolderModel(QAbstractListModel):
 
     def _on_collection_changed(self, key: str):
         for row, entry in enumerate(self._dirs):
-            if entry.get("virtual") is not None:
+            if entry.get("virtual") is not None or entry.get("board") is not None:
                 continue
             own = covers.folder_key(entry["path"])
             if key == own:

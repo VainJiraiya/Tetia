@@ -116,6 +116,8 @@ Kirigami.ApplicationWindow {
     // models hold that page now (they hold one page's contents at a time)
     property var sourceList: []
     property bool rootShown: false
+    // the board the shared models hold (-1: none)
+    property int currentBoard: -1
     // The virtual folder mediaModel holds instead (-1: none); see loadVirtual
     property int currentVirtual: -1
 
@@ -768,16 +770,22 @@ Kirigami.ApplicationWindow {
         onChanged: root.reloadPage()
     }
 
+    BoardService {
+        id: boardService
+        onChanged: root.reloadPage()
+    }
+
     // A name for a new or renamed virtual folder
     Kirigami.PromptDialog {
         id: nameDialog
         objectName: "nameDialog"
         property var onNamed: null          // function(name): the error text, or "" when it worked
         property string problem: ""
+        property string okText: ""          // the button's word ("" : Create, or Rename for a rename)
         standardButtons: Kirigami.Dialog.Cancel
         customFooterActions: [
             Kirigami.Action {
-                text: nameDialog.title.indexOf("Rename") === 0 ? "Rename" : "Create"
+                text: nameDialog.okText !== "" ? nameDialog.okText : (nameDialog.title.indexOf("Rename") === 0 ? "Rename" : "Create")
                 icon.name: "dialog-ok-apply"
                 onTriggered: nameDialog.accept()
             }
@@ -1082,8 +1090,9 @@ Kirigami.ApplicationWindow {
 
     // ---- Virtual folders ----------------------------------------------------------------------------
 
-    function askName(title, initial, onNamed) {
+    function askName(title, initial, onNamed, okText) {
         nameDialog.title = title
+        nameDialog.okText = okText || ""
         nameDialog.onNamed = onNamed
         nameField.text = initial
         nameDialog.open()
@@ -1150,6 +1159,8 @@ Kirigami.ApplicationWindow {
     // Makes mediaModel and subfolderModel hold this virtual folder
     function loadVirtual(virtualId, category) {
         root.rootShown = false
+        root.currentBoard = -1
+        subfolderModel.boardsTab = ""
         root.currentFolder = null
         root.currentVirtual = virtualId
         gridCategory(category)
@@ -1181,6 +1192,14 @@ Kirigami.ApplicationWindow {
                 return
             }
             loadVirtual(page.virtualId, page.filterCategory)
+        } else if (page.boardId >= 0) {
+            if (boardService.info(page.boardId).id === undefined) {
+                var gone = pageStack.pop()                      // this board was deleted: step out of it
+                if (gone) gone.destroy()
+                return
+            }
+            page.title = boardService.info(page.boardId).name
+            loadBoard(page.boardId, page.filterCategory)
         } else if (page.isSearch) {
             refreshSearch()
         } else if (page.isRoot) {
@@ -1188,6 +1207,53 @@ Kirigami.ApplicationWindow {
         } else if (page.folderPath) {
             loadFolder(page.folderPath, page.filterCategory)
         }
+    }
+
+    // Makes mediaModel hold a board's files (and no tiles)
+    function loadBoard(boardId, category) {
+        root.rootShown = false
+        root.currentFolder = null
+        root.currentVirtual = -1
+        root.currentBoard = boardId
+        subfolderModel.boardsTab = ""
+        subfolderModel.formatFilter = ""
+        gridCategory(category)
+        mediaModel.load_media_ids_sorted(boardService.memberIds(boardId))
+        subfolderModel.loadSeries([])
+    }
+
+    function openBoard(boardId, name) {
+        var info = boardService.info(boardId)
+        var category = info.tab || ""
+        loadBoard(boardId, category)
+        pageStack.push(mediaGridComponent, {
+            title: name,
+            boardId: boardId,
+            filterCategory: category,
+            layoutMode: info.layout || "rows",
+            crumbs: [name]
+        })
+    }
+
+    // A board's search (a tag search, like the search bar's)
+    function editBoardSearch(boardId) {
+        var info = boardService.info(boardId)
+        askName("Board search (tags, like the search bar)", info.query || "", function(query) {
+            boardService.setQuery(boardId, query)
+            return ""
+        }, "Save")
+    }
+
+    // A new board (put these files on it), then open it
+    function newBoard(ids, category) {
+        askName("New board", "", function(name) {
+            if (name.trim() === "") return "Give the board a name"
+            var id = boardService.create(name, "", category || "")
+            if (id < 0) return "Couldn't make the board"
+            if (ids && ids.length > 0) boardService.addMedia(id, ids)
+            openBoard(id, name)
+            return ""
+        })
     }
 
     function tabTitle(category) {
@@ -1207,7 +1273,9 @@ Kirigami.ApplicationWindow {
             page.filterCategory = category === "favorites" ? "" : category
         }
         gridCategory(category)
+        root.currentBoard = -1
         subfolderModel.formatFilter = page ? page.formatFilter : ""
+        subfolderModel.boardsTab = category === "favorites" ? "" : category
         if (page) page.continueItems = folderModel.continueReading(8)
         var active = page ? page.activeSource : ""
         if (active !== "" && !groups.all.some(function(s) { return s.path === active })) {
@@ -1288,6 +1356,8 @@ Kirigami.ApplicationWindow {
     // Hits as {ids, series}: the series a search found are tiles, not their chapters (see SearchModel.searchHits)
     function showHits(hits, sorted) {
         root.rootShown = false
+        root.currentBoard = -1
+        subfolderModel.boardsTab = ""
         if (sorted) mediaModel.load_media_ids_sorted(hits.ids)
         else mediaModel.load_media_ids(hits.ids)
         subfolderModel.loadSeries(hits.series)    // after the media: loading them closes the folder, which clears the tiles
@@ -1512,7 +1582,9 @@ Kirigami.ApplicationWindow {
     // Makes mediaModel hold this folder, filtered for the category.
     function loadFolder(folderPath, category) {
         root.rootShown = false
+        root.currentBoard = -1
         subfolderModel.formatFilter = ""
+        subfolderModel.boardsTab = ""
         root.currentFolder = folderPath
         root.currentVirtual = -1
         mediaModel.openFolder(folderPath)       // shown at once from the library, scanned in the background
@@ -1581,6 +1653,9 @@ Kirigami.ApplicationWindow {
             // Manga and EBooks: the series format picked over the top level ("": all), and what is partway
             property string formatFilter: ""
             property var continueItems: []
+            // a board's page: which board, and how its pictures are laid out
+            property int boardId: -1
+            property string layoutMode: "rows"
             property var folderPath: null
             property string filterCategory: ""
             property var crumbs: []
@@ -1631,6 +1706,10 @@ Kirigami.ApplicationWindow {
                         root.searchState = gridPage.savedSearch
                         return
                     }
+                    if (gridPage.boardId >= 0) {
+                        if (root.currentBoard !== gridPage.boardId) root.loadBoard(gridPage.boardId, gridPage.filterCategory)
+                        return
+                    }
                     if (gridPage.virtualId >= 0) {
                         if (root.currentVirtual !== gridPage.virtualId) {
                             root.loadVirtual(gridPage.virtualId, gridPage.filterCategory)
@@ -1658,7 +1737,7 @@ Kirigami.ApplicationWindow {
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
                     Layout.topMargin: 14
-                    visible: !root.onFavoritesTab && (sourceChips.visible || formats)
+                    visible: gridPage.isRoot && !root.onFavoritesTab
                 Flow {
                     id: sourceChips
                     objectName: "sourceChips"
@@ -1681,6 +1760,13 @@ Kirigami.ApplicationWindow {
                     }
                 }
                 Item { Layout.fillWidth: !sourceChips.visible }
+                Button {
+                    objectName: "newBoardButton"
+                    visible: gridPage.isRoot && !root.onFavoritesTab
+                    text: "New Board"
+                    icon.name: "list-add"
+                    onClicked: root.newBoard([], gridPage.filterCategory)
+                }
                 Button {
                     id: formatButton
                     objectName: "formatButton"
@@ -1712,6 +1798,74 @@ Kirigami.ApplicationWindow {
                         }
                     }
                 }
+                }
+
+                // A board's page: what it is (its search, how many), and how its pictures are laid out
+                RowLayout {
+                    objectName: "boardBar"
+                    readonly property var info: gridPage.boardId >= 0 ? (gridView.count, boardService.info(gridPage.boardId)) : ({})
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 24
+                    Layout.rightMargin: 24
+                    Layout.topMargin: 12
+                    visible: gridPage.boardId >= 0
+                    spacing: Kirigami.Units.smallSpacing
+                    Label {
+                        text: "Board \u00B7 " + root.itemsText(parent.info.count || 0)
+                        opacity: 0.75
+                    }
+                    Kirigami.Chip {
+                        visible: (parent.info.query || "") !== ""
+                        text: parent.info.query || ""
+                        closable: false
+                        checkable: false
+                    }
+                    Button {
+                        text: (parent.info.query || "") === "" ? "Add a search\u2026" : "Edit search\u2026"
+                        icon.name: "edit-find"
+                        flat: true
+                        onClicked: root.editBoardSearch(gridPage.boardId)
+                    }
+                    Item { Layout.fillWidth: true }
+                    Repeater {
+                        model: [{ key: "rows", name: "Rows" }, { key: "columns", name: "Columns" }, { key: "grid", name: "Grid" }]
+                        delegate: Button {
+                            required property var modelData
+                            text: modelData.name
+                            checkable: true
+                            checked: gridPage.layoutMode === modelData.key
+                            onClicked: {
+                                gridPage.layoutMode = modelData.key
+                                boardService.setLayout(gridPage.boardId, modelData.key)
+                            }
+                        }
+                    }
+                }
+
+                // A search: keep it as a board
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 24
+                    Layout.rightMargin: 24
+                    Layout.topMargin: 10
+                    visible: gridPage.isSearch && root.searchState !== null && (root.searchState.query || "") !== ""
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        objectName: "saveAsBoard"
+                        text: "Save as Board\u2026"
+                        icon.name: "list-add"
+                        onClicked: {
+                            var query = root.searchState.query
+                            var tab = root.onFavoritesTab ? "" : folderModel.currentCategory
+                            root.askName("Save as board", query, function(name) {
+                                if (name.trim() === "") return "Give the board a name"
+                                var id = boardService.create(name, query, tab)
+                                if (id < 0) return "Couldn't make the board"
+                                root.openBoard(id, name)
+                                return ""
+                            }, "Save")
+                        }
+                    }
                 }
 
                 // Manga and EBooks: what you are partway through, most recent first
@@ -1821,6 +1975,25 @@ Kirigami.ApplicationWindow {
                     tagMode: root.isTagMode && pageStack.currentItem === gridPage
                     selectMode: root.isSelectMode && pageStack.currentItem === gridPage
                     subfolderBackend: subfolderModel
+                    boardBackend: boardService
+                    boardTab: gridPage.boardId >= 0 ? (boardService.info(gridPage.boardId).tab || "")
+                              : (root.onFavoritesTab ? "" : folderModel.currentCategory)
+                    boardId: gridPage.boardId
+                    layoutMode: gridPage.layoutMode
+                    onBoardClicked: function(boardId, name) { root.openBoard(boardId, name) }
+                    onBoardEditRequested: function(boardId) { root.editBoardSearch(boardId) }
+                    onBoardRenameRequested: function(boardId, name) {
+                        root.askName("Rename board", name, function(newName) {
+                            if (newName.trim() === "") return "Give the board a name"
+                            boardService.rename(boardId, newName)
+                            return ""
+                        })
+                    }
+                    onBoardDeleteRequested: function(boardId, name) {
+                        boardService.remove(boardId)
+                        showPassiveNotification("Deleted the board \u201C" + name + "\u201D (no file was touched)")
+                    }
+                    onNewBoardRequested: function(ids) { root.newBoard(ids, gridView.boardTab) }
                     // Virtual folders: not in a search that spans every library folder; "Remove" inside one
                     virtualAllowed: !(gridPage.isSearch && gridPage.searchScope === "")
                     virtualPage: gridPage.virtualId >= 0

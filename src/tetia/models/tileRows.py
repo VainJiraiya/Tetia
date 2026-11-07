@@ -50,6 +50,8 @@ class TileRows(QAbstractListModel):
         self._shapes: list = []
         self._content_height = 0.0
         self._count = 0
+        self._mode = "rows"
+        self._reach = 0.0
         self._first = self._last = 0     # the window: rows[first:last]
         self._revision = 0
 
@@ -101,6 +103,19 @@ class TileRows(QAbstractListModel):
     coverWidth = _number("cover_width", geometryChanged)
     coverLabel = _number("cover_label", geometryChanged)
     del _number
+
+    @Property(str, notify=geometryChanged)
+    def layoutMode(self):
+        """How pictures are laid out: rows (their own shape), columns (masonry) or grid (squares)."""
+        return self._mode
+
+    @layoutMode.setter
+    def layoutMode(self, mode):
+        mode = mode if mode in tileLayout.MODES else "rows"
+        if mode != self._mode:
+            self._mode = mode
+            self.geometryChanged.emit()
+            self._relayout()
 
     @Slot(float, float)
     def setViewport(self, top: float, height: float):
@@ -182,9 +197,10 @@ class TileRows(QAbstractListModel):
             shapes = shapes[:-1]
         self._count = len(shapes)
         rows, height = tileLayout.build(shapes, self._width, self._picture_height, self._cover_width,
-                                        self._cover_label, titles)
+                                        self._cover_label, titles, self._mode)
         self.beginResetModel()
         self._rows, self._content_height = rows, height
+        self._reach = tileLayout.tallest(rows)
         self._first, self._last = self._window()
         self.endResetModel()
         self._revision += 1
@@ -193,7 +209,7 @@ class TileRows(QAbstractListModel):
 
     def _window(self):
         margin = max(self._viewport, 400.0) * MARGIN
-        return tileLayout.rows_between(self._rows, self._top - margin, self._top + self._viewport + margin)
+        return tileLayout.rows_between(self._rows, self._top - margin, self._top + self._viewport + margin, self._reach)
 
     def _move_window(self):
         first, last = self._window()
