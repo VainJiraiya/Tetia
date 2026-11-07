@@ -938,6 +938,30 @@ class Database:
             tag_id = self.get_alias_tag_id(tag_name)
         return tag_id
 
+    def tag_relations(self, name: str) -> dict:
+        """About one tag (by name): {category, aliases, implies, implied_by}; the last two as [{category, name}].
+        Empty if there is no such tag."""
+        row = self.conn.execute(
+            "SELECT t.id, c.name AS category FROM tag t JOIN tag_category c ON c.id = t.category_id WHERE t.name = ?",
+            (name,)).fetchone()
+        if row is None:
+            return {}
+        tag_id = row["id"]
+
+        def related(sql):
+            return [{"category": r["category"], "name": r["name"]} for r in self.conn.execute(sql, (tag_id,))]
+        return {
+            "category": row["category"],
+            "aliases": [r["alias"] for r in self.conn.execute(
+                "SELECT alias FROM tag_alias WHERE tag_id = ? ORDER BY alias", (tag_id,))],
+            "implies": related("SELECT t.name, c.name AS category FROM tag_implication i JOIN tag t "
+                               "ON t.id = i.consequent_id JOIN tag_category c ON c.id = t.category_id "
+                               "WHERE i.antecedent_id = ? ORDER BY t.name"),
+            "implied_by": related("SELECT t.name, c.name AS category FROM tag_implication i JOIN tag t "
+                                  "ON t.id = i.antecedent_id JOIN tag_category c ON c.id = t.category_id "
+                                  "WHERE i.consequent_id = ? ORDER BY t.name"),
+        }
+
     def get_tags_for_media(self, media_id: int) -> list[dict]:
         """Tags on one item, in category order (creator, series, ... content)
         then alphabetical. Returns dicts: id, name, category."""

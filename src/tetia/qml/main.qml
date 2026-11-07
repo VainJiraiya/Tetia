@@ -211,17 +211,42 @@ Kirigami.ApplicationWindow {
                     anchors.leftMargin: Kirigami.Units.smallSpacing
                     anchors.verticalCenter: parent.verticalCenter
                     visible: pageStack.currentItem !== null && pageStack.currentItem.isTagPage === true
-                             && pageStack.currentItem.tagFolderName !== ""
-                    readonly property bool wide: pageStack.currentItem !== null && pageStack.currentItem.tagWholeTab === true
-                    readonly property string folderName: (pageStack.currentItem && pageStack.currentItem.tagFolderName) || ""
-                    readonly property string target: wide ? folderName : "All " + root.tabName(pageStack.currentItem ? pageStack.currentItem.filterCategory : "")
-                    text: target.length > 24 ? target.slice(0, 23) + "\u2026" : target
+                    readonly property var page: pageStack.currentItem
+                    readonly property string folderName: (page && page.tagFolderName) || ""
+                    readonly property string tabLabel: "All " + root.tabName(page ? page.filterCategory : "")
+                    readonly property string current: !page ? ""
+                        : (page.tagEverywhere ? "Everywhere" : (page.tagWholeTab || folderName === "" ? tabLabel : folderName))
+                    text: (current.length > 24 ? current.slice(0, 23) + "\u2026" : current) + "  \u25BE"
                     focusPolicy: Qt.NoFocus
                     ToolTip.visible: hovered
                     ToolTip.delay: 500
-                    ToolTip.text: wide ? "Looking in all of " + root.tabName(pageStack.currentItem.filterCategory) + ". Click to look only in \u201C" + folderName + "\u201D"
-                                       : "Looking only in \u201C" + folderName + "\u201D. Click to look in all of " + root.tabName(pageStack.currentItem.filterCategory)
-                    onClicked: root.setTagScope(pageStack.currentItem, !wide)
+                    ToolTip.text: "Where the tag is looked for"
+                    onClicked: scopeMenu.popup(scopeButton, 0, scopeButton.height)
+                    Menu {
+                        id: scopeMenu
+                        MenuItem {
+                            text: "Only in \u201C" + scopeButton.folderName + "\u201D"
+                            visible: scopeButton.folderName !== ""
+                            height: visible ? implicitHeight : 0
+                            checkable: true
+                            checked: !!scopeButton.page && !scopeButton.page.tagWholeTab && !scopeButton.page.tagEverywhere
+                            onTriggered: root.setTagScope(scopeButton.page, "folder")
+                        }
+                        MenuItem {
+                            text: scopeButton.tabLabel
+                            visible: !!scopeButton.page && scopeButton.page.filterCategory !== ""
+                            height: visible ? implicitHeight : 0
+                            checkable: true
+                            checked: !!scopeButton.page && scopeButton.page.tagWholeTab && !scopeButton.page.tagEverywhere
+                            onTriggered: root.setTagScope(scopeButton.page, "tab")
+                        }
+                        MenuItem {
+                            text: "Everywhere (every kind of media)"
+                            checkable: true
+                            checked: !!scopeButton.page && scopeButton.page.tagEverywhere === true
+                            onTriggered: root.setTagScope(scopeButton.page, "everywhere")
+                        }
+                    }
                 }
 
                 // In the image viewer: the picture's tags, starting beside the back button and reaching toward the
@@ -1541,18 +1566,21 @@ Kirigami.ApplicationWindow {
         var tab = from.filterCategory
         var base = from.virtualId >= 0 ? from.homePath : (from.folderPath ? String(from.folderPath) : from.searchScope)
         var folder = from.isTagPage ? from.savedSearch.root : (base ? (searchModel.rootOf(base) || base) : "")
-        var wholeTab = from.isTagPage === true && from.tagWholeTab === true && tab !== ""
-        var query = tagQuery(chosen, tab)
+        var everywhere = from.isTagPage === true && from.tagEverywhere === true
+        var wholeTab = !everywhere && from.isTagPage === true && from.tagWholeTab === true && tab !== ""
+        var query = tagQuery(chosen, everywhere ? "" : tab)
         var label = chosen.map(function(t) { return t.name.replace(/_/g, " ") }).join(", ")
-        var hits = searchModel.searchHits(query, wholeTab ? "" : folder, wholeTab ? tab : "")
-        var state = { query: query, scope: wholeTab ? "" : folder, root: folder, label: label, tab: wholeTab ? tab : "" }
+        var hits = everywhere ? searchModel.searchHits(query, "", "")
+                              : searchModel.searchHits(query, wholeTab ? "" : folder, wholeTab ? tab : "")
+        var state = { query: query, scope: wholeTab || everywhere ? "" : folder, root: folder, label: label,
+                      tab: wholeTab ? tab : "" }
         root.searchState = state
         if (from.isTagPage && push !== true) {
             var count = showHits(hits, true)
             from.title = searchTitle(query, count)
             from.browsedTags = chosen
             from.savedSearch = state
-            from.searchScope = wholeTab ? "" : folder
+            from.searchScope = wholeTab || everywhere ? "" : folder
         } else {
             root.currentFolder = null
             root.currentVirtual = -1
@@ -1574,10 +1602,24 @@ Kirigami.ApplicationWindow {
     }
 
     // The scope switch on a tag page: the same tags in the page's library folder, or in the whole tab
-    function setTagScope(page, wholeTab) {
-        if (!page || page.isTagPage !== true || page.tagWholeTab === wholeTab) return
-        page.tagWholeTab = wholeTab
+    // scope: "folder" (the library folder the tag was clicked in), "tab" (the whole tab) or "everywhere" (the whole
+    // library, every kind of media)
+    function setTagScope(page, scope) {
+        if (!page || page.isTagPage !== true) return
+        page.tagEverywhere = scope === "everywhere"
+        page.tagWholeTab = scope === "tab"
         runTagPage(page.browsedTags, page)
+    }
+
+    // The colour of a tag category, as the tag editor and the tag sidebar draw it
+    function categoryColor(category) {
+        switch (category) {
+        case "creator":   return Kirigami.Theme.negativeTextColor
+        case "series":    return Kirigami.Theme.visitedLinkColor
+        case "character": return Kirigami.Theme.positiveTextColor
+        case "genre":     return Kirigami.Theme.neutralTextColor
+        default:          return Kirigami.Theme.linkColor
+        }
     }
 
     // Re-run the open search (after a delete, or when indexing finishes)
@@ -1718,6 +1760,7 @@ Kirigami.ApplicationWindow {
             property var browsedTags: []
             // the scope switch: false looks in the library folder the tag was clicked in (named here), true in the whole tab
             property bool tagWholeTab: false
+            property bool tagEverywhere: false
             property string tagFolderName: ""
 
             // The file whose metadata panel is open (-1: none)
@@ -1903,6 +1946,46 @@ Kirigami.ApplicationWindow {
                                 gridPage.layoutMode = modelData.key
                                 boardService.setLayout(gridPage.boardId, modelData.key)
                             }
+                        }
+                    }
+                }
+
+                // A tag page: the tag (in its category's colour), what else it is called and what it implies
+                RowLayout {
+                    objectName: "tagHeader"
+                    readonly property var only: gridPage.isTagPage && gridPage.browsedTags.length === 1 ? gridPage.browsedTags[0] : null
+                    readonly property var info: only ? tagModel.tagInfo(only.name) : ({})
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 24
+                    Layout.rightMargin: 24
+                    Layout.topMargin: 12
+                    visible: only !== null
+                    spacing: Kirigami.Units.largeSpacing
+                    Rectangle {
+                        readonly property color accent: root.categoryColor(parent.only ? parent.only.category : "")
+                        implicitHeight: tagHeaderText.implicitHeight + Kirigami.Units.smallSpacing * 2
+                        implicitWidth: tagHeaderText.implicitWidth + Kirigami.Units.largeSpacing * 2
+                        radius: height / 2
+                        color: Qt.alpha(accent, 0.18)
+                        border.width: 1
+                        border.color: Qt.alpha(accent, 0.65)
+                        Label {
+                            id: tagHeaderText
+                            anchors.centerIn: parent
+                            text: parent.parent.only ? parent.parent.only.category + ":" + parent.parent.only.name.replace(/_/g, " ") : ""
+                            font.weight: Font.DemiBold
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        opacity: 0.75
+                        text: {
+                            var info = parent.info, parts = []
+                            if (info.aliases && info.aliases.length) parts.push("Also called " + info.aliases.join(", "))
+                            if (info.implies && info.implies.length)
+                                parts.push("implies " + info.implies.map(function(t) { return t.category + ":" + t.name }).join(", "))
+                            return parts.join(" \u00B7 ")
                         }
                     }
                 }

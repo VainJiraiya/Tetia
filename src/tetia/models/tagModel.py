@@ -108,6 +108,15 @@ class TagModel(QObject):
             groups[-1]["tags"].append({"id": tag["id"], "name": tag["name"], "count": tag["count"]})
         return groups
 
+    @Slot(str, result="QVariantMap")
+    def tagInfo(self, name: str) -> dict:
+        """What a tag page says about its tag: {category, aliases, implies, implied_by} ({} if unknown)."""
+        try:
+            return self._db.tag_relations(name)
+        except sqlite3.Error as e:
+            logger.error("Failed to read about the tag %s: %s", name, e)
+            return {}
+
     @Slot(int, result=list)
     def tagsShown(self, media_id: int) -> list[dict]:
         """The tags to show with a file: its own and those of the folders it lies in (see tagsFor for its own only)."""
