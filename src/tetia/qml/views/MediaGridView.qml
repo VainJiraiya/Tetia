@@ -244,13 +244,6 @@ Flickable {
         return Qt.point(p.x + grid.contentX, p.y + grid.contentY)
     }
 
-    // A video's length as 0:42, 12:30 or 1:04:09
-    function lengthText(seconds) {
-        var s = Math.round(seconds)
-        var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60
-        var two = function(n) { return (n < 10 ? "0" : "") + n }
-        return h > 0 ? h + ":" + two(m) + ":" + two(r) : m + ":" + two(r)
-    }
 
     function sameIds(a, b) {
         if (a.length !== b.length) return false
@@ -850,444 +843,120 @@ Flickable {
                     Loader {
                         anchors.fill: parent
                         sourceComponent: tile.d.isFolder === true ? folderTile
-                                         : (rowItem.rowKind === "cover" ? coverFileTile : pictureTile)
+                                         : (rowItem.rowKind === "cover" ? bookTile : pictureTile)
                     }
 
-                    // ---- A folder, a series, a virtual folder: a portrait cover, its name and what it holds ----
                     Component {
                         id: folderTile
-
-                        Item {
-                            id: folderItem
-                            readonly property bool asFile: tile.d.subfolderIsSeries === true || !!tile.d.subfolderSingleFile
-                            readonly property bool isVirtual: tile.d.subfolderIsVirtual === true
-                            readonly property bool picked: grid.selecting && (grid.selectedTiles.indexOf(String(tile.d.subfolderPath)) >= 0
+                        CollectionTile {
+                            kind: tile.d.subfolderIsVirtual === true ? "virtual"
+                                  : (tile.d.subfolderIsSeries === true ? "series"
+                                  : (tile.d.subfolderSingleFile ? "single" : "folder"))
+                            name: tile.d.subfolderName || ""
+                            subtitle: grid.folderSubtitle(tile.d)
+                            coverSource: tile.d.subfolderHero && tile.d.subfolderHero.length > 0
+                                         ? "image://thumbnail/" + ThumbUri.fromPath(tile.d.subfolderHero) + grid.revisionSuffix : ""
+                            thumbSize: tile.thumbSize
+                            coverHeight: tile.pictureHeight
+                            picked: grid.selecting && (grid.selectedTiles.indexOf(String(tile.d.subfolderPath)) >= 0
                                 || (grid.tagMode && tile.d.subfolderSingleFileId >= 0 && grid.selectedIds.indexOf(tile.d.subfolderSingleFileId) >= 0))
-
-                            HoverHandler {
-                                id: folderHover
-                                cursorShape: Qt.PointingHandCursor
-                            }
-
-                            // A real or virtual folder (not a series, not a one-file folder) has the edges of the
-                            // covers behind it showing above: you can tell a folder from a book at a glance
-                            Repeater {
-                                model: folderItem.asFile ? 0 : 2
-                                Rectangle {
-                                    required property int index
-                                    x: (index === 0 ? 16 : 8)
-                                    y: (index === 0 ? -9 : -4)
-                                    width: parent.width - 2 * x
-                                    height: 24
-                                    radius: 6
-                                    color: Qt.alpha(palette.text, index === 0 ? 0.16 : 0.24)
-                                }
-                            }
-
-                            Rectangle {
-                                id: folderCover
-                                width: parent.width
-                                height: tile.pictureHeight
-                                radius: 6
-                                color: Qt.tint(palette.window, Qt.alpha(palette.text, 0.08))
-
-                                Kirigami.ShadowedImage {
-                                    id: folderHero
-                                    anchors.fill: parent
-                                    radius: 6
-                                    source: tile.d.subfolderHero && tile.d.subfolderHero.length > 0
-                                            ? "image://thumbnail/" + ThumbUri.fromPath(tile.d.subfolderHero) + grid.revisionSuffix : ""
-                                    sourceSize: Qt.size(tile.thumbSize, tile.thumbSize)
-                                    fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
-                                }
-
-                                Kirigami.Icon {
-                                    anchors.centerIn: parent
-                                    width: parent.width * 0.4
-                                    height: width
-                                    source: "folder"
-                                    opacity: 0.5
-                                    visible: folderHero.status !== Image.Ready && !folderItem.asFile
-                                }
-
-                                // hover and selection: a ring in the highlight colour
-                                Rectangle {
-                                    anchors.fill: parent
-                                    radius: 6
-                                    color: folderItem.picked ? Qt.alpha(palette.highlight, 0.25) : "transparent"
-                                    border.width: folderItem.picked ? 3 : (folderHover.hovered ? 2 : 0)
-                                    border.color: palette.highlight
-                                }
-
-                                // Selection check badge (top-right)
-                                Rectangle {
-                                    anchors.top: parent.top
-                                    anchors.right: parent.right
-                                    anchors.margins: grid.badgeMargin
-                                    width: grid.badgeHeight
-                                    height: grid.badgeHeight
-                                    radius: height / 2
-                                    color: palette.highlight
-                                    visible: folderItem.picked
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "✓"
-                                        color: palette.highlightedText
-                                        font.pixelSize: grid.badgeFont
-                                        font.bold: true
-                                    }
-                                }
-                            }
-
-                            Column {
-                                anchors.top: folderCover.bottom
-                                anchors.topMargin: 6
-                                width: parent.width
-                                spacing: 1
-
-                                Row {
-                                    width: parent.width
-                                    spacing: 4
-                                    Kirigami.Icon {
-                                        id: virtualMark
-                                        visible: folderItem.isVirtual
-                                        width: visible ? 14 : 0
-                                        height: 14
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        source: "link"
-                                        color: palette.highlight
-                                    }
-                                    Text {
-                                        width: parent.width - virtualMark.width - (virtualMark.visible ? parent.spacing : 0)
-                                        text: tile.d.subfolderName || ""
-                                        color: palette.text
-                                        font.pixelSize: 13
-                                        font.weight: Font.DemiBold
-                                        elide: Text.ElideRight
-                                    }
-                                }
-                                Text {
-                                    width: parent.width
-                                    text: {
-                                        var n = tile.d.subfolderCount || 0
-                                        // (a folder holding only folders counts 0 files: nothing to say yet)
-                                        if (tile.d.subfolderSingleFile || n === 0) return folderItem.isVirtual ? "Virtual folder" : ""
-                                        if (tile.d.subfolderIsSeries) return n + (tile.d.subfolderIsShow ? (n === 1 ? " episode" : " episodes")
-                                                                                                         : (n === 1 ? " chapter" : " chapters"))
-                                        return (folderItem.isVirtual ? "Virtual folder · " : "") + n + (n === 1 ? " item" : " items")
-                                    }
-                                    visible: text !== ""
-                                    color: palette.text
-                                    opacity: 0.7
-                                    font.pixelSize: 12
-                                    elide: Text.ElideRight
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                onClicked: function(mouse) {
-                                    var d = tile.d
-                                    if (mouse.button === Qt.RightButton && folderItem.isVirtual) {
-                                        virtualMenu.virtualId = d.subfolderVirtualId
-                                        virtualMenu.virtualName = d.subfolderName
-                                        virtualMenu.hasCover = grid.subfolderBackend
-                                            ? grid.subfolderBackend.hasCustomCover(d.subfolderPath) : false
-                                        virtualMenu.popup()
-                                    } else if (mouse.button === Qt.RightButton) {
-                                        subfolderMenu.folderPath = d.subfolderPath
-                                        subfolderMenu.isFavorite = d.subfolderFavorite
-                                        subfolderMenu.isSeries = !!d.subfolderIsSeries
-                                        subfolderMenu.isShow = !!d.subfolderIsShow
-                                        subfolderMenu.isSingle = !!d.subfolderSingleFile
-                                        subfolderMenu.singleFile = d.subfolderSingleFile || ""
-                                        subfolderMenu.singleId = d.subfolderSingleFileId
-                                        subfolderMenu.heroPath = d.subfolderHero || ""
-                                        subfolderMenu.hasCustomCover = grid.subfolderBackend
-                                            ? grid.subfolderBackend.hasCustomCover(d.subfolderPath) : false
-                                        subfolderMenu.popup()
-                                    } else if (grid.selecting) {
-                                        grid.forceActiveFocus()
-                                        var key = String(d.subfolderPath)
-                                        if (grid.tagMode && d.subfolderIsSeries !== true) {
-                                            // a one-file folder is its file: select it like a file tile
-                                            if (d.subfolderSingleFileId >= 0) {
-                                                if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)
-                                                        || grid.selectedIds.indexOf(d.subfolderSingleFileId) >= 0)
-                                                    grid.toggleSelection(d.subfolderSingleFileId)
-                                                else
-                                                    grid.setSelection([d.subfolderSingleFileId])
-                                            }
-                                            return
-                                        }
-                                        if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier) || grid.selectedTiles.indexOf(key) >= 0) {
-                                            grid.toggleTile(key)
-                                        } else {
-                                            grid.selectedIds = []
-                                            grid.setTiles([key])
-                                        }
-                                    } else {
-                                        if (folderItem.isVirtual) grid.virtualFolderClicked(d.subfolderVirtualId, d.subfolderName)
-                                        else if (d.subfolderIsShow) grid.showRequested(d.subfolderPath)
-                                        else if (d.subfolderIsSeries) grid.subfolderSeriesRequested(d.subfolderPath, "resume")
-                                        else if (d.subfolderSingleFile) grid.subfolderSingleFileRequested(d.subfolderPath)
-                                        else grid.subfolderClicked(d.subfolderPath)
-                                    }
-                                }
-                            }
+                            onClicked: function(mouse) { grid.folderTileClicked(tile.d, mouse) }
                         }
                     }
 
-                    // ---- A comic or a book: its cover, its name under it ----
                     Component {
-                        id: coverFileTile
-
-                        Item {
-                            id: bookTile
-                            HoverHandler {
-                                id: coverHover
-                                cursorShape: Qt.PointingHandCursor
-                            }
-
-                            Rectangle {
-                                id: bookCover
-                                width: parent.width
-                                height: tile.pictureHeight
-                                radius: 6
-                                color: Qt.tint(palette.window, Qt.alpha(palette.text, 0.08))
-
-                                Kirigami.ShadowedImage {
-                                    anchors.fill: parent
-                                    radius: 6
-                                    source: tile.d.fileUri ? "image://thumbnail/" + tile.d.fileUri + grid.revisionSuffix : ""
-                                    sourceSize: Qt.size(tile.thumbSize, tile.thumbSize)
-                                    fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
-                                }
-                                Rectangle {
-                                    anchors.fill: parent
-                                    radius: 6
-                                    color: tile.selected ? Qt.alpha(palette.highlight, 0.25) : "transparent"
-                                    border.width: tile.selected ? 3 : (coverHover.hovered ? 2 : 0)
-                                    border.color: palette.highlight
-                                }
-                                Rectangle {
-                                    anchors.top: parent.top
-                                    anchors.right: parent.right
-                                    anchors.margins: grid.badgeMargin
-                                    width: grid.badgeHeight
-                                    height: grid.badgeHeight
-                                    radius: height / 2
-                                    color: palette.highlight
-                                    visible: tile.selected
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "✓"
-                                        color: palette.highlightedText
-                                        font.pixelSize: grid.badgeFont
-                                        font.bold: true
-                                    }
-                                }
-                            }
-
-                            Text {
-                                anchors.top: bookCover.bottom
-                                anchors.topMargin: 6
-                                width: parent.width
-                                text: grid.titleOf(tile.d.fileName)
-                                color: palette.text
-                                font.pixelSize: 13
-                                font.weight: Font.DemiBold
-                                wrapMode: Text.Wrap
-                                maximumLineCount: 2
-                                elide: Text.ElideRight
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                onClicked: function(mouse) { grid.fileTileClicked(tile, mouse) }
-                            }
+                        id: bookTile
+                        BookTile {
+                            source: tile.d.fileUri ? "image://thumbnail/" + tile.d.fileUri + grid.revisionSuffix : ""
+                            thumbSize: tile.thumbSize
+                            coverHeight: tile.pictureHeight
+                            title: grid.titleOf(tile.d.fileName)
+                            selected: tile.selected
+                            onClicked: function(mouse) { grid.fileTileClicked(tile, mouse) }
                         }
                     }
 
-                    // ---- An image or a video, in its own shape; its name only on hover ----
                     Component {
                         id: pictureTile
-
-                        Item {
-                            id: pictureItem
-                            readonly property bool isVideo: tile.d.isVideo === true
-                            // a video thumbnail has film-strip edges (the shared cache's standard look): badges keep off them
-                            readonly property real side: isVideo ? Math.max(grid.badgeMargin, Math.round(width * 0.075)) : grid.badgeMargin
-
-                            HoverHandler {
-                                id: pictureHover
-                                cursorShape: Qt.PointingHandCursor
-                            }
-                            ToolTip.visible: pictureHover.hovered && nameOnHover.truncated
-                            ToolTip.delay: 700
-                            ToolTip.text: tile.d.fileName || ""
-
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: 6
-                                color: Qt.tint(palette.window, Qt.alpha(palette.text, 0.08))
-                            }
-
-                            Kirigami.ShadowedImage {
-                                id: picture
-                                anchors.fill: parent
-                                radius: 6
-                                source: tile.d.fileUri ? "image://thumbnail/" + tile.d.fileUri + grid.revisionSuffix : ""
-                                sourceSize: Qt.size(tile.thumbSize, tile.thumbSize)
-                                // the tile has the picture's own shape (only extreme ones are held in): filling it
-                                // shows the whole picture
-                                fillMode: Image.PreserveAspectCrop
-                                asynchronous: true
-                            }
-
-                            // on hover: the name (and a star) over a shade at the bottom
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                height: Math.min(parent.height, 44)
-                                radius: 6
-                                visible: pictureHover.hovered && !grid.selecting
-                                gradient: Gradient {
-                                    GradientStop { position: 0.0; color: "transparent" }
-                                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.72) }
-                                }
-                                Text {
-                                    id: nameOnHover
-                                    anchors.left: parent.left
-                                    anchors.right: starButton.left
-                                    anchors.bottom: parent.bottom
-                                    anchors.leftMargin: 8
-                                    anchors.bottomMargin: 7
-                                    text: tile.d.fileName || ""
-                                    color: "white"
-                                    font.pixelSize: 12
-                                    elide: Text.ElideMiddle
-                                }
-                                Kirigami.Icon {
-                                    id: starButton
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    anchors.rightMargin: 6
-                                    anchors.bottomMargin: 5
-                                    width: 18
-                                    height: 18
-                                    source: tile.d.isFavorite ? "starred-symbolic" : "non-starred-symbolic"
-                                    color: "white"
-                                    TapHandler {
-                                        onTapped: if (grid.mediaBackend) grid.mediaBackend.setFavorite(tile.d.mediaId, !tile.d.isFavorite)
-                                    }
-                                    ToolTip.visible: starHover.hovered
-                                    ToolTip.delay: 500
-                                    ToolTip.text: tile.d.isFavorite ? "Remove from favorites" : "Add to favorites"
-                                    HoverHandler { id: starHover }
-                                }
-                            }
-
-                            // A video's length, bottom right (its one badge)
-                            Rectangle {
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                anchors.rightMargin: pictureItem.side
-                                anchors.bottomMargin: grid.badgeMargin + (barShade.visible ? 4 : 0)
-                                visible: pictureItem.isVideo && tile.d.duration > 0 && !(pictureHover.hovered && !grid.selecting)
-                                width: lengthText.implicitWidth + 10
-                                height: 18
-                                radius: 4
-                                color: grid.badgeColor
-                                Text {
-                                    id: lengthText
-                                    anchors.centerIn: parent
-                                    text: grid.lengthText(tile.d.duration || 0)
-                                    color: "white"
-                                    font.pixelSize: grid.badgeFont
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-
-                            // How far a long video was watched: a thin bar along the bottom
-                            Rectangle {
-                                id: barShade
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                height: 4
-                                visible: pictureItem.isVideo && tile.d.watchFraction > 0 && !tile.d.isWatched
-                                color: Qt.rgba(0, 0, 0, 0.5)
-                                Rectangle {
-                                    width: parent.width * (tile.d.watchFraction || 0)
-                                    height: parent.height
-                                    color: palette.highlight
-                                }
-                            }
-
-                            // A long video watched to the end (top left)
-                            Rectangle {
-                                anchors.top: parent.top
-                                anchors.left: parent.left
-                                anchors.margins: grid.badgeMargin
-                                anchors.leftMargin: pictureItem.side
-                                width: grid.badgeHeight
-                                height: grid.badgeHeight
-                                radius: height / 2
-                                color: grid.badgeColor
-                                visible: pictureItem.isVideo && tile.d.isWatched === true
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "✓"
-                                    color: "white"
-                                    font.pixelSize: grid.badgeFont
-                                    font.bold: true
-                                }
-                            }
-
-                            // hover and selection
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: 6
-                                color: tile.selected ? Qt.alpha(palette.highlight, 0.25) : "transparent"
-                                border.width: tile.selected ? 3 : (pictureHover.hovered ? 2 : 0)
-                                border.color: palette.highlight
-                            }
-                            Rectangle {
-                                anchors.top: parent.top
-                                anchors.right: parent.right
-                                anchors.margins: grid.badgeMargin
-                                anchors.rightMargin: pictureItem.side
-                                width: grid.badgeHeight
-                                height: grid.badgeHeight
-                                radius: height / 2
-                                color: palette.highlight
-                                visible: tile.selected
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "✓"
-                                    color: palette.highlightedText
-                                    font.pixelSize: grid.badgeFont
-                                    font.bold: true
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                // the star takes its own clicks
-                                onClicked: function(mouse) { grid.fileTileClicked(tile, mouse) }
-                                z: -1
-                            }
+                        PictureTile {
+                            source: tile.d.fileUri ? "image://thumbnail/" + tile.d.fileUri + grid.revisionSuffix : ""
+                            thumbSize: tile.thumbSize
+                            fileName: tile.d.fileName || ""
+                            isVideo: tile.d.isVideo === true
+                            isFavorite: !!tile.d.isFavorite
+                            duration: tile.d.duration || 0
+                            watchFraction: tile.d.watchFraction || 0
+                            watched: tile.d.isWatched === true
+                            selected: tile.selected
+                            selecting: grid.selecting
+                            onClicked: function(mouse) { grid.fileTileClicked(tile, mouse) }
+                            onFavoriteToggled: if (grid.mediaBackend) grid.mediaBackend.setFavorite(tile.d.mediaId, !tile.d.isFavorite)
                         }
                     }
                 }
             }
+        }
+    }
+
+    // Under a folder tile: what it holds
+    function folderSubtitle(d) {
+        var n = d.subfolderCount || 0
+        var virtual = d.subfolderIsVirtual === true
+        // (a folder holding only folders counts 0 files: nothing to say yet)
+        if (d.subfolderSingleFile || n === 0) return virtual ? "Virtual folder" : ""
+        if (d.subfolderIsSeries) return n + (d.subfolderIsShow ? (n === 1 ? " episode" : " episodes")
+                                                               : (n === 1 ? " chapter" : " chapters"))
+        return (virtual ? "Virtual folder \u00B7 " : "") + n + (n === 1 ? " item" : " items")
+    }
+
+    // A folder tile was clicked: open it, select it, or show its menu
+    function folderTileClicked(d, mouse) {
+        if (mouse.button === Qt.RightButton && d.subfolderIsVirtual === true) {
+            virtualMenu.virtualId = d.subfolderVirtualId
+            virtualMenu.virtualName = d.subfolderName
+            virtualMenu.hasCover = grid.subfolderBackend ? grid.subfolderBackend.hasCustomCover(d.subfolderPath) : false
+            virtualMenu.popup()
+        } else if (mouse.button === Qt.RightButton) {
+            subfolderMenu.folderPath = d.subfolderPath
+            subfolderMenu.isFavorite = d.subfolderFavorite
+            subfolderMenu.isSeries = !!d.subfolderIsSeries
+            subfolderMenu.isShow = !!d.subfolderIsShow
+            subfolderMenu.isSingle = !!d.subfolderSingleFile
+            subfolderMenu.singleFile = d.subfolderSingleFile || ""
+            subfolderMenu.singleId = d.subfolderSingleFileId
+            subfolderMenu.heroPath = d.subfolderHero || ""
+            subfolderMenu.hasCustomCover = grid.subfolderBackend ? grid.subfolderBackend.hasCustomCover(d.subfolderPath) : false
+            subfolderMenu.popup()
+        } else if (grid.selecting) {
+            grid.forceActiveFocus()
+            var key = String(d.subfolderPath)
+            if (grid.tagMode && d.subfolderIsSeries !== true) {
+                // a one-file folder is its file: select it like a file tile
+                if (d.subfolderSingleFileId >= 0) {
+                    if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)
+                            || grid.selectedIds.indexOf(d.subfolderSingleFileId) >= 0)
+                        grid.toggleSelection(d.subfolderSingleFileId)
+                    else
+                        grid.setSelection([d.subfolderSingleFileId])
+                }
+                return
+            }
+            if (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier) || grid.selectedTiles.indexOf(key) >= 0) {
+                grid.toggleTile(key)
+            } else {
+                grid.selectedIds = []
+                grid.setTiles([key])
+            }
+        } else if (d.subfolderIsVirtual === true) {
+            grid.virtualFolderClicked(d.subfolderVirtualId, d.subfolderName)
+        } else if (d.subfolderIsShow) {
+            grid.showRequested(d.subfolderPath)
+        } else if (d.subfolderIsSeries) {
+            grid.subfolderSeriesRequested(d.subfolderPath, "resume")
+        } else if (d.subfolderSingleFile) {
+            grid.subfolderSingleFileRequested(d.subfolderPath)
+        } else {
+            grid.subfolderClicked(d.subfolderPath)
         }
     }
 
