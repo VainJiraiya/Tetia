@@ -189,7 +189,7 @@ except sqlite3.OperationalError as e:
 check("other connection can write after folder add + scan", ok)
 
 # 14. migration version
-check("schema is at the latest version (15)", get_database().conn.execute("PRAGMA user_version").fetchone()[0] == 15)
+check("schema is at the latest version (16)", get_database().conn.execute("PRAGMA user_version").fetchone()[0] == 16)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 shutil.rmtree(ROOT, ignore_errors=True)

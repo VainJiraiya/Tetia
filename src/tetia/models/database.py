@@ -129,6 +129,7 @@ class Database:
             (13, self._migrate_v13),
             (14, self._migrate_v14),
             (15, self._migrate_v15),
+            (16, self._migrate_v16),
         )
         for target, step in steps:
             if version < target:
@@ -363,6 +364,29 @@ class Database:
         columns = {row[1] for row in self.conn.execute("PRAGMA table_info(collection)")}
         if "format" not in columns:
             self.conn.execute("ALTER TABLE collection ADD COLUMN format TEXT")
+
+    def _migrate_v16(self):
+        # Boards: a saved search dressed as a collection, plus what was put in or taken out by hand.
+        # Nothing moves: a file can be on any number of boards (unlike a virtual folder, where it is in one place).
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS board (
+                id             INTEGER PRIMARY KEY,
+                name           TEXT NOT NULL,
+                query          TEXT NOT NULL DEFAULT '',
+                tab            TEXT NOT NULL DEFAULT '',
+                layout         TEXT,
+                cover_media_id INTEGER REFERENCES media(id) ON DELETE SET NULL,
+                created        TEXT
+            );
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS board_pin (
+                board_id INTEGER NOT NULL REFERENCES board(id) ON DELETE CASCADE,
+                media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                added    INTEGER NOT NULL,
+                PRIMARY KEY (board_id, media_id)
+            );
+        """)
 
     def close(self):
         self.conn.close()
