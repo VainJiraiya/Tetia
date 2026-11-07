@@ -66,11 +66,14 @@ GridView {
     // wide window the levels have 16, 14, 12, 10 and 8 tiles per row, the top-level grid 14, 12, 10, 8 and 6): the
     // page centre then falls between two tiles and the eye scans tile by tile. The widths below are the smallest
     // a cell may be (the cell then stretches a little to fill the row). thumbHint is the thumbnail size to ask
-    // for (0: no preference, so the biggest cached one). -2 and -1 use the normal (128 px) thumbnails; +1 and +2
-    // ask for the large (256) and x-large (512) ones.
+    // for.
     property int tileLevel: 0
     readonly property real minCell: [155, 178, 205, 245, 300][tileLevel + 2]
-    readonly property int thumbHint: [128, 128, 0, 256, 512][tileLevel + 2]
+    // The thumbnail size to ask for is worked out from the picture as drawn, in real screen pixels, rounded up to a
+    // cache size (128, 256, 512 or 1024), so a picture is never stretched. Files are fitted in the tile; a folder's
+    // cover (a 3:4 tile that the cover fills) needs its height.
+    readonly property int thumbHint: ThumbUri.tierFor(Math.ceil((cellWidth - 2 * inset - 8) * Screen.devicePixelRatio))
+    readonly property int heroThumbHint: ThumbUri.tierFor(Math.ceil((cellWidth - 2 * inset) * 4 / 3 * Screen.devicePixelRatio))
     // Even the smallest size is big enough for a (shortened) name
     readonly property bool showLabels: true
 
@@ -849,7 +852,7 @@ GridView {
                     anchors.bottomMargin: 6
                     source: model.subfolderHero && model.subfolderHero.length > 0
                             ? "image://thumbnail/" + ThumbUri.fromPath(model.subfolderHero) + grid.revisionSuffix : ""
-                    sourceSize: grid.thumbHint > 0 ? Qt.size(grid.thumbHint, grid.thumbHint) : Qt.size(0, 0)
+                    sourceSize: Qt.size(grid.heroThumbHint, grid.heroThumbHint)
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                 }

@@ -46,10 +46,18 @@ def kind_from_ext(ext: str) -> str:
     return "image"
 
 
-def scan_folder(db, folder_directory: Path, hash_fn):
+class ScanStopped(Exception):
+    """The scan was asked to stop (before it changed anything)."""
+
+
+def scan_folder(db, folder_directory: Path, hash_fn, should_stop=None):
     """Upsert every media file directly inside `folder_directory` into the
     database (one transaction) and mark vanished ones missing. Returns four
-    lists of item dicts: images, videos, comics, books."""
+    lists of item dicts: images, videos, comics, books.
+
+    `should_stop` (a function) is asked between files while new ones are read and
+    fingerprinted, which takes the time on a slow drive; if it says yes, ScanStopped
+    is raised before anything was written."""
     scan_directory = folder_directory.resolve()
 
     temporary_images_list = []
@@ -67,6 +75,8 @@ def scan_folder(db, folder_directory: Path, hash_fn):
     try:
         for entry in folder_directory.iterdir():
             if entry.is_file() and not entry.name.startswith(".") and entry.suffix.lower() in ALL_MEDIA_EXTENSIONS:
+                if should_stop is not None and should_stop():
+                    raise ScanStopped()
                 path = str(entry.resolve())
                 info = entry.stat()
                 if not db.get_stored_hash(path, info.st_size, int(info.st_mtime)):

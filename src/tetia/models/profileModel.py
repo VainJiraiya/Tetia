@@ -34,6 +34,7 @@ QML_IMPORT_MAJOR_VERSION = 1
 
 UNLOCK_TIMEOUT = 300      # seconds to wait for the password to be entered
 LOCK_TIMEOUT = 20         # seconds to wait for a lock before calling it stuck
+RELEASE_TIMEOUT = 20      # seconds to wait for Tetia itself to let go of the vault's files before asking to lock
 POLL_MS = 300
 WATCH_MS = 2000
 
@@ -98,6 +99,8 @@ class ProfileModel(QObject):
         self._deadline = 0.0
         self._blocked_text = ""
         self._released = False
+        self._asked = False            # the lock was asked of Plasma (after Tetia let go of the vault's files)
+        self._release_deadline = 0.0
         self._finished = False         # relaunching/quitting: let the window close
         self._unlock_target = None
 
@@ -355,6 +358,30 @@ class ProfileModel(QObject):
             profiles.run_release_hooks()
             self._released = True
         self._blocked_text = ""
+        self._asked = False
+        # Work that was already under way (a thumbnail read from the vault, say) may take a moment to finish. The vault
+        # cannot be locked while a file in it is open, so wait until none is, and only then ask Plasma to lock it.
+        self._release_deadline = time.monotonic() + RELEASE_TIMEOUT
+        if self._files_in_vault():
+            self._set_stage(STAGE_LOCKING, f"Letting go of the files in “{profiles.active_name()}”…")
+            self._timer.start()
+            return
+        self._ask_to_lock()
+
+    def _files_in_vault(self) -> list:
+        return vaults.open_files_under(vaults.mount_for(self._active_device()))
+
+    def _blocked_detail(self) -> str:
+        """What this program still has open in the vault, for the message that says it could not be locked."""
+        names = [os.path.basename(path) or path for path in self._files_in_vault()]
+        if not names:
+            return ""
+        shown = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        return f"\n\nTetia itself still has files open in it: {shown}."
+
+    def _ask_to_lock(self):
+        self._asked = True
+        self._blocked_text = ""
         self._deadline = time.monotonic() + LOCK_TIMEOUT
         self._set_stage(STAGE_LOCKING, f"Locking “{profiles.active_name()}”…")
         try:
@@ -380,10 +407,16 @@ class ProfileModel(QObject):
             if not self._vault_mounted():
                 self._timer.stop()
                 self._finish()
+            elif not self._asked:
+                # still waiting for Tetia to let go: ask as soon as it has, or when waiting longer is no use
+                if not self._files_in_vault() or time.monotonic() > self._release_deadline:
+                    self._timer.stop()
+                    self._ask_to_lock()
             elif self._blocked_text or time.monotonic() > self._deadline:
                 self._timer.stop()
                 self._set_stage(STAGE_BLOCKED,
-                                self._blocked_text or "The vault is still in use, so it can't be locked.")
+                                (self._blocked_text or "The vault is still in use, so it can't be locked.")
+                                + self._blocked_detail())
 
     def _fail(self, text):
         """End an attempt that can't go on, without switching."""

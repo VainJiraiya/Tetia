@@ -12,3 +12,10 @@
 function fromPath(path) {
     return "file://" + path.split("/").map(encodeURIComponent).join("/")
 }
+
+// The thumbnail size (a freedesktop cache tier: 128, 256, 512 or 1024 px) to ask for, so that a picture that is
+// `pixels` tall or wide on the screen is not stretched. `pixels` are real screen pixels: the size in the window
+// times the screen's devicePixelRatio. It rounds up, so it only changes at the tier boundaries.
+function tierFor(pixels) {
+    return pixels <= 128 ? 128 : pixels <= 256 ? 256 : pixels <= 512 ? 512 : 1024
+}

@@ -19,7 +19,9 @@ Item {
     // tiles are two per row smaller at every level.
     property int tileLevel: 0
     readonly property real minCell: [175, 205, 245, 300, 400][tileLevel + 2]
-    readonly property int thumbHint: [128, 128, 256, 256, 512][tileLevel + 2]
+    // The thumbnail size to ask for: the tile's picture as drawn (3:4, the cover fills it, so its height is what
+    // counts) in real screen pixels, rounded up to a cache size. It follows the window and the tile size.
+    readonly property int thumbHint: ThumbUri.tierFor(Math.ceil(grid.coverHeight * Screen.devicePixelRatio))
     readonly property bool showLabels: true
 
     // Every tile, in every tab, has the same shape: a vertical rectangle (3:4) with the cover cropped to fill

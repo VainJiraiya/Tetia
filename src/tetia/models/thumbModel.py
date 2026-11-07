@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import weakref
 from pathlib import Path
 from urllib.parse import quote
 from PySide6.QtCore import QSize, Qt, QUrl
@@ -161,7 +163,7 @@ def _save_thumbnail(base: Path, uri: str, uri_md5: str, img: QImage, local_path:
 
 
 # The freedesktop thumbnail sizes, smallest first: (directory, longer edge in pixels)
-_TIERS = (("normal", 128), ("large", 256), ("x-large", 512))
+_TIERS = (("normal", 128), ("large", 256), ("x-large", 512), ("xx-large", 1024))
 
 
 def forget_thumbnails(local_path: str):
@@ -184,6 +186,19 @@ class ThumbnailProvider(QQuickImageProvider):
         # comics, EPUBs and PDFs that could not be read, {path: mtime}: not tried again
         # while the file is unchanged, so scrolling past a damaged one stays cheap
         self._unreadable = {}
+        # Pictures are read on a loader thread of Qt's. When a vault is about to be locked that thread may be in the
+        # middle of one (several seconds, from a hard drive), so it is told to stop and waited for (release hook).
+        self._closed = False
+        self._active = 0
+        self._idle = threading.Condition()
+        release = weakref.WeakMethod(self.release)
+        profiles.add_release_hook(lambda: release() and release()(), order=0)
+
+    def release(self, timeout: float = 15.0):
+        """Stop making thumbnails: later requests get nothing, and the ones under way are waited for."""
+        with self._idle:
+            self._closed = True
+            self._idle.wait_for(lambda: self._active == 0, timeout=timeout)
 
     def _lookup_dirs(self, hint: int) -> list:
         """Cache folders to try, best first, as (folder, edge). With no size hint:
@@ -244,7 +259,21 @@ class ThumbnailProvider(QQuickImageProvider):
         except ValueError:
             return True
 
-    def requestImage(self, id_string: str, requested_size: QSize, size: QSize):
+    def requestImage(self, id_string: str, size: QSize, requested_size: QSize):
+        # Qt's order: the image's size is an OUTPUT (set below) and the size QML asked for (sourceSize) comes last.
+        # This used to be declared the other way round, so the size QML asked for was never seen.
+        with self._idle:
+            if self._closed:
+                return QImage()
+            self._active += 1
+        try:
+            return self._request_image(id_string, size, requested_size)
+        finally:
+            with self._idle:
+                self._active -= 1
+                self._idle.notify_all()
+
+    def _request_image(self, id_string: str, size: QSize, requested_size: QSize):
         # QML adds "?v=<n>" after a cover is changed by hand, so its image cache reloads
         # the picture; the number is not part of the file's name
         id_string = re.sub(r"\?v=\d+$", "", id_string)

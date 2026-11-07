@@ -329,6 +329,39 @@ class FlowTests(unittest.TestCase):
         del MOUNTS["/v/safe.enc"]
         self.assertTrue(pump(until=lambda: self.quit))
 
+    # -- letting go of the vault's files before asking to lock ---------------------------
+
+    def test_locking_waits_until_tetia_has_let_go_of_the_vault(self):
+        self.enter_vault()
+        held = open(os.path.join(MOUNTS["/v/safe.enc"], "photo.jpg"), "wb")      # a read that is still under way
+        try:
+            m = self.model()
+            m.switchTo("general")
+            self.assertEqual(m.busyStage, "locking")
+            self.assertIn("Letting go", m.busyText)
+            pump(0.2)
+            self.assertEqual(self.service.calls, [], "Plasma is not asked while a file in the vault is open")
+        finally:
+            held.close()
+        self.assertTrue(pump(until=lambda: self.service.calls))
+        self.assertEqual(self.service.calls, [("close", "/v/safe.enc")])
+        self.assertEqual(self.released, [True])
+
+    def test_it_asks_anyway_when_a_file_stays_open(self):
+        self.enter_vault()
+        held = open(os.path.join(MOUNTS["/v/safe.enc"], "photo.jpg"), "wb")
+        saved, pm.RELEASE_TIMEOUT = pm.RELEASE_TIMEOUT, 0.1
+        try:
+            m = self.model()
+            m.switchTo("general")
+            self.assertTrue(pump(until=lambda: self.service.calls))             # waiting longer is no use: ask
+            self.service.lockBlocked.emit("/v/safe.enc", "Unable to lock the vault because it is being used by python3")
+            self.assertTrue(pump(until=lambda: m.busyStage == "blocked"))
+            self.assertIn("photo.jpg", m.busyText, "the message says what Tetia itself still has open")
+        finally:
+            pm.RELEASE_TIMEOUT = saved
+            held.close()
+
     def test_blocked_lock_can_be_abandoned(self):
         self.enter_vault()
         m = self.model()
@@ -497,3 +530,44 @@ class RealBusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- what a program still has open inside a vault ------------------------------------------------------
+
+def test_open_files_under_sees_open_files_mappings_and_children(tmp_path):
+    import mmap
+    import subprocess
+    mount = tmp_path / "vault"
+    mount.mkdir()
+    sibling = tmp_path / "vaultX"                      # starts with the same letters: not inside the vault
+    sibling.mkdir()
+    assert vaults.open_files_under(str(mount)) == []
+    assert vaults.open_files_under("") == []
+
+    outside = open(sibling / "other.bin", "wb")
+    inside = open(mount / "a.jpg", "wb")
+    try:
+        assert vaults.open_files_under(str(mount)) == [str(mount / "a.jpg")]
+    finally:
+        inside.close()
+        outside.close()
+    assert vaults.open_files_under(str(mount)) == []
+
+    # a memory-mapped file stays in use after its descriptor is closed (the database's -shm file is one)
+    (mount / "shm").write_bytes(b"x" * 4096)
+    with open(mount / "shm", "r+b") as f:
+        mapped = mmap.mmap(f.fileno(), 4096)
+    try:
+        assert vaults.open_files_under(str(mount)) == [str(mount / "shm")]
+    finally:
+        mapped.close()
+    assert vaults.open_files_under(str(mount)) == []
+
+    # a program Tetia started, with its working folder in the vault (a thumbnail tool, say)
+    child = subprocess.Popen(["sleep", "30"], cwd=mount)
+    try:
+        assert vaults.open_files_under(str(mount)) == [str(mount)]
+    finally:
+        child.kill()
+        child.wait()
+    assert vaults.open_files_under(str(mount)) == []

@@ -15,7 +15,7 @@ from PySide6.QtQml import QmlElement
 
 from tetia.models import covers, profiles, tag_query
 from tetia.models.database import Database, get_database
-from tetia.models.scanner import scan_folder, ALL_MEDIA_EXTENSIONS
+from tetia.models.scanner import scan_folder, ScanStopped, ALL_MEDIA_EXTENSIONS
 import hashlib
 import sqlite3
 
@@ -161,7 +161,9 @@ class SearchModel(QObject):
                     if self._stop.is_set():
                         return
                     try:
-                        scan_folder(db, Path(directory), content_hash)
+                        scan_folder(db, Path(directory), content_hash, self._stop.is_set)
+                    except ScanStopped:
+                        return          # asked to stop (a vault is being locked): between files, not only between folders
                     except (OSError, sqlite3.Error) as e:
                         logger.warning("Indexing %s failed: %s", directory, e)
         except Exception:

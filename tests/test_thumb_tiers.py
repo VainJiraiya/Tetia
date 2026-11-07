@@ -22,7 +22,7 @@ def _cache(base, tier, edge, source):
 
 def _edge(provider, source, hint):
     size = QSize()
-    image = provider.requestImage(str(source), QSize(hint, hint) if hint else QSize(), size)
+    image = provider.requestImage(str(source), size, QSize(hint, hint) if hint else QSize())
     return image.width()
 
 
@@ -79,3 +79,19 @@ def test_files_tetia_cannot_draw_use_whatever_the_cache_has(tmp_path):
     provider = ThumbnailProvider()
     _cache(provider.thumbnails_base, "large", 256, source)         # made by Dolphin
     assert _edge(provider, source, 512) == 256
+
+
+def test_a_big_tile_gets_the_1024_tier_and_a_small_one_does_not(tmp_path):
+    source = tmp_path / "cover.png"
+    big = QImage(2000, 2000, QImage.Format_RGB32)
+    big.fill(QColor("white"))
+    big.save(str(source))
+    provider = ThumbnailProvider()
+    assert _edge(provider, source, 1024) == 1024                    # a tile drawn bigger than 512 real pixels
+    assert (provider.thumbnails_base / "xx-large").exists()         # and kept where the freedesktop spec puts it
+    assert len(list((provider.thumbnails_base / "xx-large").glob("*.png"))) == 1
+    assert _edge(provider, source, 600) == 1024                     # anything between 512 and 1024 rounds up
+    small = tmp_path / "other.png"                                  # a file that has no thumbnail yet
+    QImage(2000, 2000, QImage.Format_RGB32).save(str(small))
+    assert _edge(provider, small, 256) == 256                       # a small tile does not make the big one
+    assert not any((provider.thumbnails_base / "xx-large").glob("*other*"))

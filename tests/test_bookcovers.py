@@ -221,7 +221,7 @@ def _cache_name(path):
 
 def _request(provider, path, hint=0):
     size = QSize()
-    return provider.requestImage(str(path), QSize(hint, hint) if hint else QSize(), size)
+    return provider.requestImage(str(path), size, QSize(hint, hint) if hint else QSize())
 
 
 def test_a_comic_without_a_cached_cover_gets_one_made_and_saved(tmp_path):

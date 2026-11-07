@@ -62,6 +62,62 @@ def mount_for(device: str, mounts_file: str = "/proc/self/mounts") -> str:
     return found
 
 
+def _descendants(pid: int, proc: str) -> list[int]:
+    """`pid` and every process it started (a thumbnail or probe program holds files open for us too)."""
+    children: dict[int, list[int]] = {}
+    for name in os.listdir(proc):
+        if not name.isdigit():
+            continue
+        try:
+            stat = Path(proc, name, "stat").read_text()
+            parent = int(stat[stat.rindex(")") + 2:].split()[1])      # after "pid (name) state "
+        except (OSError, ValueError, IndexError):
+            continue
+        children.setdefault(parent, []).append(int(name))
+    found, todo = [], [pid]
+    while todo:
+        current = todo.pop()
+        found.append(current)
+        todo.extend(children.get(current, []))
+    return found
+
+
+def open_files_under(mount: str, proc: str = "/proc") -> list[str]:
+    """The files inside `mount` that this program, or anything it started, has open now: open files, memory-mapped
+    ones (the database's shared-memory file) and a working folder inside it. A vault cannot be locked while any
+    exist. Sorted, without repeats; empty when `mount` is empty."""
+    if not mount:
+        return []
+    prefix = mount.rstrip("/") + "/"
+    found = set()
+
+    def note(path: str):
+        path = path.removesuffix(" (deleted)")
+        if path == mount or path.startswith(prefix):
+            found.add(path)
+
+    try:
+        pids = _descendants(os.getpid(), proc)
+    except OSError:
+        pids = [os.getpid()]
+    for pid in pids:
+        base = Path(proc, str(pid))
+        try:
+            for fd in os.listdir(base / "fd"):
+                try:
+                    note(os.readlink(base / "fd" / fd))
+                except OSError:
+                    pass
+            note(os.readlink(base / "cwd"))
+            for line in (base / "maps").read_text().splitlines():
+                parts = line.split(None, 5)
+                if len(parts) == 6 and parts[5].startswith("/"):
+                    note(parts[5])
+        except OSError:
+            continue                      # it ended meanwhile, or is not ours to look at
+    return sorted(found)
+
+
 # ---- Reading the service's struct ---------------------------------------------
 # PySide6 can't demarshal D-Bus structs (beginStructure() only marshals), but
 # Qt's debug dump of a message contains every field, so structs are decoded
