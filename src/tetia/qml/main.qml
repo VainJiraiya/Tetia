@@ -2073,13 +2073,6 @@ Kirigami.ApplicationWindow {
                             font.weight: Font.DemiBold
                         }
                     }
-                    Button {
-                        readonly property bool pinned: parent.only !== null && (homeView.pinnedItems, homeModel.isPinned("tag", parent.only.name))
-                        text: pinned ? "Unpin from Home" : "Pin to Home"
-                        icon.name: pinned ? "window-unpin" : "window-pin"
-                        flat: true
-                        onClicked: homeModel.setPinned("tag", parent.only.name, !pinned)
-                    }
                     Label {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
@@ -2504,7 +2497,8 @@ Kirigami.ApplicationWindow {
             id: viewerPage
             objectName: "viewerPage"
             // a picture is seen best on a dark ground, as in any photo viewer
-            background: Rectangle { color: "#141516" }
+            // black, like the reader's; or light, for a picture that gets lost in black (the viewer's sun button)
+            background: Rectangle { color: imageViewer.lightBackground ? "#f4f4f4" : "black" }
 
             // Overridden by pageStack.push(imageViewerComponent, { initialIndex: ... })
             property int initialIndex: 0
@@ -2549,6 +2543,8 @@ Kirigami.ApplicationWindow {
             ImageViewer {
                 id: imageViewer
                 anchors.fill: parent
+                lightBackground: uiSettings.intValue("viewer.light", 0) === 1
+                onLightBackgroundChanged: uiSettings.setIntValue("viewer.light", lightBackground ? 1 : 0)
                 model: viewerPage.viewerModel
                 initialIndex: viewerPage.initialIndex
                 tagBackend: tagModel

@@ -128,6 +128,8 @@ def pinned_items(db, resolver) -> list:
     out = []
     for p in pins(db):
         kind, ref = p["kind"], p["ref"]
+        if kind != "board":
+            continue                     # Pinned is for boards; folders, series and files are on Home as favorites
         item = {"kind": kind, "ref": ref, "cover": "", "collage": [], "badge": "", "fraction": 0.0, "finished": False}
         if kind == "board":
             board = boards.get(db, int(ref))

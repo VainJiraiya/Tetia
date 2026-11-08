@@ -411,6 +411,7 @@ ListView {
         anchors.right: root.showTagPanel ? root.right : parent.right
         anchors.margins: 8
         icon.name: "tag"
+        icon.color: root.lightBackground ? "#232629" : "white"     // seen on the ground behind the picture
         display: AbstractButton.IconOnly
         hoverEnabled: true
         opacity: root.controlsVisible ? 0.85 : 0.3
@@ -420,12 +421,36 @@ ListView {
         onClicked: root.showTagPanel = !root.showTagPanel
     }
 
+    // The ground behind the picture: black, or light for a picture that is lost in black
+    property bool lightBackground: false
+
+    ToolButton {
+        id: groundButton
+        objectName: "groundButton"
+        anchors.top: parent.top
+        anchors.right: metadataButton.left
+        anchors.topMargin: 8
+        icon.name: root.lightBackground ? "weather-clear-night" : "weather-clear"
+        icon.color: root.lightBackground ? "#232629" : "white"     // seen on the ground behind the picture
+        display: AbstractButton.IconOnly
+        hoverEnabled: true
+        opacity: root.controlsVisible ? 0.85 : 0.3
+        enabled: opacity > 0.05
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+        ToolTip.visible: hovered
+        ToolTip.delay: 500
+        ToolTip.text: root.lightBackground ? "Dark background" : "Light background"
+        onClicked: root.lightBackground = !root.lightBackground
+    }
+
     // The metadata button, just left of the tag button
     ToolButton {
+        id: metadataButton
         anchors.top: parent.top
         anchors.right: tagButton.left
         anchors.topMargin: 8
         icon.name: "help-about-symbolic"
+        icon.color: root.lightBackground ? "#232629" : "white"     // seen on the ground behind the picture
         display: AbstractButton.IconOnly
         hoverEnabled: true
         opacity: root.controlsVisible ? 0.85 : 0.3

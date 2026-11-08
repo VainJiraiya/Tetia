@@ -172,7 +172,7 @@ Rectangle {
                 visible: home.libraryItems.length === 0 && home.recentFiles.length === 0
                 wrapMode: Text.WordWrap
                 opacity: 0.7
-                text: "Home fills up as you use Tetia: what you are reading or watching, what you pin (“Pin to Home” on a board, a folder or a tag), your favorites and what was added lately."
+                text: "Home fills up as you use Tetia: what you are reading or watching, the boards you pin (“Pin to Home” in a board's menu), your favorites and what was added lately."
             }
 
             Section {

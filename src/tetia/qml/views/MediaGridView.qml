@@ -117,7 +117,7 @@ Flickable {
     property var subfolderBackend: null
     // BoardService, the tab whose boards "Add to board" offers, and the board this page shows (-1: none)
     property var boardBackend: null
-    // HomeModel: "Pin to Home" on boards, folders and series
+    // HomeModel: "Pin to Home" on boards (folders, series and files go on Home through the favorites)
     property var homeBackend: null
     // MediaActions: show in the file manager, copy the path
     property var actionsBackend: null
@@ -653,13 +653,6 @@ Flickable {
         MenuSeparator {}
 
         // about it
-        MenuItem {
-            text: subfolderMenu.pinned ? "Unpin from Home" : "Pin to Home"
-            icon.name: subfolderMenu.pinned ? "window-unpin" : "window-pin"
-            visible: grid.homeBackend !== null
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.homeBackend.setPinned("folder", String(subfolderMenu.folderPath), !subfolderMenu.pinned)
-        }
         MenuItem {
             text: subfolderMenu.isFavorite ? "Remove from favorites" : "Add to favorites"
             icon.name: subfolderMenu.isFavorite ? "non-starred-symbolic" : "starred-symbolic"

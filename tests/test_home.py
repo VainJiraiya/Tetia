@@ -49,7 +49,7 @@ def test_continue_mixes_books_and_long_videos_newest_first_and_skips_clips(tmp_p
     assert movie["where"] == "1 h 20 min left" and 0 < movie["fraction"] < 1
 
 
-def test_pins_show_boards_folders_series_and_tags(tmp_path, qapp):
+def test_pinned_is_for_boards(tmp_path, qapp):
     folder = tmp_path / "Art"
     folder.mkdir()
     for name in ("a.png", "b.png"):
@@ -72,12 +72,11 @@ def test_pins_show_boards_folders_series_and_tags(tmp_path, qapp):
     model.setPinned("tag", "frieren", True)
     model.setPinned("board", str(board), True)                                  # twice: still one pin
     pinned = model.pinned()
-    assert [(p["kind"], p["name"]) for p in pinned] == [("board", "Frieren art"), ("series", "Frieren"), ("tag", "frieren")]
-    assert pinned[0]["sub"] == "Board · 1" and pinned[2]["sub"] == "Tag · 1" and len(pinned[2]["collage"]) == 1
-    assert model.isPinned("tag", "frieren") and len(changed) == 4
+    # folders, series and tags reach Home through the favorites, not the pins (an old pin of one is not shown)
+    assert [(p["kind"], p["name"]) for p in pinned] == [("board", "Frieren art")]
+    assert pinned[0]["sub"] == "Board · 1" and len(changed) == 4
     boards.delete(db, board)                                                    # a pin of a deleted board goes
-    model.setPinned("tag", "frieren", False)
-    assert [p["kind"] for p in model.pinned()] == ["series"]
+    assert model.pinned() == []
 
 
 def test_favorites_and_recently_added_are_pictures_in_their_shape(tmp_path):
