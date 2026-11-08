@@ -69,6 +69,9 @@ Flickable {
     signal boardRenameRequested(int boardId, string name)
     signal boardDeleteRequested(int boardId, string name)
     signal newBoardRequested(var ids)
+    // A file's menu: the file on disk
+    signal renameRequested(string uri, string name)
+    signal trashRequested(var ids)
 
     // A cover changed by hand: this number is added to the pictures' URLs so they reload
     property int coverRevision: 0
@@ -116,6 +119,8 @@ Flickable {
     property var boardBackend: null
     // HomeModel: "Pin to Home" on boards, folders and series
     property var homeBackend: null
+    // MediaActions: show in the file manager, copy the path
+    property var actionsBackend: null
     property string boardTab: ""
     property int boardId: -1
     // how pictures are laid out: rows (their own shape), columns or grid
@@ -384,6 +389,36 @@ Flickable {
     Menu {
         id: contextMenu
 
+        // open it
+        MenuItem {
+            text: "Open"
+            icon.name: "document-open"
+            font.bold: true
+            onTriggered: grid.openFileAt(grid.contextMenuData.kind, grid.contextMenuData.fileIndex)
+        }
+        MenuItem {
+            text: "Open in system default"
+            icon.name: "document-open"
+            onTriggered: grid.openExternallyRequested(grid.contextMenuData.fileIndex)
+        }
+        MenuItem {
+            text: "Play from beginning"
+            icon.name: "media-skip-backward"
+            visible: grid.contextMenuData.kind === "video" && grid.contextMenuData.resumable === true
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.playFromStartRequested(grid.contextMenuData.fileIndex)
+        }
+        MenuSeparator {}
+
+        // about it
+        MenuItem {
+            id: favoriteItem
+            enabled: grid.mediaBackend !== null
+            onTriggered: {
+                var id = grid.contextMenuData.mediaId
+                grid.mediaBackend.setFavorite(id, !grid.mediaBackend.getFavorite(id))
+            }
+        }
         MenuItem {
             text: "Edit tags"
             icon.name: "tag"
@@ -397,71 +432,53 @@ Flickable {
                 grid.selectionChanged()
             }
         }
-
-        MenuItem {
-            text: "Play from beginning"
-            icon.name: "media-skip-backward"
-            visible: grid.contextMenuData.kind === "video" && grid.contextMenuData.resumable === true
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.playFromStartRequested(grid.contextMenuData.fileIndex)
-        }
-
-        MenuItem {
-            text: "Open in system default"
-            icon.name: "document-open"
-            visible: grid.contextMenuData.kind === "comic" || grid.contextMenuData.kind === "ebook"
-                     || grid.contextMenuData.kind === "video"
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.openExternallyRequested(grid.contextMenuData.fileIndex)
-        }
-
         MenuItem {
             text: "Metadata"
             icon.name: "help-about-symbolic"
             onTriggered: grid.metadataRequested(grid.contextMenuData.mediaId)
         }
+        MenuSeparator {}
 
-        MenuItem {
-            id: pickCoverItem
-            text: "Choose cover page\u2026"
-            icon.name: "view-preview"
-            // only a comic or a book has pages to pick from
-            visible: grid.contextMenuData.kind === "comic" || grid.contextMenuData.kind === "ebook"
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.coverPickerRequested(grid.contextMenuData.mediaId)
-        }
-
-        MenuItem {
-            id: favoriteItem
-            enabled: grid.mediaBackend !== null
-            onTriggered: {
-                var id = grid.contextMenuData.mediaId
-                grid.mediaBackend.setFavorite(id, !grid.mediaBackend.getFavorite(id))
-            }
-        }
-
-        // Uses this item as the cover of the folder being browsed. The wording
-        // follows the item: a picture is used as is, a video gives a frame, a
-        // manga or book uses its own first page.
-        MenuItem {
-            id: coverItem
+        // its picture as a cover
+        Menu {
+            title: "Cover"
             icon.name: "image-x-generic"
-            enabled: grid.mediaBackend !== null && typeof grid.mediaBackend.setFolderCover === "function"
-                     && (grid.mediaBackend.folderPath !== "" || grid.mediaBackend.virtualId >= 0)   // not in search results
-            onTriggered: {
-                var kind = grid.contextMenuData.kind
-                var ok = grid.mediaBackend.setFolderCover(grid.contextMenuData.mediaId)
-                if (ok) {
-                    toast.show("Folder cover updated")
-                } else if (kind === "video") {
-                    toast.show("Couldn't grab a frame (is ffmpeg installed?)")
-                } else {
-                    toast.show("Couldn't set the folder cover")
+            // Uses this item as the cover of the folder being browsed: a picture as it is, a video a frame of it,
+            // a manga or book its own first page
+            MenuItem {
+                id: coverItem
+                text: "Use as folder cover"
+                enabled: grid.mediaBackend !== null && typeof grid.mediaBackend.setFolderCover === "function"
+                         && (grid.mediaBackend.folderPath !== "" || grid.mediaBackend.virtualId >= 0)   // not in search results
+                ToolTip.visible: hovered && grid.contextMenuData.kind === "video"
+                ToolTip.delay: 600
+                ToolTip.text: "A frame of the video becomes the folder's cover"
+                onTriggered: {
+                    var kind = grid.contextMenuData.kind
+                    var ok = grid.mediaBackend.setFolderCover(grid.contextMenuData.mediaId)
+                    if (ok) toast.show("Folder cover updated")
+                    else if (kind === "video") toast.show("Couldn't grab a frame (is ffmpeg installed?)")
+                    else toast.show("Couldn't set the folder cover")
                 }
             }
+            MenuItem {
+                text: "Choose cover page\u2026"
+                icon.name: "view-preview"
+                // only a comic or a book has pages to pick from
+                enabled: grid.contextMenuData.kind === "comic" || grid.contextMenuData.kind === "ebook"
+                onTriggered: grid.coverPickerRequested(grid.contextMenuData.mediaId)
+            }
         }
+        MenuSeparator {}
 
-        MenuSeparator { visible: grid.boardBackend !== null }
+        // where it goes
+        MenuItem {
+            text: "Select"
+            icon.name: "edit-select"
+            visible: grid.virtualAllowed && !grid.selecting
+            height: visible ? implicitHeight : 0
+            onTriggered: { var t = grid.targetOf(grid.contextMenuData.mediaId, ""); grid.selectRequested(t.ids, t.tiles) }
+        }
         MenuItem {
             text: "Add to board\u2026"
             icon.name: "view-media-favorite"
@@ -479,15 +496,6 @@ Flickable {
             visible: grid.boardBackend !== null && grid.boardId >= 0
             height: visible ? implicitHeight : 0
             onTriggered: grid.boardBackend.removeMedia(grid.boardId, grid.targetOf(grid.contextMenuData.mediaId, "").ids)
-        }
-
-        MenuSeparator { visible: grid.virtualAllowed }
-        MenuItem {
-            text: "Select"
-            icon.name: "edit-select"
-            visible: grid.virtualAllowed && !grid.selecting
-            height: visible ? implicitHeight : 0
-            onTriggered: { var t = grid.targetOf(grid.contextMenuData.mediaId, ""); grid.selectRequested(t.ids, t.tiles) }
         }
         MenuItem {
             text: "Add to virtual folder\u2026"
@@ -509,6 +517,32 @@ Flickable {
             visible: grid.virtualAllowed && grid.virtualPage
             height: visible ? implicitHeight : 0
             onTriggered: { var t = grid.targetOf(grid.contextMenuData.mediaId, ""); grid.virtualActionRequested("remove", t.ids, t.tiles) }
+        }
+        MenuSeparator {}
+
+        // the file on disk
+        MenuItem {
+            text: "Show in file manager"
+            icon.name: "system-file-manager"
+            enabled: grid.actionsBackend !== null
+            onTriggered: grid.actionsBackend.showInFileManager([grid.contextMenuData.uri])
+        }
+        MenuItem {
+            text: "Copy path"
+            icon.name: "edit-copy-path"
+            enabled: grid.actionsBackend !== null
+            onTriggered: { grid.actionsBackend.copyPaths([grid.contextMenuData.uri]); toast.show("Path copied") }
+        }
+        MenuItem {
+            text: "Rename\u2026"
+            icon.name: "edit-rename"
+            onTriggered: grid.renameRequested(grid.contextMenuData.uri, grid.contextMenuData.name)
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: "Move to Trash"
+            icon.name: "user-trash"
+            onTriggered: grid.trashRequested(grid.targetOf(grid.contextMenuData.mediaId, "").ids)
         }
     }
 
@@ -539,16 +573,24 @@ Flickable {
 
     // kind: "image", "video", "comic" or "ebook"
     function openContextMenu(mediaId, kind, fileIndex, resumable) {
-        grid.contextMenuData = { mediaId: mediaId, kind: kind, fileIndex: fileIndex, resumable: resumable === true }
+        var uri = grid.mediaBackend ? grid.mediaBackend.getFileUri(fileIndex) : ""
+        grid.contextMenuData = { mediaId: mediaId, kind: kind, fileIndex: fileIndex, resumable: resumable === true,
+                                 uri: uri, name: decodeURIComponent(String(uri).split("/").pop()) }
         var isFavorite = grid.mediaBackend ? !!grid.mediaBackend.getFavorite(mediaId) : false
         favoriteItem.text = isFavorite ? "Remove from favorites" : "Add to favorites"
         favoriteItem.icon.name = isFavorite ? "non-starred-symbolic" : "starred-symbolic"
-        coverItem.text = kind === "video" ? "Use a frame as folder cover"
-                       : (kind === "image" ? "Set as folder cover" : "Use as folder cover")
         contextMenu.popup()
     }
 
-    // Right-click menu for a subfolder tile
+    // "Open" in a file's menu: what a click does
+    function openFileAt(kind, fileIndex) {
+        if (kind === "video") grid.videoClicked(fileIndex)
+        else if (kind === "comic") grid.comicClicked(fileIndex)
+        else if (kind === "ebook") grid.bookClicked(fileIndex)
+        else grid.imageClicked(fileIndex)
+    }
+
+    // Right-click menu for a folder tile (a folder, a series, or a folder shown as its one file)
     Menu {
         id: subfolderMenu
         property string folderPath: ""
@@ -563,7 +605,67 @@ Flickable {
         property string heroPath: ""     // the picture this tile shows
         property string format: ""       // a series' format ("" when not said)
         property bool pinned: false      // pinned to Home
+        readonly property bool canBeSeries: subfolderMenu.isSeries || (grid.subfolderBackend !== null
+                     && (grid.subfolderBackend.filterMode === MediaModel.MangaOnly
+                         || grid.subfolderBackend.filterMode === MediaModel.VideosOnly)
+                     && !subfolderMenu.isSingle)
 
+        // open it: what a click does first
+        MenuItem {
+            text: subfolderMenu.isSeries ? (subfolderMenu.isShow ? "Continue watching" : "Continue reading") : "Open"
+            icon.name: subfolderMenu.isSeries ? "media-playback-start" : "document-open"
+            font.bold: true
+            onTriggered: {
+                if (subfolderMenu.isSeries) grid.subfolderSeriesRequested(subfolderMenu.folderPath, "resume")
+                else if (subfolderMenu.isSingle) grid.subfolderSingleFileRequested(subfolderMenu.folderPath)
+                else grid.subfolderClicked(subfolderMenu.folderPath)
+            }
+        }
+        MenuItem {
+            text: "Start from the first " + subfolderMenu.part
+            icon.name: "go-first"
+            visible: subfolderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "first")
+        }
+        MenuItem {
+            text: "Previous " + subfolderMenu.part
+            icon.name: "go-previous"
+            visible: subfolderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "previous")
+        }
+        MenuItem {
+            text: "Next " + subfolderMenu.part
+            icon.name: "go-next"
+            visible: subfolderMenu.isSeries
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "next")
+        }
+        MenuItem {
+            text: subfolderMenu.isShow ? "Open series page" : (subfolderMenu.isSeries ? "Browse chapters" : "Browse folder")
+            icon.name: "view-list-details"
+            visible: subfolderMenu.isSeries || subfolderMenu.isSingle
+            height: visible ? implicitHeight : 0
+            onTriggered: subfolderMenu.isShow ? grid.showRequested(subfolderMenu.folderPath)
+                                              : grid.subfolderClicked(subfolderMenu.folderPath)
+        }
+        MenuSeparator {}
+
+        // about it
+        MenuItem {
+            text: subfolderMenu.pinned ? "Unpin from Home" : "Pin to Home"
+            icon.name: subfolderMenu.pinned ? "window-unpin" : "window-pin"
+            visible: grid.homeBackend !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.homeBackend.setPinned("folder", String(subfolderMenu.folderPath), !subfolderMenu.pinned)
+        }
+        MenuItem {
+            text: subfolderMenu.isFavorite ? "Remove from favorites" : "Add to favorites"
+            icon.name: subfolderMenu.isFavorite ? "non-starred-symbolic" : "starred-symbolic"
+            enabled: grid.subfolderBackend !== null
+            onTriggered: grid.subfolderBackend.setFavorite(subfolderMenu.folderPath, !subfolderMenu.isFavorite)
+        }
         MenuItem {
             text: "Edit tags"
             icon.name: "tag"
@@ -583,52 +685,6 @@ Flickable {
                 grid.selectionChanged()
             }
         }
-        MenuSeparator { visible: subfolderMenu.isSeries || (subfolderMenu.isSingle && subfolderMenu.singleId >= 0) }
-
-        MenuItem {
-            text: "Choose cover page\u2026"
-            icon.name: "view-preview"
-            visible: subfolderMenu.isSingle
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.subfolderCoverPickerRequested(subfolderMenu.singleFile)
-        }
-        MenuItem {
-            text: "Browse folder"
-            icon.name: "folder-open"
-            visible: subfolderMenu.isSingle
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.subfolderClicked(subfolderMenu.folderPath)
-        }
-        MenuSeparator { visible: subfolderMenu.isSingle }
-        MenuItem {
-            text: "Open next " + subfolderMenu.part
-            icon.name: "go-next"
-            visible: subfolderMenu.isSeries
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "next")
-        }
-        MenuItem {
-            text: "Open previous " + subfolderMenu.part
-            icon.name: "go-previous"
-            visible: subfolderMenu.isSeries
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "previous")
-        }
-        MenuItem {
-            text: "Open first " + subfolderMenu.part
-            icon.name: "go-first"
-            visible: subfolderMenu.isSeries
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.subfolderSeriesRequested(subfolderMenu.folderPath, "first")
-        }
-        MenuItem {
-            text: subfolderMenu.isShow ? "Open series page" : "Browse chapters"
-            icon.name: "view-list-details"
-            visible: subfolderMenu.isSeries
-            height: visible ? implicitHeight : 0
-            onTriggered: subfolderMenu.isShow ? grid.showRequested(subfolderMenu.folderPath)
-                                              : grid.subfolderClicked(subfolderMenu.folderPath)
-        }
         // what kind of series this is: how the reader opens it (manga right to left, a webtoon as a strip...).
         // (A menu item that opens its own menu: a submenu cannot be hidden on the tiles it does not apply to.)
         MenuItem {
@@ -638,9 +694,49 @@ Flickable {
             height: visible ? implicitHeight : 0
             onTriggered: formatSubmenu.popup()
         }
-        MenuSeparator { visible: subfolderMenu.isSeries }
+        MenuSeparator {}
+
+        // its cover, and how it is shown
+        Menu {
+            title: "Cover"
+            icon.name: "image-x-generic"
+            // a tile drawn as a file (a series, or a folder holding one file) can lend its picture to the folder
+            // you are in, like a loose file's "Use as folder cover"
+            MenuItem {
+                text: "Use as folder cover"
+                enabled: (subfolderMenu.isSingle || subfolderMenu.isSeries) && subfolderMenu.heroPath !== ""
+                         && grid.mediaBackend !== null && grid.mediaBackend.folderPath !== ""   // not in search results
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+                ToolTip.text: "Use this picture as the cover of the folder you are in"
+                onTriggered: {
+                    if (grid.mediaBackend.setFolderCoverFromPath(subfolderMenu.heroPath)) toast.show("Folder cover updated")
+                    else toast.show("Couldn't set the folder cover (a video needs ffmpeg)")
+                }
+            }
+            MenuItem {
+                text: "Choose cover page\u2026"
+                icon.name: "view-preview"
+                enabled: subfolderMenu.isSingle
+                onTriggered: grid.subfolderCoverPickerRequested(subfolderMenu.singleFile)
+            }
+            MenuItem {
+                text: "Choose cover image\u2026"
+                enabled: grid.subfolderBackend !== null
+                onTriggered: coverPicker.openCoverImageDialog(subfolderMenu.folderPath)
+            }
+            MenuItem {
+                text: "Use default cover"
+                icon.name: "edit-undo"
+                enabled: subfolderMenu.hasCustomCover && grid.subfolderBackend !== null
+                onTriggered: grid.subfolderBackend.clearCover(subfolderMenu.folderPath)
+            }
+        }
         MenuItem {
-            text: subfolderMenu.isSeries ? "Show as a folder" : "Show as a series"
+            text: subfolderMenu.isSeries ? "Stop treating as a series" : "Treat as a series"
+            icon.name: "bookmarks-symbolic"
+            visible: subfolderMenu.canBeSeries
+            height: visible ? implicitHeight : 0
             ToolTip.visible: hovered
             ToolTip.delay: 600
             ToolTip.text: subfolderMenu.isSeries
@@ -648,62 +744,11 @@ Flickable {
                           : (subfolderMenu.isShow || (grid.subfolderBackend !== null && grid.subfolderBackend.filterMode === MediaModel.VideosOnly)
                              ? "Treat this folder's videos as one series: one tile that opens where you left off"
                              : "Treat this folder's chapter files as one manga: one tile that opens where you left off")
-            icon.name: "bookmarks-symbolic"
-            // Only manga folders (chapters) and video folders (episodes) can be a series
-            visible: subfolderMenu.isSeries || (grid.subfolderBackend !== null
-                     && (grid.subfolderBackend.filterMode === MediaModel.MangaOnly
-                         || grid.subfolderBackend.filterMode === MediaModel.VideosOnly)
-                     && !subfolderMenu.isSingle)
-            height: visible ? implicitHeight : 0
             onTriggered: grid.subfolderBackend.setSeries(subfolderMenu.folderPath, !subfolderMenu.isSeries)
-        }
-        // A tile drawn as a file (a series, or a folder holding one file) can lend its picture
-        // to the folder you are in, like a loose file's "Use as folder cover"
-        MenuItem {
-            text: "Use as folder cover"
-            icon.name: "image-x-generic"
-            visible: (subfolderMenu.isSingle || subfolderMenu.isSeries) && subfolderMenu.heroPath !== ""
-                     && grid.mediaBackend !== null && grid.mediaBackend.folderPath !== ""   // not in search results
-            height: visible ? implicitHeight : 0
-            ToolTip.visible: hovered
-            ToolTip.delay: 600
-            ToolTip.text: "Use this picture as the cover of the folder you are in"
-            onTriggered: {
-                if (grid.mediaBackend.setFolderCoverFromPath(subfolderMenu.heroPath)) {
-                    toast.show("Folder cover updated")
-                } else {
-                    toast.show("Couldn't set the folder cover (a video needs ffmpeg)")
-                }
-            }
-        }
-        MenuItem {
-            text: "Choose cover image\u2026"
-            icon.name: "image-x-generic"
-            enabled: grid.subfolderBackend !== null
-            onTriggered: coverPicker.openCoverImageDialog(subfolderMenu.folderPath)
-        }
-        MenuItem {
-            text: "Use default cover"
-            icon.name: "edit-undo"
-            enabled: subfolderMenu.hasCustomCover && grid.subfolderBackend !== null
-            onTriggered: grid.subfolderBackend.clearCover(subfolderMenu.folderPath)
-        }
-        MenuSeparator {}
-        MenuItem {
-            text: subfolderMenu.pinned ? "Unpin from Home" : "Pin to Home"
-            icon.name: subfolderMenu.pinned ? "window-unpin" : "window-pin"
-            visible: grid.homeBackend !== null
-            height: visible ? implicitHeight : 0
-            onTriggered: grid.homeBackend.setPinned("folder", String(subfolderMenu.folderPath), !subfolderMenu.pinned)
-        }
-        MenuItem {
-            text: subfolderMenu.isFavorite ? "Remove from favorites" : "Add to favorites"
-            icon.name: subfolderMenu.isFavorite ? "non-starred-symbolic" : "starred-symbolic"
-            enabled: grid.subfolderBackend !== null
-            onTriggered: grid.subfolderBackend.setFavorite(subfolderMenu.folderPath, !subfolderMenu.isFavorite)
         }
 
         MenuSeparator { visible: grid.virtualAllowed }
+        // where it goes
         MenuItem {
             text: "Select"
             icon.name: "edit-select"
@@ -731,6 +776,21 @@ Flickable {
             visible: grid.virtualAllowed && grid.virtualPage
             height: visible ? implicitHeight : 0
             onTriggered: { var t = grid.targetOf(-1, subfolderMenu.folderPath); grid.virtualActionRequested("remove", t.ids, t.tiles) }
+        }
+        MenuSeparator {}
+
+        // the folder on disk
+        MenuItem {
+            text: "Show in file manager"
+            icon.name: "system-file-manager"
+            enabled: grid.actionsBackend !== null
+            onTriggered: grid.actionsBackend.showInFileManager([subfolderMenu.folderPath])
+        }
+        MenuItem {
+            text: "Copy path"
+            icon.name: "edit-copy-path"
+            enabled: grid.actionsBackend !== null
+            onTriggered: { grid.actionsBackend.copyPaths([subfolderMenu.folderPath]); toast.show("Path copied") }
         }
     }
 

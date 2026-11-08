@@ -5,7 +5,11 @@ import logging
 from pathlib import Path
 
 import sqlite3
-from PySide6.QtCore import QObject, Property, Signal, Slot
+import os
+
+from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
+from PySide6.QtDBus import QDBusConnection, QDBusInterface
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtQml import QmlElement
 
 from tetia.models import trash
@@ -93,3 +97,49 @@ class MediaActions(QObject):
             except sqlite3.Error as e:
                 logger.error("Trashed files but failed to delete rows: %s", e)
         return removed
+
+    # ---- the file itself (a menu's "Show in file manager", "Copy path", "Rename...") ---------------------------
+
+    @staticmethod
+    def _local(location: str) -> str:
+        return QUrl(location).toLocalFile() if location.startswith("file:") else location
+
+    @Slot(list)
+    def showInFileManager(self, locations: list):
+        """Open the file manager on these files' folder with them selected (Dolphin and others do this through
+        org.freedesktop.FileManager1); without one, just open the folder."""
+        uris = [QUrl.fromLocalFile(self._local(l)).toString() for l in locations]
+        if not uris:
+            return
+        manager = QDBusInterface("org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+                                 "org.freedesktop.FileManager1", QDBusConnection.sessionBus())
+        if manager.isValid():
+            reply = manager.call("ShowItems", uris, "")
+            if not reply.errorName():
+                return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(self._local(locations[0]))))
+
+    @Slot(list)
+    def copyPaths(self, locations: list):
+        """Put these files' paths on the clipboard, one per line."""
+        QGuiApplication.clipboard().setText("\n".join(self._local(l) for l in locations))
+
+    @Slot(str, str, result=str)
+    def rename(self, location: str, new_name: str) -> str:
+        """Rename a file on disk, in its folder. Returns what went wrong, or "" (the folder's next scan recognises
+        the file by its contents, so its tags, favorite and progress stay with it)."""
+        path = self._local(location)
+        new_name = new_name.strip()
+        if not new_name or "/" in new_name or new_name in (".", ".."):
+            return "That is not a file name"
+        target = os.path.join(os.path.dirname(path), new_name)
+        if target == path:
+            return ""
+        if os.path.exists(target):
+            return "There is already a file called \u201C%s\u201D here" % new_name
+        try:
+            os.rename(path, target)
+        except OSError as e:
+            return "Couldn't rename it: %s" % e.strerror
+        return ""
+

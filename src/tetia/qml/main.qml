@@ -2185,6 +2185,16 @@ Kirigami.ApplicationWindow {
                     subfolderBackend: subfolderModel
                     boardBackend: boardService
                     homeBackend: homeModel
+                    actionsBackend: mediaActions
+                    onTrashRequested: function(ids) { root.requestTrash(ids) }
+                    onRenameRequested: function(uri, name) {
+                        root.askName("Rename \u201C" + name + "\u201D", name, function(newName) {
+                            var problem = mediaActions.rename(uri, newName)
+                            if (problem !== "") return problem
+                            root.reloadPage()          // the scan knows it by its contents: its tags and favorite stay
+                            return ""
+                        }, "Rename")
+                    }
                     boardTab: gridPage.boardId >= 0 ? (boardService.info(gridPage.boardId).tab || "")
                               : (root.onFavoritesTab ? "" : folderModel.currentCategory)
                     boardId: gridPage.boardId
