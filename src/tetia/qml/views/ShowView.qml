@@ -126,7 +126,7 @@ Kirigami.Page {
                         anchors.fill: parent
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
-                        source: show.poster !== "" ? "image://thumbnail/" + ThumbUri.fromPath(show.poster) : ""
+                        source: show.poster !== "" ? ThumbUri.source(show.poster) : ""
                         // ask for a thumbnail as big as the poster is drawn, in real pixels (it is 2:3 and fills its box)
                         sourceSize: Qt.size(ThumbUri.tierFor(Math.ceil(height * Screen.devicePixelRatio)),
                                             ThumbUri.tierFor(Math.ceil(height * Screen.devicePixelRatio)))
@@ -338,7 +338,7 @@ Kirigami.Page {
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
                                     sourceSize.height: 160
-                                    source: row.ep ? "image://thumbnail/" + ThumbUri.fromPath(row.ep.path) : ""
+                                    source: row.ep ? ThumbUri.source(row.ep.path) : ""
                                 }
                                 // how far it was watched
                                 Rectangle {

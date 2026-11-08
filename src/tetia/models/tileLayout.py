@@ -105,13 +105,24 @@ def _column_rows(aspects, start, y, width, target):
     column = (width - (count - 1) * PICTURE_GAP) / count
     tops = [y] * count
     rows = []
+    last = [None] * count
     for k, aspect in enumerate(aspects):
         c = min(range(count), key=lambda i: tops[i])
         height = column / aspect
-        rows.append(Row(PICTURE, start + k, tops[c], height, 0.0, [column], [c * (column + PICTURE_GAP)]))
+        row = Row(PICTURE, start + k, tops[c], height, 0.0, [column], [c * (column + PICTURE_GAP)])
+        rows.append(row)
+        last[c] = row
         tops[c] += height + PICTURE_GAP
+    # Even the ends out, so a group does not stop in a ragged edge before the next title: the last picture of each
+    # column grows or shrinks towards the columns' average end (by a quarter of its height at most, so it is only
+    # cropped a little at the tile)
+    ends = [r for r in last if r is not None]
+    if len(ends) == count and len(aspects) >= 2 * count:
+        target = sum(r.y + r.height for r in ends) / count
+        for r in ends:
+            r.height = min(r.height * 1.25, max(r.height * 0.75, target - r.y))
     rows.sort(key=lambda r: r.y)
-    return rows, max(tops) - PICTURE_GAP
+    return rows, max(r.y + r.height for r in ends) if ends else y
 
 
 def _grid_rows(count, start, y, width, target):

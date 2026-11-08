@@ -158,3 +158,19 @@ def test_grid_cells_are_square():
     rows, _ = tl.build(_pictures([0.5, 2.0, 1.0, 1.0, 1.0]), 1000, 200, 150, 40, mode="grid")
     assert all(w == pytest.approx(r.height) for r in rows for w in r.widths)
     assert rows[0].xs[-1] + rows[0].widths[-1] == pytest.approx(1000)
+
+
+def test_columns_end_nearly_level():
+    aspects = [0.6, 1.7, 0.75, 1.0, 0.7, 1.5, 0.8, 0.9, 1.2, 0.65, 1.1, 0.75, 0.6, 1.6]
+    rows, _ = tl.build(_pictures(aspects), 1000, 200, 150, 40, mode="columns")
+    columns = {}
+    for r in rows:
+        columns.setdefault(r.xs[0], []).append(r)
+    ends, natural_ends = [], []
+    for col in columns.values():                                     # only the last of a column changes, a little
+        last = max(col, key=lambda r: r.y)
+        natural = last.widths[0] / tl.clamp_aspect(aspects[last.start])
+        assert 0.75 * natural - 0.01 <= last.height <= 1.25 * natural + 0.01
+        ends.append(last.y + last.height)
+        natural_ends.append(last.y + natural)
+    assert max(ends) - min(ends) < 0.5 * (max(natural_ends) - min(natural_ends))   # at least twice as level

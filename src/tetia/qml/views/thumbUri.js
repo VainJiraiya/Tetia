@@ -19,3 +19,21 @@ function fromPath(path) {
 function tierFor(pixels) {
     return pixels <= 128 ? 128 : pixels <= 256 ? 256 : pixels <= 512 ? 512 : 1024
 }
+
+var VIDEO_SUFFIXES = [".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".flv", ".wmv"]
+
+function isVideo(pathOrUri) {
+    var name = String(pathOrUri).toLowerCase()
+    for (var i = 0; i < VIDEO_SUFFIXES.length; i++)
+        if (name.length > VIDEO_SUFFIXES[i].length && name.slice(-VIDEO_SUFFIXES[i].length) === VIDEO_SUFFIXES[i]) return true
+    return false
+}
+
+// The image:// source of a file's thumbnail (a path or a file:// address). A video's comes without the film strip
+// ffmpegthumbnailer draws on its sides (its width follows the thumbnail's, so it looked different on every tile);
+// the provider crops it off and leaves the shared cache as it is.
+function source(pathOrUri) {
+    if (!pathOrUri) return ""
+    var uri = String(pathOrUri).indexOf("file://") === 0 ? String(pathOrUri) : fromPath(String(pathOrUri))
+    return "image://thumbnail/" + (isVideo(uri) ? "nostrip/" : "") + uri
+}

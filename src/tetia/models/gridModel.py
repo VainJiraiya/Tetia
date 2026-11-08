@@ -38,6 +38,7 @@ _SUB_ROLES = {
     Qt.UserRole + 117: (b"subfolderIsBoard", Qt.UserRole + 18),
     Qt.UserRole + 118: (b"subfolderBoardId", Qt.UserRole + 19),
     Qt.UserRole + 119: (b"subfolderCollage", Qt.UserRole + 20),
+    Qt.UserRole + 120: (b"subfolderSource", Qt.UserRole + 21),
 }
 _IS_FOLDER = Qt.UserRole + 100
 

@@ -111,6 +111,7 @@ class SubfolderModel(QAbstractListModel):
         IsBoardRole = Qt.UserRole + 18
         BoardIdRole = Qt.UserRole + 19
         CollageRole = Qt.UserRole + 20         # a board's three cover pictures (paths)
+        SourceRole = Qt.UserRole + 21          # a tab's top level with several library folders: the one it is in
 
     filterModeChanged = Signal()
     formatFilterChanged = Signal()
@@ -183,12 +184,27 @@ class SubfolderModel(QAbstractListModel):
         return covers.tile_picture(entry["path"], self._extensions() & _PICTURE_EXTENSIONS, meta_for,
                                    {os.path.realpath(parent)} if parent else set())
 
+    # Roles that read the disk (a folder's listing, its cover lookup): worked out once per tile and kept until the
+    # folder changes, since a tile reads every role whenever any tile's data changes
+    _CACHED = None
+
     def data(self, index, role):
         if not index.isValid() or not (0 <= index.row() < len(self._dirs)):
             return None
         entry = self._dirs[index.row()]
         if entry.get("board") is not None:
             return self._board_data(entry, role)
+        if SubfolderModel._CACHED is None:
+            R = self.Roles
+            SubfolderModel._CACHED = {R.HeroPathRole, R.ItemCountRole, R.SingleFileRole, R.IsShowRole, R.SingleFileIdRole}
+        if role in SubfolderModel._CACHED:
+            cache = entry.setdefault("_cache", {})
+            if role not in cache:
+                cache[role] = self._entry_data(entry, role)
+            return cache[role]
+        return self._entry_data(entry, role)
+
+    def _entry_data(self, entry, role):
         virtual = entry.get("virtual")
         if role == self.Roles.IsVirtualRole:
             return virtual is not None
@@ -227,6 +243,9 @@ class SubfolderModel(QAbstractListModel):
             return entry["folders"]
         if role == self.Roles.IsBoardRole:
             return False
+        if role == self.Roles.SourceRole:
+            parent = entry.get("parent", "")
+            return os.path.basename(parent.rstrip(os.sep)) if parent and len(self._source_dirs) > 1 else ""
         if role == self.Roles.FormatRole:
             if virtual is not None or not self._is_series(entry):
                 return ""
@@ -263,6 +282,7 @@ class SubfolderModel(QAbstractListModel):
             self.Roles.IsBoardRole: b"isBoard",
             self.Roles.BoardIdRole: b"boardId",
             self.Roles.CollageRole: b"collage",
+            self.Roles.SourceRole: b"source",
         }
 
     def _board_data(self, entry, role):
@@ -272,7 +292,7 @@ class SubfolderModel(QAbstractListModel):
                 R.CollageRole: entry["collage"], R.IsFavoriteRole: False, R.HasCustomCoverRole: False,
                 R.IsSeriesRole: False, R.SingleFileRole: "", R.IsVirtualRole: False, R.VirtualIdRole: -1,
                 R.SingleFileIdRole: -1, R.IsShowRole: False, R.FolderCountRole: 0, R.LeftRole: -1,
-                R.ProgressRole: 0.0, R.FinishedRole: False, R.FormatRole: ""}.get(role)
+                R.ProgressRole: 0.0, R.FinishedRole: False, R.FormatRole: "", R.SourceRole: ""}.get(role)
 
     @Property(str)
     def boardsTab(self) -> str:
@@ -486,6 +506,7 @@ class SubfolderModel(QAbstractListModel):
             own = covers.folder_key(entry["path"])
             if key == own:
                 entry.pop("progress", None)
+                entry.pop("_cache", None)
                 try:
                     self._meta[key] = self._db.get_collection_meta(key)
                 except sqlite3.Error:
@@ -503,6 +524,7 @@ class SubfolderModel(QAbstractListModel):
                     self.Roles.FormatRole,
                 ])
             elif key.startswith(own + os.sep):
+                entry.pop("_cache", None)
                 idx = self.index(row)
                 self.dataChanged.emit(idx, idx, [self.Roles.HeroPathRole])
 

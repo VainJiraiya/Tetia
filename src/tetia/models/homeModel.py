@@ -8,7 +8,9 @@ import sqlite3
 from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtQml import QmlElement
 
-from tetia.models import home
+import os
+
+from tetia.models import covers, home
 from tetia.models.database import get_database
 from tetia.models.searchModel import _Resolver
 
@@ -65,3 +67,24 @@ class HomeModel(QObject):
             logger.error("Pinning failed: %s", e)
             return
         self.pinsChanged.emit()
+
+    @Slot(str, str)
+    def unfavorite(self, kind: str, ref: str):
+        """Take something out of the favorites: a file (its media id), a book (its path) or a folder (its path)."""
+        db = get_database()
+        try:
+            if kind == "file":
+                db.set_media_favorite(int(ref), False)
+            elif kind == "book":
+                found = db.get_media_by_path(os.path.realpath(ref))
+                if found:
+                    db.set_media_favorite(found[0], False)
+            else:
+                key = covers.folder_key(ref)
+                db.set_collection_favorite(key, False)
+                covers.notifier.changed.emit(key)
+        except (sqlite3.Error, ValueError) as e:
+            logger.error("Taking out of the favorites failed: %s", e)
+            return
+        self.pinsChanged.emit()          # (Home reads its rows again)
+

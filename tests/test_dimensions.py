@@ -151,3 +151,16 @@ def test_a_phone_video_turned_by_its_metadata_is_tall(tmp_path, qapp):
     assert _wait(lambda: _aspects(model)["phone.mp4"] > 0)
     assert _aspects(model)["phone.mp4"] == pytest.approx(9 / 16)
     playbackStore.prober().stop()
+
+
+@needs_video
+def test_a_video_reached_through_a_link_or_dotdot_is_measured(tmp_path, qapp):
+    real = tmp_path / "real"
+    real.mkdir()
+    assert _clip(real / "tall.mp4", "90x160")
+    (tmp_path / "link").symlink_to(real)
+    model = MediaModel()
+    model.load_from_qurl(str(tmp_path / "link" / ".." / "link"))      # mpv names the file differently: still matched
+    assert _wait(lambda: _aspects(model)["tall.mp4"] > 0)
+    assert _aspects(model)["tall.mp4"] == pytest.approx(9 / 16)
+    playbackStore.prober().stop()

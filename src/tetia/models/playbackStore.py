@@ -91,7 +91,9 @@ class Prober(QObject):
 
     def request(self, paths: list):
         """Queue the videos among `paths` (local paths) whose length or picture size is not known yet."""
-        wanted = [p for p in paths if self.needs(p)]
+        # by its real path: mpv reports a file under its cleaned-up name (no "..", links followed), and the wait for
+        # the file to be loaded compares the two
+        wanted = [os.path.realpath(p) for p in paths if self.needs(p)]
         if not wanted or not mpv.available():
             return
         with self._lock:
@@ -141,7 +143,7 @@ class Prober(QObject):
                 started = time.time()
 
                 def length_or_failed():
-                    if engine.get("path") == path:
+                    if os.path.realpath(engine.get("path") or "") == path:
                         return engine.get_double("duration")
                     if time.time() - started > 0.3 and engine.get_flag("idle-active"):
                         return -1.0

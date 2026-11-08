@@ -23,8 +23,8 @@ Item {
     property bool selecting: false         // select or tag mode: no name and star on hover
 
     readonly property alias hovered: hover.hovered
-    // a video thumbnail has film-strip edges (the shared cache's standard look): badges keep off them
-    readonly property real side: isVideo ? Math.max(6, Math.round(width * 0.075)) : 6
+    // the badges' distance from the sides
+    readonly property real side: 6
 
     signal clicked(var mouse)
     signal favoriteToggled()

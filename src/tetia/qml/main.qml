@@ -115,6 +115,9 @@ Kirigami.ApplicationWindow {
     // A tab's top level (the first page): the library folders of the tab, [{path, name}], and whether the shared
     // models hold that page now (they hold one page's contents at a time)
     property var sourceList: []
+    // Whether the tag sidebar is open: one choice for every page, so closing it on one page and going back does
+    // not bring it back on the page before
+    property bool browseTagsOpen: false
     property bool rootShown: false
     // the board the shared models hold (-1: none)
     property int currentBoard: -1
@@ -557,7 +560,7 @@ Kirigami.ApplicationWindow {
                         MenuSeparator { visible: sortMenu.formats }
                         // how pictures are laid out here (remembered for this folder, board or tab)
                         MenuItem {
-                            text: "Layout: rows (their own shape)"
+                            text: "Layout: rows"
                             icon.name: sortMenu.page && sortMenu.page.layoutMode === "rows" ? "checkmark" : ""
                             onTriggered: root.chooseLayout(sortMenu.page, "rows")
                         }
@@ -567,7 +570,7 @@ Kirigami.ApplicationWindow {
                             onTriggered: root.chooseLayout(sortMenu.page, "columns")
                         }
                         MenuItem {
-                            text: "Layout: grid (squares)"
+                            text: "Layout: grid"
                             icon.name: sortMenu.page && sortMenu.page.layoutMode === "grid" ? "checkmark" : ""
                             onTriggered: root.chooseLayout(sortMenu.page, "grid")
                         }
@@ -1317,12 +1320,14 @@ Kirigami.ApplicationWindow {
             }
             loadVirtual(page.virtualId, page.filterCategory)
         } else if (page.boardId >= 0) {
-            if (boardService.info(page.boardId).id === undefined) {
+            var info = boardService.info(page.boardId)
+            if (info.id === undefined) {
                 var gone = pageStack.pop()                      // this board was deleted: step out of it
                 if (gone) gone.destroy()
                 return
             }
-            page.title = boardService.info(page.boardId).name
+            page.boardInfo = info
+            page.title = info.name
             loadBoard(page.boardId, page.filterCategory)
         } else if (page.isSearch) {
             refreshSearch()
@@ -1353,6 +1358,7 @@ Kirigami.ApplicationWindow {
         pageStack.push(mediaGridComponent, {
             title: name,
             boardId: boardId,
+            boardInfo: info,
             filterCategory: category,
             layoutMode: info.layout || "rows",
             crumbs: [name]
@@ -1824,6 +1830,9 @@ Kirigami.ApplicationWindow {
             pageStack.push(imageViewerComponent, { initialIndex: pictures.indexOf(picked) })
         }
         onUnpinRequested: function(kind, ref) { homeModel.setPinned(kind, ref, false) }
+        actions: mediaActions
+        onFavoriteRemoved: function(kind, ref) { homeModel.unfavorite(kind, String(ref)) }
+        onTrashRequested: function(ids) { root.requestTrash(ids) }
     }
 
     function covers_uri(path) {
@@ -1874,6 +1883,7 @@ Kirigami.ApplicationWindow {
             property var continueItems: []
             // a board's page: which board, and how its pictures are laid out
             property int boardId: -1
+            property var boardInfo: ({})        // the board's summary, read once when it loads (its search runs to make it)
             property string layoutMode: "rows"
             // the layout follows what the page holds (its choice is looked up once the files are in)
             Connections {
@@ -1886,8 +1896,10 @@ Kirigami.ApplicationWindow {
             // A virtual folder page: which one, and the real folder it was made in
             property int virtualId: -1
             property string homePath: ""
-            // The tag browser is open on this page
+            // The tag browser is open on this page (it follows root.browseTagsOpen while the page is on top)
             property bool browseOpen: false
+            onBrowseOpenChanged: if (pageStack.currentItem === gridPage) root.browseTagsOpen = browseOpen
+            Component.onCompleted: if (browseOpen) root.browseTagsOpen = true
             // The results of a tag clicked in the browser (a search page that is sorted and purged like a folder),
             // and the tags chosen so far, [{category, name}]
             property bool isTagPage: false
@@ -1922,6 +1934,7 @@ Kirigami.ApplicationWindow {
                 target: pageStack
                 function onCurrentItemChanged() {
                     if (pageStack.currentItem !== gridPage) return
+                    gridPage.browseOpen = root.browseTagsOpen
                     if (gridPage.isRoot) {
                         if (!root.rootShown) root.loadRoot()
                         else gridPage.continueItems = folderModel.continueReading(8)     // back from the reader
@@ -1979,7 +1992,8 @@ Kirigami.ApplicationWindow {
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
                     Layout.topMargin: 20         // every strip over the tiles starts where the tiles would
-                    visible: sourceChips.visible
+                    // (not "sourceChips.visible": a child counts as hidden while its parent is, so that never turned on)
+                    visible: gridPage.isRoot && root.sourceList.length > 1 && !root.onFavoritesTab
                 Flow {
                     id: sourceChips
                     objectName: "sourceChips"
@@ -2006,7 +2020,7 @@ Kirigami.ApplicationWindow {
                 // A board's page: what it is (its search, how many), and how its pictures are laid out
                 RowLayout {
                     objectName: "boardBar"
-                    readonly property var info: gridPage.boardId >= 0 ? (gridView.count, boardService.info(gridPage.boardId)) : ({})
+                    readonly property var info: gridPage.boardInfo
                     Layout.fillWidth: true
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
@@ -2030,19 +2044,6 @@ Kirigami.ApplicationWindow {
                         onClicked: root.editBoardSearch(gridPage.boardId)
                     }
                     Item { Layout.fillWidth: true }
-                    Repeater {
-                        model: [{ key: "rows", name: "Rows" }, { key: "columns", name: "Columns" }, { key: "grid", name: "Grid" }]
-                        delegate: Button {
-                            required property var modelData
-                            text: modelData.name
-                            checkable: true
-                            checked: gridPage.layoutMode === modelData.key
-                            onClicked: {
-                                gridPage.layoutMode = modelData.key
-                                boardService.setLayout(gridPage.boardId, modelData.key)
-                            }
-                        }
-                    }
                 }
 
                 // A tag page: the tag (in its category's colour), what else it is called and what it implies
@@ -2188,7 +2189,7 @@ Kirigami.ApplicationWindow {
                                         Layout.preferredWidth: 56
                                         Layout.preferredHeight: 84
                                         radius: 4
-                                        source: "image://thumbnail/" + ThumbUri.fromPath(modelData.cover)
+                                        source: ThumbUri.source(modelData.cover)
                                         sourceSize: Qt.size(256, 256)
                                         fillMode: Image.PreserveAspectCrop
                                         asynchronous: true
@@ -2258,7 +2259,7 @@ Kirigami.ApplicationWindow {
                             return ""
                         }, "Rename")
                     }
-                    boardTab: gridPage.boardId >= 0 ? (boardService.info(gridPage.boardId).tab || "")
+                    boardTab: gridPage.boardId >= 0 ? (gridPage.boardInfo.tab || "")
                               : (root.onFavoritesTab ? "" : folderModel.currentCategory)
                     boardId: gridPage.boardId
                     layoutMode: gridPage.layoutMode

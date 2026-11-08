@@ -1083,9 +1083,9 @@ Flickable {
                             name: tile.d.subfolderName || ""
                             subtitle: grid.folderSubtitle(tile.d)
                             coverSource: tile.d.subfolderHero && tile.d.subfolderHero.length > 0
-                                         ? "image://thumbnail/" + ThumbUri.fromPath(tile.d.subfolderHero) + grid.revisionSuffix : ""
+                                         ? ThumbUri.source(tile.d.subfolderHero) + grid.revisionSuffix : ""
                             collageSources: (tile.d.subfolderCollage || []).map(function(p) {
-                                return "image://thumbnail/" + ThumbUri.fromPath(p) + grid.revisionSuffix })
+                                return ThumbUri.source(p) + grid.revisionSuffix })
                             thumbSize: tile.thumbSize
                             coverHeight: tile.pictureHeight
                             // a series: what is left (its one badge), a bar while partway, dimmed once done
@@ -1113,7 +1113,7 @@ Flickable {
                     Component {
                         id: pictureTile
                         PictureTile {
-                            source: tile.d.fileUri ? "image://thumbnail/" + tile.d.fileUri + grid.revisionSuffix : ""
+                            source: tile.d.fileUri ? ThumbUri.source(tile.d.fileUri) + grid.revisionSuffix : ""
                             thumbSize: tile.thumbSize
                             fileName: tile.d.fileName || ""
                             isVideo: tile.d.isVideo === true
@@ -1143,6 +1143,8 @@ Flickable {
             return format + n + (d.subfolderIsShow ? (n === 1 ? " episode" : " episodes") : (n === 1 ? " chapter" : " chapters"))
         }
         var parts = []
+        // several library folders shown together: which one it is in (two "Set A" folders are told apart)
+        if (d.subfolderSource) parts.push("in " + d.subfolderSource)
         if (d.subfolderIsVirtual === true) parts.push("Virtual folder")
         var folders = d.subfolderFolders || 0
         if (folders > 0) parts.push(folders + (folders === 1 ? " folder" : " folders"))

@@ -27,6 +27,9 @@ Rectangle {
     signal coverOpened(var item)
     signal pictureOpened(var files, int index)
     signal unpinRequested(string kind, string ref)
+    signal favoriteRemoved(string kind, var ref)     // "file" (a media id or a book's path) or "folder" (a path)
+    signal trashRequested(var ids)
+    property var actions: null                      // MediaActions: show in the file manager, copy the path
 
     color: Kirigami.Theme.backgroundColor
 
@@ -44,7 +47,7 @@ Rectangle {
         function onPinsChanged() { home.refresh() }
     }
 
-    function thumb(path) { return path ? "image://thumbnail/" + ThumbUri.fromPath(path) : "" }
+    function thumb(path) { return ThumbUri.source(path) }
 
     // Pictures in rows of one height filling the width (their own shape, as on the tabs), at most `rows` rows
     function justify(files, width, height, rows) {
@@ -96,7 +99,10 @@ Rectangle {
                         fileName: modelData.file.name
                         isVideo: modelData.file.kind === "video"
                         onClicked: function(mouse) {
-                            if (mouse.button === Qt.LeftButton) home.pictureOpened(pictureRows.files, modelData.index)
+                            if (mouse.button === Qt.RightButton)
+                                home.showMenu("picture", modelData.file, function() { home.pictureOpened(pictureRows.files, modelData.index) },
+                                              pictureRows.files === home.favoriteFiles)
+                            else home.pictureOpened(pictureRows.files, modelData.index)
                         }
                     }
                 }
@@ -150,6 +156,10 @@ Rectangle {
                             border.color: Qt.alpha(Kirigami.Theme.textColor, 0.15)
                             HoverHandler { id: cardHover; cursorShape: Qt.PointingHandCursor }
                             TapHandler { onTapped: home.continueOpened(modelData) }
+                            TapHandler {
+                                acceptedButtons: Qt.RightButton
+                                onTapped: home.showMenu("continue", modelData, function() { home.continueOpened(modelData) }, false)
+                            }
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.margins: 8
@@ -224,8 +234,7 @@ Rectangle {
                             finished: modelData.finished
                             onClicked: function(mouse) {
                                 if (mouse.button === Qt.RightButton) {
-                                    pinMenu.item = modelData
-                                    pinMenu.popup()
+                                    home.showMenu("pinned", modelData, function() { home.pinnedOpened(modelData) }, false)
                                 } else {
                                     home.pinnedOpened(modelData)
                                 }
@@ -253,7 +262,11 @@ Rectangle {
                             name: modelData.name
                             coverSource: home.thumb(modelData.cover)
                             thumbSize: ThumbUri.tierFor(Math.ceil(198 * Screen.devicePixelRatio))
-                            onClicked: function(mouse) { if (mouse.button === Qt.LeftButton) home.coverOpened(modelData) }
+                            onClicked: function(mouse) {
+                                if (mouse.button === Qt.RightButton)
+                                    home.showMenu("cover", modelData, function() { home.coverOpened(modelData) }, true)
+                                else home.coverOpened(modelData)
+                            }
                         }
                     }
                 }
@@ -276,19 +289,78 @@ Rectangle {
         }
     }
 
+    // One right-click menu for everything on Home, showing what applies: open it, take it off Home or out of the
+    // favorites, find it on disk, and for a file, send it to the Trash
+    property var menuItem: null
+    property string menuKind: ""            // picture, continue, pinned, cover
+    property var menuOpen: null
+    property bool menuFavorite: false
+    readonly property string menuPath: !menuItem ? "" : (menuKind === "pinned"
+        ? (menuItem.kind === "folder" || menuItem.kind === "series" ? menuItem.ref : "") : (menuItem.path || ""))
+    function showMenu(kind, item, open, favorite) {
+        menuKind = kind
+        menuItem = item
+        menuOpen = open
+        menuFavorite = favorite === true
+        itemMenu.popup()
+    }
+
     Menu {
-        id: pinMenu
-        property var item: null
+        id: itemMenu
         MenuItem {
             text: "Open"
+            icon.name: "document-open"
             font.bold: true
-            onTriggered: home.pinnedOpened(pinMenu.item)
+            onTriggered: if (home.menuOpen) home.menuOpen()
+        }
+        MenuItem {
+            text: "Open in system default"
+            icon.name: "document-open"
+            visible: home.menuKind === "picture" || (home.menuKind === "cover" && home.menuItem !== null && home.menuItem.kind === "book")
+            height: visible ? implicitHeight : 0
+            onTriggered: Qt.openUrlExternally(ThumbUri.fromPath(home.menuItem.path))
         }
         MenuSeparator {}
         MenuItem {
             text: "Unpin from Home"
             icon.name: "window-unpin"
-            onTriggered: home.unpinRequested(pinMenu.item.kind === "series" ? "folder" : pinMenu.item.kind, pinMenu.item.ref)
+            visible: home.menuKind === "pinned"
+            height: visible ? implicitHeight : 0
+            onTriggered: home.unpinRequested(home.menuItem.kind === "series" ? "folder" : home.menuItem.kind, home.menuItem.ref)
+        }
+        MenuItem {
+            text: "Remove from favorites"
+            icon.name: "non-starred-symbolic"
+            visible: home.menuFavorite
+            height: visible ? implicitHeight : 0
+            onTriggered: {
+                if (home.menuKind === "picture") home.favoriteRemoved("file", home.menuItem.id)
+                else if (home.menuItem.kind === "book") home.favoriteRemoved("book", home.menuItem.path)
+                else home.favoriteRemoved("folder", home.menuItem.path)
+            }
+        }
+        MenuSeparator { visible: home.menuPath !== "" }
+        MenuItem {
+            text: "Show in file manager"
+            icon.name: "system-file-manager"
+            visible: home.menuPath !== "" && home.actions !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: home.actions.showInFileManager([home.menuPath])
+        }
+        MenuItem {
+            text: "Copy path"
+            icon.name: "edit-copy-path"
+            visible: home.menuPath !== "" && home.actions !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: home.actions.copyPaths([home.menuPath])
+        }
+        MenuSeparator { visible: home.menuKind === "picture" }
+        MenuItem {
+            text: "Move to Trash"
+            icon.name: "user-trash"
+            visible: home.menuKind === "picture"
+            height: visible ? implicitHeight : 0
+            onTriggered: home.trashRequested([home.menuItem.id])
         }
     }
 }

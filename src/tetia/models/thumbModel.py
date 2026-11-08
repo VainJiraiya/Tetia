@@ -178,6 +178,20 @@ def forget_thumbnails(local_path: str):
             pass
 
 
+NO_STRIP = "nostrip/"
+
+
+def without_film_strip(image: QImage) -> QImage:
+    """A video thumbnail with ffmpegthumbnailer's film strip cut off both sides."""
+    if image.isNull():
+        return image
+    width, height = image.width(), image.height()
+    strip = round(width / 16) if width >= height else round(height / 32)
+    if strip <= 0 or width <= 2 * strip:
+        return image
+    return image.copy(strip, 0, width - 2 * strip, height)
+
+
 class ThumbnailProvider(QQuickImageProvider):
     def __init__(self):
         super().__init__(QQuickImageProvider.Image)
@@ -267,6 +281,17 @@ class ThumbnailProvider(QQuickImageProvider):
                 return QImage()
             self._active += 1
         try:
+            # "nostrip/<file>": a video's thumbnail without the film strip ffmpegthumbnailer draws on its sides. The
+            # strip is as wide as the thumbnail's width allows (1/16 of it on a wide video, its long side / 32 on a
+            # tall one), so tiles of one height showed strips of very different sizes; a tile asks for it cropped
+            # off. The cached file keeps it (the cache is shared with other apps and stays standard).
+            if id_string.startswith(NO_STRIP):
+                image = self._request_image(id_string[len(NO_STRIP):], size, requested_size)
+                image = without_film_strip(image)
+                if not image.isNull():
+                    size.setWidth(image.width())
+                    size.setHeight(image.height())
+                return image
             return self._request_image(id_string, size, requested_size)
         finally:
             with self._idle:

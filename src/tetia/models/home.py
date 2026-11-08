@@ -85,11 +85,19 @@ def continue_items(db, limit: int = 8) -> list:
         seen.add(key)
         found.append({"kind": "show" if show else "video", "path": folder if show else path,
                       "name": os.path.basename(folder) if show else Path(path).stem, "cover": path,
-                      "where": ((Path(path).stem + " · ") if show else "") + _minutes_left(row["position"], row["duration"]),
+                      "where": ((_episode_label(Path(path).stem, os.path.basename(folder)) + " · ") if show else "")
+                               + _minutes_left(row["position"], row["duration"]),
                       "fraction": row["position"] / row["duration"] if row["duration"] else 0.0,
                       "when": row["updated"] or ""})
     found.sort(key=lambda item: item["when"], reverse=True)
     return found[:limit]
+
+
+def _episode_label(stem: str, show: str) -> str:
+    """"Starfall - S01E02 - The Signal" in the show Starfall: "S01E02 - The Signal"."""
+    if show and stem.lower().startswith(show.lower()):
+        stem = stem[len(show):].lstrip(" -_.\u2013\u2014")
+    return stem or show
 
 
 def _tag_collage(db, name: str) -> tuple:
