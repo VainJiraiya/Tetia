@@ -325,13 +325,13 @@ Rectangle {
                         model: home.favoriteCovers
                         delegate: CollectionTile {
                             required property var modelData
-                            width: 132
-                            height: 198 + 44
-                            coverHeight: 198
+                            width: 150
+                            height: 225 + 44
+                            coverHeight: 225
                             kind: modelData.kind === "book" ? "single" : modelData.kind
                             name: modelData.name
                             coverSource: home.thumb(modelData.cover)
-                            thumbSize: ThumbUri.tierFor(Math.ceil(198 * Screen.devicePixelRatio))
+                            thumbSize: ThumbUri.tierFor(Math.ceil(225 * Screen.devicePixelRatio))
                             onClicked: function(mouse) {
                                 if (mouse.button === Qt.RightButton)
                                     home.showMenu("cover", modelData, function() { home.coverOpened(modelData) }, true)
