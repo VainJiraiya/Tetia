@@ -356,6 +356,16 @@ Kirigami.ApplicationWindow {
                         }
                         MenuSeparator {}
                         MenuItem {
+                            text: "Quit"
+                            icon.name: "application-exit"
+                            onTriggered: root.close()           // (a vault profile locks first, as on closing the window)
+                        }
+                        MenuItem {
+                            text: "About Tetia"
+                            icon.name: "help-about"
+                            onTriggered: aboutDialog.open()
+                        }
+                        MenuItem {
                             text: "Profiles\u2026"
                             icon.name: "user-identity"
                             onTriggered: {
@@ -545,6 +555,23 @@ Kirigami.ApplicationWindow {
                             onObjectRemoved: function(i, item) { sortMenu.removeItem(item) }
                         }
                         MenuSeparator { visible: sortMenu.formats }
+                        // how pictures are laid out here (remembered for this folder, board or tab)
+                        MenuItem {
+                            text: "Layout: rows (their own shape)"
+                            icon.name: sortMenu.page && sortMenu.page.layoutMode === "rows" ? "checkmark" : ""
+                            onTriggered: root.chooseLayout(sortMenu.page, "rows")
+                        }
+                        MenuItem {
+                            text: "Layout: columns"
+                            icon.name: sortMenu.page && sortMenu.page.layoutMode === "columns" ? "checkmark" : ""
+                            onTriggered: root.chooseLayout(sortMenu.page, "columns")
+                        }
+                        MenuItem {
+                            text: "Layout: grid (squares)"
+                            icon.name: sortMenu.page && sortMenu.page.layoutMode === "grid" ? "checkmark" : ""
+                            onTriggered: root.chooseLayout(sortMenu.page, "grid")
+                        }
+                        MenuSeparator {}
 
                         MenuItem {
                             text: "Default"
@@ -907,6 +934,15 @@ Kirigami.ApplicationWindow {
     }
 
     VirtualPickerDialog { id: virtualPicker; objectName: "virtualPicker" }
+
+    Kirigami.PromptDialog {
+        id: aboutDialog
+        title: "Tetia " + Qt.application.version
+        subtitle: "A media library for manga, images and video: one gallery for everything you like.\n\n"
+                  + "Free software under the GNU General Public License, version 3 or later.\n"
+                  + "github.com/VainJiraiya/Tetia"
+        standardButtons: Kirigami.Dialog.Ok
+    }
 
     LibraryDialog {
         id: libraryDialog
@@ -1342,6 +1378,28 @@ Kirigami.ApplicationWindow {
             openBoard(id, name)
             return ""
         })
+    }
+
+    // Where a page's layout choice is kept ("" for none: a search, or a board, which keeps its own)
+    function layoutKey(page) {
+        if (!page || page.isGridPage !== true || page.isSearch || page.boardId >= 0) return ""
+        if (page.virtualId >= 0) return "layout.virtual." + page.virtualId
+        if (page.isRoot && !page.folderPath) return "layout.top." + folderModel.currentCategory
+        return page.folderPath ? "layout." + String(page.folderPath) : ""
+    }
+    readonly property var layoutModes: ["rows", "columns", "grid"]
+    function chooseLayout(page, mode) {
+        if (!page) return
+        page.layoutMode = mode
+        if (page.boardId >= 0) boardService.setLayout(page.boardId, mode)
+        else if (layoutKey(page) !== "") uiSettings.setIntValue(layoutKey(page), layoutModes.indexOf(mode))
+    }
+    // A page's layout: the one chosen for it, else columns when most of its pictures are tall, else rows
+    function applyLayout(page) {
+        var key = layoutKey(page)
+        if (key === "") return
+        var chosen = uiSettings.intValue(key, -1)
+        page.layoutMode = chosen >= 0 ? layoutModes[chosen] : (gridModel.mostlyTall() ? "columns" : "rows")
     }
 
     function tabTitle(category) {
@@ -1817,6 +1875,11 @@ Kirigami.ApplicationWindow {
             // a board's page: which board, and how its pictures are laid out
             property int boardId: -1
             property string layoutMode: "rows"
+            // the layout follows what the page holds (its choice is looked up once the files are in)
+            Connections {
+                target: gridModel
+                function onModelReset() { if (pageStack.currentItem === gridPage) root.applyLayout(gridPage) }
+            }
             property var folderPath: null
             property string filterCategory: ""
             property var crumbs: []
@@ -2438,6 +2501,8 @@ Kirigami.ApplicationWindow {
         Kirigami.Page {
             id: viewerPage
             objectName: "viewerPage"
+            // a picture is seen best on a dark ground, as in any photo viewer
+            background: Rectangle { color: "#141516" }
 
             // Overridden by pageStack.push(imageViewerComponent, { initialIndex: ... })
             property int initialIndex: 0

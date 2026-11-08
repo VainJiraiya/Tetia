@@ -67,6 +67,11 @@ def main(argv=None) -> int:
 
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
+    try:
+        from importlib.metadata import version
+        app.setApplicationVersion(version("tetia"))      # shown in About (from the installed package)
+    except Exception:
+        pass                                             # run from a source tree that was never installed
     app.setApplicationDisplayName(APP_NAME)
     app.setDesktopFileName(APP_ID)
 

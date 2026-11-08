@@ -190,7 +190,8 @@ Kirigami.Page {
                 Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
             }
             Label {
-                text: "Purge: " + root.folderName
+                // (the folder's name is in the title already)
+                text: "\u2190 Trash  \u00B7  Keep \u2192"
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
                 Layout.maximumWidth: root.width * 0.5

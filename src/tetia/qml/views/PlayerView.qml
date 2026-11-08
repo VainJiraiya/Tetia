@@ -43,7 +43,16 @@ Kirigami.Page {
     readonly property bool hasNext: index < count - 1
     readonly property bool browsing: !series && count > 1
 
-    title: series ? (playback.title !== "" ? showTitle + " · " + playback.title : showTitle) : playback.title
+    // "Starfall — S01E03 · Old Light" (not "Starfall · Starfall - S01E03 - Old Light.mkv")
+    title: series ? (playback.title !== "" ? showTitle + " \u2014 " + episodeLabel(playback.title) : showTitle)
+                  : withoutExtension(playback.title)
+    function withoutExtension(name) { return String(name).replace(/\.[A-Za-z0-9]{2,4}$/, "") }
+    function episodeLabel(name) {
+        var label = withoutExtension(name)
+        if (showTitle !== "" && label.toLowerCase().indexOf(showTitle.toLowerCase()) === 0)
+            label = label.slice(showTitle.length).replace(/^[\s\-\u2013\u2014_.]+/, "")
+        return label.replace(/\s+[-\u2013\u2014]\s+/, " \u00B7 ")
+    }
     padding: 0
 
     // ---- the controls' state ----

@@ -191,6 +191,13 @@ class GridModel(QAbstractListModel):
             found.append((tileLayout.PICTURE, aspect))
         return found
 
+    @Slot(result=bool)
+    def mostlyTall(self) -> bool:
+        """Whether most of the pictures here are taller than wide (anime art, phone shots): such a page reads
+        best in columns, where a tall picture gets more room than in a row."""
+        aspects = [a for kind, a in self.shapes() if kind == tileLayout.PICTURE]
+        return len(aspects) >= 4 and sum(1 for a in aspects if a < 0.9) > 0.6 * len(aspects)
+
     def sections(self):
         """{row: title} where a group of files starts under its own title: on a tab's top level, each library
         folder's loose files ("Loose in Anime art · 1,204"). Nothing when only one folder's files are shown."""
