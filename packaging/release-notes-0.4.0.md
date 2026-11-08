@@ -41,7 +41,9 @@ A rework of how Tetia shows your library: a Home tab, boards, pages that show pi
 ### Manga and books
 
 - **A series can be given a format** (manga, manhwa, manhua, webtoon, doujin, oneshot, artbook) with Format… in its menu. The format sets how the reader opens it: a webtoon as a long strip, manga right to left. What you set in the reader still wins.
-- **Manga and EBooks start with Continue reading**, and the sort menu filters by format.
+- **Filter Manga and EBooks by format:** once a series has a format, chips at the top of the tab list the formats in use with how many ("Manga 12 · Doujin 30"). A chip shows every series of that format in the tab's library folders, however deeply nested.
+- **Give many series a format at once:** select them and use Format… in the selection bar.
+- **Manga and EBooks start with Continue reading.**
 
 ### Menus and smaller changes
 

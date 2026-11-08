@@ -83,7 +83,7 @@
   <releases>
     <release version="0.4.0" date="2026-11-08">
       <description>
-        <p>A new Home tab with what you are in the middle of, your library, pinned boards, favorites and what was added lately. Boards gather a saved tag search into a collection. Pages show folders and series as covers and pictures and videos in their own shape, in rows, columns or a grid. Search gains a tag sidebar to narrow and exclude, and a tag's page can look everywhere. Series can be given a format (manga, webtoon and more) that sets how the reader opens them.</p>
+        <p>A new Home tab with what you are in the middle of, your library, pinned boards, favorites and what was added lately. Boards gather a saved tag search into a collection. Pages show folders and series as covers and pictures and videos in their own shape, in rows, columns or a grid. Search gains a tag sidebar to narrow and exclude, and a tag's page can look everywhere. Series can be given a format (manga, webtoon and more) that sets how the reader opens them, and the Manga and EBooks tabs filter by it.</p>
       </description>
     </release>
     <release version="0.3.2" date="2026-11-07">

@@ -635,6 +635,11 @@ class Database:
             self._tidy_collection(path)
         self._write(_do)
 
+    def series_formats(self) -> list[tuple[str, str]]:
+        """Every series that was given a format: [(folder path, format)]."""
+        return [(row[0], row[1]) for row in self.conn.execute(
+            "SELECT path, format FROM collection WHERE is_series = 1 AND format IS NOT NULL")]
+
     def set_collection_format(self, path: str, fmt):
         """What kind of series a folder is (one of reader.FORMATS; None: not said)."""
         def _do():

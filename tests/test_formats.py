@@ -91,3 +91,44 @@ def test_continue_reading_lists_what_is_partway_newest_first(tmp_path, qapp):
     assert found[1]["where"] == "Chapter 2 of 3" and 0 < found[1]["fraction"] < 1
     folders.currentCategory = "photos"
     assert folders.continueReading(8) == []
+
+
+def test_a_format_chip_finds_its_series_at_any_depth_and_counts_them(tmp_path, qapp):
+    lib = tmp_path / "Manga"
+    _touch(lib / "Frieren", "Ch.1.cbz")
+    _touch(lib / "Doujins" / "Summer", "Summer.cbz", "Summer 2.cbz")
+    _touch(lib / "Doujins" / "Circle" / "Winter", "Winter.cbz", "Winter 2.cbz")
+    _touch(tmp_path / "Elsewhere" / "Other", "Other.cbz")
+    subs = SubfolderModel()
+    subs.filterMode = int(MediaModel.FilterMode.MangaOnly)
+    for path, fmt in ((lib / "Frieren", "manga"), (lib / "Doujins" / "Summer", "doujin"),
+                      (lib / "Doujins" / "Circle" / "Winter", "doujin"), (tmp_path / "Elsewhere" / "Other", "doujin")):
+        subs.setSeries(covers.folder_uri(str(path)), True)
+        subs.setFormat(covers.folder_uri(str(path)), fmt)
+    counts = subs.formatCounts([str(lib)], [])
+    assert [(c["key"], c["name"], c["count"]) for c in counts] == [("manga", "Manga", 1), ("doujin", "Doujin", 2)]
+    subs.formatFilter = "doujin"
+    subs.loadSources([str(lib)], [])
+    names = [subs.data(subs.index(r), subs.Roles.NameRole) for r in range(subs.rowCount())]
+    assert names == ["Summer", "Winter"]                 # deep in Doujins, and nothing from outside the library folder
+    subs.formatFilter = ""
+    assert subs.formatCounts([str(tmp_path / "Nothing")], []) == []
+
+
+def test_the_selection_gets_one_format_but_only_its_series_take_it(tmp_path, qapp):
+    _touch(tmp_path / "A", "1.cbz")
+    _touch(tmp_path / "B", "1.cbz")
+    _touch(tmp_path / "Plain", "1.cbz")
+    subs = SubfolderModel()
+    for name in ("A", "B"):
+        subs.setSeries(covers.folder_uri(str(tmp_path / name)), True)
+    told = []
+    subs.formatsSet.connect(lambda: told.append(1))
+    picked = [covers.folder_uri(str(tmp_path / n)) for n in ("A", "B", "Plain")] + ["virtual:3"]
+    assert subs.seriesCount(picked) == 2
+    subs.setFormats(picked, "webtoon")
+    db = get_database()
+    assert [db.get_collection_meta(str(tmp_path / n))["format"] for n in ("A", "B", "Plain")] == ["webtoon", "webtoon", None]
+    assert told == [1]
+    subs.setFormats(picked, "")
+    assert db.get_collection_meta(str(tmp_path / "A"))["format"] is None

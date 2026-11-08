@@ -534,30 +534,7 @@ Kirigami.ApplicationWindow {
                     Menu {
                         id: sortMenu
                         readonly property var page: pageStack.currentItem
-                        readonly property bool formats: !!page && page.isRoot === true
-                                                        && (page.filterCategory === "manga" || page.filterCategory === "books")
-                        // Manga and EBooks: show only the series of one format
-                        MenuItem {
-                            text: "Show all formats"
-                            visible: sortMenu.formats
-                            height: visible ? implicitHeight : 0
-                            icon.name: sortMenu.formats && sortMenu.page.formatFilter === "" ? "checkmark" : ""
-                            onTriggered: { sortMenu.page.formatFilter = ""; root.loadRoot() }
-                        }
-                        Instantiator {
-                            model: subfolderModel.formats()
-                            delegate: MenuItem {
-                                required property var modelData
-                                text: "Show only " + modelData.name
-                                visible: sortMenu.formats
-                                height: visible ? implicitHeight : 0
-                                icon.name: sortMenu.formats && sortMenu.page.formatFilter === modelData.key ? "checkmark" : ""
-                                onTriggered: { sortMenu.page.formatFilter = modelData.key; root.loadRoot() }
-                            }
-                            onObjectAdded: function(i, item) { sortMenu.insertItem(i + 1, item) }
-                            onObjectRemoved: function(i, item) { sortMenu.removeItem(item) }
-                        }
-                        MenuSeparator { visible: sortMenu.formats }
+                        // (a series' format is picked with the chips over a Manga or EBooks tab)
                         // how pictures are laid out here (remembered for this folder, board or tab)
                         MenuItem {
                             text: "Layout: rows"
@@ -723,6 +700,18 @@ Kirigami.ApplicationWindow {
         target: mediaModel
         function onFolderPathChanged() {
             if (mediaModel.sources.length === 0) subfolderModel.load(mediaModel.folderPath)
+        }
+    }
+
+    // A series was given a format (or lost it): the tab's format chips count again
+    Connections {
+        target: subfolderModel
+        function onFormatsSet() {
+            var page = pageStack.get(0)
+            if (!page || !page.formatSources) return
+            page.formatCounts = subfolderModel.formatCounts(page.formatSources.dirs, page.formatSources.tiles)
+            if (page.formatFilter !== "" && !page.formatCounts.some(function(f) { return f.key === page.formatFilter }))
+                root.loadRoot()                          // the last series of the picked format left it
         }
     }
 
@@ -1437,7 +1426,25 @@ Kirigami.ApplicationWindow {
             if (page) page.activeSource = ""
         }
         if (active === "" && groups.expand.length === 1 && groups.tiles.length === 0) active = groups.expand[0]
-        if (category !== "favorites" && active !== "") {
+        // Manga and EBooks: the formats their series were given (the chips), and one picked shows every series of
+        // it in these library folders, however deep, so it goes through the sources even for one folder
+        var formatTab = category === "manga" || category === "books"
+        var shownDirs = active !== "" ? [active] : groups.expand
+        var shownTiles = active !== "" ? [] : groups.tiles
+        if (page) {
+            page.formatSources = formatTab ? { dirs: shownDirs, tiles: shownTiles } : null
+            page.formatCounts = formatTab ? subfolderModel.formatCounts(shownDirs, shownTiles) : []
+        }
+        if (page && page.formatFilter !== "" && !page.formatCounts.some(function(f) { return f.key === page.formatFilter })) {
+            page.formatFilter = ""                       // no series of it is left
+            subfolderModel.formatFilter = ""
+        }
+        if (formatTab && page && page.formatFilter !== "") {
+            root.currentFolder = null
+            page.folderPath = null
+            mediaModel.openSources(shownDirs)
+            subfolderModel.loadSources(shownDirs, shownTiles)
+        } else if (category !== "favorites" && active !== "") {
             root.currentFolder = active
             if (page) page.folderPath = active
             mediaModel.openFolder(active)
@@ -1884,6 +1891,8 @@ Kirigami.ApplicationWindow {
             property string activeSource: ""
             // Manga and EBooks: the series format picked over the top level ("": all), and what is partway
             property string formatFilter: ""
+            property var formatCounts: []      // Manga and EBooks: [{key, name, count}] of the formats in use
+            property var formatSources: null   // ...and the library folders they were counted in ({dirs, tiles})
             property var continueItems: []
             // a board's page: which board, and how its pictures are laid out
             property int boardId: -1
@@ -1990,22 +1999,26 @@ Kirigami.ApplicationWindow {
 
                 // A tab's top level: one chip per library folder (to see that one alone), and in Manga and EBooks
                 // the series format to show
-                RowLayout {
-                    readonly property bool formats: gridPage.isRoot && (gridPage.filterCategory === "manga" || gridPage.filterCategory === "books")
+                ColumnLayout {
+                    id: chipStrip
+                    readonly property bool sources: gridPage.isRoot && root.sourceList.length > 1 && !root.onFavoritesTab
+                    readonly property bool formats: gridPage.isRoot && gridPage.formatCounts.length > 0
+                                                    && (gridPage.filterCategory === "manga" || gridPage.filterCategory === "books")
                     Layout.fillWidth: true
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
                     Layout.topMargin: 20         // every strip over the tiles starts where the tiles would
-                    // (not "sourceChips.visible": a child counts as hidden while its parent is, so that never turned on)
-                    visible: gridPage.isRoot && root.sourceList.length > 1 && !root.onFavoritesTab
+                    spacing: 8
+                    // (not the chips' own visible: a child counts as hidden while its parent is, so that never turned on)
+                    visible: sources || formats
                 Flow {
                     id: sourceChips
                     objectName: "sourceChips"
                     Layout.fillWidth: true
                     spacing: 8
-                    visible: gridPage.isRoot && root.sourceList.length > 1 && !root.onFavoritesTab
+                    visible: chipStrip.sources
                     Repeater {
-                        model: parent.visible ? [{ path: "", name: "All" }].concat(root.sourceList) : []
+                        model: chipStrip.sources ? [{ path: "", name: "All" }].concat(root.sourceList) : []
                         delegate: Kirigami.Chip {
                             required property var modelData
                             text: modelData.name
@@ -2014,6 +2027,27 @@ Kirigami.ApplicationWindow {
                             checked: gridPage.activeSource === modelData.path
                             onClicked: {
                                 gridPage.activeSource = modelData.path
+                                root.loadRoot()
+                            }
+                        }
+                    }
+                }
+                // the formats the series were given, with how many: one picked shows every series of it
+                Flow {
+                    objectName: "formatChips"
+                    Layout.fillWidth: true
+                    spacing: 8
+                    visible: chipStrip.formats
+                    Repeater {
+                        model: chipStrip.formats ? [{ key: "", name: "All formats", count: -1 }].concat(gridPage.formatCounts) : []
+                        delegate: Kirigami.Chip {
+                            required property var modelData
+                            text: modelData.count >= 0 ? modelData.name + "  " + modelData.count : modelData.name
+                            closable: false
+                            checkable: true
+                            checked: gridPage.formatFilter === modelData.key
+                            onClicked: {
+                                gridPage.formatFilter = modelData.key
                                 root.loadRoot()
                             }
                         }
@@ -2443,6 +2477,40 @@ Kirigami.ApplicationWindow {
                             visible: gridView.virtualPage
                             enabled: selectBar.total > 0
                             onClicked: gridView.virtualActionRequested("remove", gridView.selectedIds.slice(), gridView.selectedTiles.slice())
+                        }
+                        // Manga and EBooks: give every selected series one format
+                        Button {
+                            id: selectFormatButton
+                            objectName: "selectFormatButton"
+                            readonly property int seriesCount: selectBar.tileCount > 0 ? subfolderModel.seriesCount(gridView.selectedTiles) : 0
+                            text: "Format…"
+                            icon.name: "bookmarks"
+                            visible: gridPage.filterCategory === "manga" || gridPage.filterCategory === "books"
+                            enabled: seriesCount > 0
+                            ToolTip.visible: hovered && selectBar.tileCount > 0
+                            ToolTip.delay: 400
+                            ToolTip.text: seriesCount === selectBar.tileCount
+                                          ? "Set the format of the selected series"
+                                          : "Only a series has a format: folders that are not one are left as they are"
+                            onClicked: selectFormatMenu.popup(selectFormatButton, 0, -selectFormatMenu.implicitHeight)
+                            Menu {
+                                id: selectFormatMenu
+                                MenuItem {
+                                    text: "Not set"
+                                    onTriggered: subfolderModel.setFormats(gridView.selectedTiles.slice(), "")
+                                }
+                                MenuSeparator {}
+                                Instantiator {
+                                    model: subfolderModel.formats()
+                                    delegate: MenuItem {
+                                        required property var modelData
+                                        text: modelData.name
+                                        onTriggered: subfolderModel.setFormats(gridView.selectedTiles.slice(), modelData.key)
+                                    }
+                                    onObjectAdded: function(i, item) { selectFormatMenu.insertItem(i + 2, item) }
+                                    onObjectRemoved: function(i, item) { selectFormatMenu.removeItem(item) }
+                                }
+                            }
                         }
                         Item { Layout.preferredWidth: Kirigami.Units.largeSpacing }
                         Button {

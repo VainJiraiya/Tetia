@@ -115,6 +115,7 @@ class SubfolderModel(QAbstractListModel):
 
     filterModeChanged = Signal()
     formatFilterChanged = Signal()
+    formatsSet = Signal()             # a series was given a format, or lost it (the format chips count again)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -445,7 +446,57 @@ class SubfolderModel(QAbstractListModel):
         self._meta = meta
         self.endResetModel()
 
+    @staticmethod
+    def _source_of(key: str, dirs, tiles) -> str | None:
+        """The library folder (of `dirs`, or one of `tiles` itself) a folder is in or is (None: none of them)."""
+        for source in dirs:
+            if key.startswith(source.rstrip(os.sep) + os.sep):
+                return source
+        return "" if key in tiles else None
+
+    def _formatted_series(self, dirs, tiles) -> list:
+        """The series given a format in these library folders, however deep: [(key, format, library folder)]."""
+        found = []
+        for path, fmt in self._db.series_formats():
+            key = covers.folder_key(path)
+            source = self._source_of(key, dirs, tiles)
+            if source is not None and fmt in reader.FORMATS and os.path.isdir(key):
+                found.append((key, fmt, source))
+        return found
+
+    def _entries_of_format(self, extensions) -> list:
+        """A tab's top level filtered by format: every series of that format in its library folders, not only the
+        ones at the top (a doujin in Manga/Doujins/... is found too)."""
+        found = []
+        for key, fmt, source in self._formatted_series(self._source_dirs, self._source_tiles):
+            if fmt == self._format_filter and _has_match(key, extensions, set()):
+                found.append({"path": key, "name": os.path.basename(key), "count": 0, "parent": source})
+        found.sort(key=lambda e: covers.natural_key(e["name"]))
+        return found
+
+    @Slot(list, list, result=list)
+    def formatCounts(self, folders: list, tiles: list) -> list:
+        """The formats the series in these library folders (and library folders shown as tiles) were given, with
+        how many of this tab's: [{key, name, count}] in the formats' order, only those in use (the chips over a
+        tab's top level)."""
+        dirs = [covers.folder_key(str(f)) for f in folders or []]
+        tiles = [covers.folder_key(str(f)) for f in tiles or []]
+        try:
+            found = self._formatted_series(dirs, tiles)
+        except sqlite3.Error as e:
+            logger.error("Failed to count the formats: %s", e)
+            return []
+        extensions = self._extensions()
+        counts: dict = {}
+        for key, fmt, _ in found:
+            if _has_match(key, extensions, set()):
+                counts[fmt] = counts.get(fmt, 0) + 1
+        return [{"key": key, "name": reader.FORMAT_NAMES[key], "count": counts[key]}
+                for key in reader.FORMATS if counts.get(key)]
+
     def _entries_in_sources(self, extensions) -> list:
+        if self._format_filter:
+            return self._entries_of_format(extensions)
         found = []
         for folder in self._source_dirs:
             for entry in self._entries_in_folder(extensions, folder):
@@ -580,6 +631,35 @@ class SubfolderModel(QAbstractListModel):
         covers.notifier.changed.emit(key)
         if self._format_filter:
             self._reload()
+        self.formatsSet.emit()
+
+    @Slot(list, result=int)
+    def seriesCount(self, folder_paths: list) -> int:
+        """How many of these folders (a selection's tiles; virtual folders are skipped) are a series."""
+        keys = [covers.folder_key(str(p)) for p in folder_paths or [] if not str(p).startswith("virtual:")]
+        try:
+            meta = self._db.get_collections_meta([k for k in keys if k])
+        except sqlite3.Error:
+            return 0
+        return sum(1 for m in meta.values() if m.get("is_series"))
+
+    @Slot(list, str)
+    def setFormats(self, folder_paths: list, fmt: str):
+        """Say what kind of series several folders are at once (the selection); folders that are not a series are
+        left alone, since only a series has a format."""
+        keys = [covers.folder_key(str(p)) for p in folder_paths or [] if not str(p).startswith("virtual:")]
+        keys = [k for k in keys if k and self._db.get_collection_meta(k)["is_series"]]
+        try:
+            for key in keys:
+                self._db.set_collection_format(key, fmt if fmt in reader.FORMATS else None)
+        except sqlite3.Error as e:
+            logger.error("Failed to set the format of the selection: %s", e)
+        for key in keys:
+            covers.notifier.changed.emit(key)
+        if self._format_filter and keys:
+            self._reload()
+        if keys:
+            self.formatsSet.emit()
 
     @Slot(result=list)
     def formats(self) -> list:
