@@ -95,3 +95,29 @@ def test_a_big_tile_gets_the_1024_tier_and_a_small_one_does_not(tmp_path):
     QImage(2000, 2000, QImage.Format_RGB32).save(str(small))
     assert _edge(provider, small, 256) == 256                       # a small tile does not make the big one
     assert not any((provider.thumbnails_base / "xx-large").glob("*other*"))
+
+
+def _with_strip(width, height, strip, hole):
+    """A picture with a film strip of `strip` px on both sides (holes `hole` px tall, every 2 * hole px)."""
+    image = QImage(width, height, QImage.Format_RGB32)
+    image.fill(QColor(120, 140, 160))
+    for x in list(range(strip)) + list(range(width - strip, width)):
+        for y in range(height):
+            in_hole = (y // hole) % 2 == 1 and strip // 4 <= (x % (width - strip) if x >= strip else x) < strip - strip // 4
+            image.setPixelColor(x, y, QColor(250, 250, 250) if in_hole else QColor(0, 0, 0))
+    return image
+
+
+def test_a_film_strip_of_any_width_is_cut_off():
+    for strip in (12, 24, 40):                                        # each thumbnailer draws its own
+        cropped = thumbModel.without_film_strip(_with_strip(400, 225, strip, 8))
+        assert cropped.width() == 400 - 2 * strip
+
+
+def test_a_dark_picture_without_a_strip_is_left_alone():
+    dark = QImage(400, 225, QImage.Format_RGB32)
+    dark.fill(QColor(5, 5, 5))
+    assert thumbModel.without_film_strip(dark).width() == 400
+    plain = QImage(400, 225, QImage.Format_RGB32)
+    plain.fill(QColor("orange"))
+    assert thumbModel.without_film_strip(plain).width() == 400

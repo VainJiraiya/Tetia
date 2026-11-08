@@ -181,15 +181,39 @@ def forget_thumbnails(local_path: str):
 NO_STRIP = "nostrip/"
 
 
+def _strip_width(gray: bytes, stride: int, width: int, height: int, from_left: bool) -> int:
+    """How many columns on one side are a film strip: dark columns, with the sprocket holes (light squares at
+    regular steps) in some of them. 0 if there is none."""
+    rows = range(0, height, 2)
+    limit = int(width * 0.15)
+    band, holes = 0, 0
+    while band < limit:
+        x = band if from_left else width - 1 - band
+        values = [gray[y * stride + x] for y in rows]
+        dark = sum(1 for v in values if v < 40)
+        if dark < 0.5 * len(values):
+            break                                   # a column of the picture itself
+        if max(values) > 150:                       # the bright middle of the holes (their edges are soft)
+            holes += 1
+        band += 1
+    # only a band with holes in it is a strip (a dark edge of the picture alone is left as it is)
+    return band if band >= 3 and holes >= max(2, band // 4) else 0
+
+
 def without_film_strip(image: QImage) -> QImage:
-    """A video thumbnail with ffmpegthumbnailer's film strip cut off both sides."""
-    if image.isNull():
+    """A video thumbnail without the film strip a thumbnailer drew on its sides (ffmpegthumbnailer's, Dolphin's:
+    each draws its own, of its own width), found in the picture itself."""
+    if image.isNull() or image.width() < 32:
         return image
-    width, height = image.width(), image.height()
-    strip = round(width / 16) if width >= height else round(height / 32)
-    if strip <= 0 or width <= 2 * strip:
+    gray = image.convertToFormat(QImage.Format_Grayscale8)
+    width, height = gray.width(), gray.height()
+    stride = gray.bytesPerLine()
+    data = bytes(gray.constBits())[:stride * height]
+    left = _strip_width(data, stride, width, height, True)
+    right = _strip_width(data, stride, width, height, False)
+    if not left and not right:
         return image
-    return image.copy(strip, 0, width - 2 * strip, height)
+    return image.copy(left, 0, width - left - right, height)
 
 
 class ThumbnailProvider(QQuickImageProvider):

@@ -13,6 +13,7 @@ import org.kde.kirigami 2.20 as Kirigami
 //   "single"   a folder holding one file: drawn as that file
 //   "board"    a board (it gathers from many places): a collage of three pictures
 //   "tag"      a tag pinned to Home: a collage, with the tag on it
+//   "library"  a tab's library on Home: a collage of what it holds
 // At most one badge (what is left to read or watch), a thin bar while partway, dimmed once finished.
 Item {
     id: tile
@@ -31,7 +32,7 @@ Item {
     property color tagColor: Kirigami.Theme.positiveTextColor
 
     readonly property bool stacked: kind === "folder" || kind === "virtual"
-    readonly property bool collage: kind === "board" || kind === "tag"
+    readonly property bool collage: kind === "board" || kind === "tag" || kind === "library"
     readonly property alias hovered: hover.hovered
 
     signal clicked(var mouse)

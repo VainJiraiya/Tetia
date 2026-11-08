@@ -48,6 +48,10 @@ class HomeModel(QObject):
         return self._rows("the favorite collections", lambda db: home.favorite_covers(db))
 
     @Slot(result=list)
+    def library(self):
+        return self._rows("the library", lambda db: home.library_summary(db))
+
+    @Slot(result=list)
     def recent(self):
         return self._rows("what was added", lambda db: home.recent_files(db))
 

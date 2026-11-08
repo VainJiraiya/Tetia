@@ -1817,6 +1817,7 @@ Kirigami.ApplicationWindow {
         backend: homeModel
         coverRevision: root.coverRevision
         onContinueOpened: function(item) { root.openFromHome(item.kind, item.path, item.name) }
+        onLibraryOpened: function(tab) { root.switchTab(tab) }
         onPinnedOpened: function(item) { root.openFromHome(item.kind, item.ref, item.name) }
         onCoverOpened: function(item) { root.openFromHome(item.kind, item.path, item.name) }
         onPictureOpened: function(files, index) {

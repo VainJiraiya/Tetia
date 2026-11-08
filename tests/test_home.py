@@ -103,3 +103,19 @@ def test_an_episode_in_a_season_folder_continues_its_series(tmp_path):
     items = home.continue_items(db)
     assert [(i["kind"], i["name"]) for i in items] == [("show", "Starfall")]
     assert items[0]["where"].startswith("S01E02 · ")
+
+
+def test_the_library_cards_count_each_tab(tmp_path):
+    folder = tmp_path / "Art"
+    folder.mkdir()
+    for name in ("a.png", "b.png", "c.png"):
+        image = QImage(4, 4, QImage.Format_RGB32)
+        image.fill(QColor("red"))
+        image.save(str(folder / name))
+    db = get_database()
+    db.add_folder(covers.folder_uri(str(folder)), "photos")
+    MediaModel().load_from_qurl(str(folder))
+    db.set_media_rating(_id(db, folder / "a.png"), 3)
+    cards = home.library_summary(db)
+    assert [(c["tab"], c["sub"]) for c in cards] == [("photos", "3 images")]
+    assert len(cards[0]["collage"]) == 3 and not cards[0]["collage"][0].endswith("a.png")   # the explicit one last

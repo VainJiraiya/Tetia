@@ -16,6 +16,7 @@ Rectangle {
     property int coverRevision: 0
 
     property var continueItems: []
+    property var libraryItems: []
     property var pinnedItems: []
     property var favoriteCovers: []
     property var favoriteFiles: []
@@ -23,6 +24,7 @@ Rectangle {
 
     // what to open: the host knows how
     signal continueOpened(var item)
+    signal libraryOpened(string tab)
     signal pinnedOpened(var item)
     signal coverOpened(var item)
     signal pictureOpened(var files, int index)
@@ -36,6 +38,7 @@ Rectangle {
     function refresh() {
         if (!backend) return
         continueItems = backend.continueItems()
+        libraryItems = backend.library()
         pinnedItems = backend.pinned()
         favoriteCovers = backend.favoriteCovers()
         favoriteFiles = backend.favorites()
@@ -127,8 +130,7 @@ Rectangle {
 
             Label {
                 Layout.fillWidth: true
-                visible: home.continueItems.length === 0 && home.pinnedItems.length === 0 && home.favoriteCovers.length === 0
-                         && home.favoriteFiles.length === 0 && home.recentFiles.length === 0
+                visible: home.libraryItems.length === 0 && home.recentFiles.length === 0
                 wrapMode: Text.WordWrap
                 opacity: 0.7
                 text: "Home fills up as you use Tetia: what you are reading or watching, what you pin (“Pin to Home” on a board, a folder or a tag), your favorites and what was added lately."
@@ -209,6 +211,32 @@ Rectangle {
                 }
             }
 
+            // What each tab holds: one card per tab with library folders, a click goes there
+            Section {
+                title: "Library"
+                visible: home.libraryItems.length > 0
+                Flow {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 8
+                    spacing: 22
+                    Repeater {
+                        model: home.libraryItems
+                        delegate: CollectionTile {
+                            required property var modelData
+                            width: 150
+                            height: 225 + 44
+                            coverHeight: 225
+                            kind: "library"
+                            name: modelData.name
+                            subtitle: modelData.sub
+                            collageSources: modelData.collage.map(function(p) { return home.thumb(p) })
+                            thumbSize: ThumbUri.tierFor(Math.ceil(225 * Screen.devicePixelRatio))
+                            onClicked: function(mouse) { if (mouse.button === Qt.LeftButton) home.libraryOpened(modelData.tab) }
+                        }
+                    }
+                }
+            }
+
             Section {
                 title: "Pinned"
                 visible: home.pinnedItems.length > 0
@@ -277,13 +305,15 @@ Rectangle {
                 }
             }
 
+            // The newest files fill whatever room is left under the other rows, so Home never ends in an empty area
             Section {
+                id: recentSection
                 title: "Recently added"
                 visible: home.recentFiles.length > 0
                 PictureRows {
                     Layout.fillWidth: true
                     files: home.recentFiles
-                    rows: 2
+                    rows: Math.max(2, Math.floor((flick.height - recentSection.y - 30 - 20) / 176))
                 }
             }
         }

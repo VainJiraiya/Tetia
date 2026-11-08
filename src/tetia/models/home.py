@@ -175,7 +175,7 @@ def favorite_files(db, limit: int = 40) -> list:
     return [_file(dict(r)) for r in rows]
 
 
-def recent_files(db, limit: int = 40) -> list:
+def recent_files(db, limit: int = 150) -> list:
     return [_file(r) for r in db.recently_added(("image", "video"), limit)]
 
 
@@ -183,3 +183,33 @@ def _file(row: dict) -> dict:
     width, height = row.get("width") or 0, row.get("height") or 0
     aspect = width / height if width > 0 and height > 0 else (16 / 9 if row["kind"] == "video" else 1.0)
     return {"id": row["id"], "path": row["path"], "name": row["name"], "kind": row["kind"], "aspect": aspect}
+
+
+# What each tab holds, for the Library cards
+_TABS = (("photos", "Images", ("image",), "image", "images"),
+         ("videos", "Videos", ("video",), "video", "videos"),
+         ("manga", "Manga", ("comic",), "item", "items"),
+         ("books", "EBooks", ("ebook",), "book", "books"))
+
+
+def library_summary(db) -> list:
+    """One card per tab that has library folders: [{tab, name, sub ("2,412 images"), collage (three pictures,
+    the mildest-rated first)}]. Facts about the library, nothing picked for the user."""
+    out = []
+    for tab, name, kinds, one, many in _TABS:
+        roots = [covers.folder_key(f["path"]).rstrip(os.sep) + os.sep for f in db.get_folders_by_category(tab)]
+        if not roots:
+            continue
+        where = " OR ".join("(path >= ? AND path < ?)" for _ in roots)
+        params = [bound for r in roots for bound in (r, r[:-1] + chr(ord(os.sep) + 1))]
+        marks = ",".join("?" * len(kinds))
+        count = db.conn.execute(
+            f"SELECT COUNT(*) FROM media WHERE missing = 0 AND kind IN ({marks}) AND ({where})",
+            (*kinds, *params)).fetchone()[0]
+        rows = db.conn.execute(
+            f"SELECT path FROM media WHERE missing = 0 AND kind IN ({marks}) AND ({where}) "
+            f"ORDER BY COALESCE(rating, 0.5), added_at DESC LIMIT 3", (*kinds, *params)).fetchall()
+        out.append({"tab": tab, "name": name, "sub": "%s %s" % (f"{count:,}", one if count == 1 else many),
+                    "collage": [r["path"] for r in rows]})
+    return out
+
