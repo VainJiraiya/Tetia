@@ -85,6 +85,16 @@ def _ranges(db, tab):
     return [tag_query.scope_range(os.path.realpath(covers.folder_key(f))) for f in folders]
 
 
+def library_roots(db, tab: str = "") -> list:
+    """The library folders (of one tab, or all of them) as real-path prefixes ending in a separator."""
+    folders = [f["path"] for f in db.get_folders_by_category(tab)] if tab else db.get_all_folders()
+    return [os.path.realpath(covers.folder_key(f)).rstrip(os.sep) + os.sep for f in folders]
+
+
+def in_library(path: str, roots: list) -> bool:
+    return any(path.startswith(root) for root in roots)
+
+
 def members(db, resolver, board_id: int) -> list:
     """The ids of the files on a board, in natural path order: what its search finds in its tab's library, plus
     what was put on it by hand, less what was taken off it."""
@@ -108,7 +118,11 @@ def members(db, resolver, board_id: int) -> list:
             f"SELECT id FROM media WHERE missing = 1 AND id IN ({','.join('?' * len(extra))})", extra).fetchall()}
         for media_id, row in db.get_media_rows([m for m in extra if m not in gone]).items():
             paths[media_id] = row["path"]
-    return [m for m in sorted(paths, key=lambda m: covers.natural_key(paths[m])) if m not in removed]
+    # only what is in the library now: files of a library folder that was removed leave the board (they come back if
+    # the folder is added again; the board itself stays, it holds no files)
+    roots = library_roots(db, board["tab"])
+    return [m for m in sorted(paths, key=lambda m: covers.natural_key(paths[m]))
+            if m not in removed and in_library(paths[m], roots)]
 
 
 def collage(db, board_id: int, member_ids: list, count: int = 3) -> list:

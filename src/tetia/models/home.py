@@ -52,12 +52,19 @@ def _series_of(db, path: str) -> str:
     return ""
 
 
+def _roots(db):
+    return boards.library_roots(db)
+
+
 def continue_items(db, limit: int = 8) -> list:
     """Manga and books partway (a series where its next chapter is) and long videos partway (a series of them as
     one), most recent first: [{kind: series|book|video|show, path, name, cover, where, fraction}]."""
     found, seen = [], set()
+    roots = _roots(db)
     for row in db.recent_reading():
         path = row["path"]
+        if not boards.in_library(path, roots):
+            continue                                # (its library folder was removed)
         folder = _series_of(db, path)
         if folder:
             if folder in seen:
@@ -77,6 +84,8 @@ def continue_items(db, limit: int = 8) -> list:
                           "fraction": (row["page"] + 1) / total if total else 0.0, "when": row["updated"] or ""})
     for row in db.recent_watching(CLIP_SECONDS):
         path = row["path"]
+        if not boards.in_library(path, roots):
+            continue
         folder = _series_of(db, path)
         show = bool(folder)
         key = folder if show else path
@@ -151,9 +160,10 @@ def pinned_items(db, resolver) -> list:
 def favorite_covers(db, limit: int = 40) -> list:
     """Starred folders, series, comics and books, as covers: [{kind: folder|series|book, path, name, cover}]."""
     out = []
+    roots = _roots(db)
     for row in db.get_favorite_collections():
         folder = covers.folder_key(row["path"])
-        if not os.path.isdir(folder):
+        if not os.path.isdir(folder) or not boards.in_library(os.path.realpath(folder) + os.sep, roots):
             continue
         cover = covers.tile_picture(folder, covers.ANY_PICTURE_EXTENSIONS,
                                     lambda f: db.get_collection_meta(covers.folder_key(f)), set())
@@ -163,7 +173,8 @@ def favorite_covers(db, limit: int = 40) -> list:
     for row in db.conn.execute(
             "SELECT path, name FROM media WHERE favorite = 1 AND missing = 0 AND kind IN ('comic', 'ebook') "
             "ORDER BY name COLLATE NOCASE"):
-        out.append({"kind": "book", "path": row["path"], "name": Path(row["name"]).stem, "cover": row["path"]})
+        if boards.in_library(row["path"], roots):
+            out.append({"kind": "book", "path": row["path"], "name": Path(row["name"]).stem, "cover": row["path"]})
     return out[:limit]
 
 
@@ -171,12 +182,14 @@ def favorite_files(db, limit: int = 40) -> list:
     """Starred pictures and videos, as the Favorites row shows them: [{id, path, name, kind, aspect}]."""
     rows = db.conn.execute(
         "SELECT id, path, name, kind, width, height FROM media WHERE favorite = 1 AND missing = 0 "
-        "AND kind IN ('image', 'video') ORDER BY added_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
-    return [_file(dict(r)) for r in rows]
+        "AND kind IN ('image', 'video') ORDER BY added_at DESC, id DESC LIMIT ?", (int(limit) * 4,)).fetchall()
+    roots = _roots(db)
+    return [_file(dict(r)) for r in rows if boards.in_library(r["path"], roots)][:limit]
 
 
 def recent_files(db, limit: int = 150) -> list:
-    return [_file(r) for r in db.recently_added(("image", "video"), limit)]
+    roots = _roots(db)
+    return [_file(r) for r in db.recently_added(("image", "video"), limit * 4) if boards.in_library(r["path"], roots)][:limit]
 
 
 def _file(row: dict) -> dict:

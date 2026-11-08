@@ -113,19 +113,53 @@ Rectangle {
         }
     }
 
+    // A wide window has two columns: the covers and cards on the left, a wall of pictures (favorite pictures, then
+    // what was added lately) on the right, as tall as the left side or the window, so Home has no empty half
+    readonly property bool wide: flick.width >= 1200
+    readonly property real leftWidth: wide ? Math.min(720, (flick.width - 48) * 0.5) : flick.width - 48
+
     Flickable {
         id: flick
         anchors.fill: parent
-        contentHeight: column.implicitHeight + 40
+        contentHeight: Math.max(column.implicitHeight, wall.visible ? wall.implicitHeight : 0) + 40
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar {}
 
         ColumnLayout {
+            id: wall
+            visible: home.wide && (home.favoriteFiles.length > 0 || home.recentFiles.length > 0)
+            x: 24 + home.leftWidth + 40
+            y: 20
+            width: flick.width - x - 24
+            spacing: 26
+            Section {
+                title: "Favorite pictures"
+                visible: home.favoriteFiles.length > 0
+                PictureRows {
+                    Layout.fillWidth: true
+                    files: home.favoriteFiles
+                    rows: 2
+                }
+            }
+            Section {
+                id: wallRecent
+                title: "Recently added"
+                visible: home.recentFiles.length > 0
+                PictureRows {
+                    Layout.fillWidth: true
+                    files: home.recentFiles
+                    // down to the end of the left column, or of the window
+                    rows: Math.max(2, Math.ceil((Math.max(column.implicitHeight, flick.height - 40) - wallRecent.y - 30) / 176))
+                }
+            }
+        }
+
+        ColumnLayout {
             id: column
             x: 24
             y: 20
-            width: flick.width - 48
+            width: home.leftWidth
             spacing: 26
 
             Label {
@@ -274,7 +308,7 @@ Rectangle {
 
             Section {
                 title: "Favorites"
-                visible: home.favoriteCovers.length > 0 || home.favoriteFiles.length > 0
+                visible: home.favoriteCovers.length > 0 || (!home.wide && home.favoriteFiles.length > 0)
                 Flow {
                     Layout.fillWidth: true
                     spacing: 22
@@ -300,6 +334,7 @@ Rectangle {
                 }
                 PictureRows {
                     Layout.fillWidth: true
+                    visible: !home.wide                 // (on a wide window they are in the wall on the right)
                     files: home.favoriteFiles
                     rows: 1
                 }
@@ -309,7 +344,7 @@ Rectangle {
             Section {
                 id: recentSection
                 title: "Recently added"
-                visible: home.recentFiles.length > 0
+                visible: !home.wide && home.recentFiles.length > 0
                 PictureRows {
                     Layout.fillWidth: true
                     files: home.recentFiles

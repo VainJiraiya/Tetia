@@ -30,6 +30,8 @@ def test_continue_mixes_books_and_long_videos_newest_first_and_skips_clips(tmp_p
     for folder in ("Manga/Frieren", "Videos", "Videos/Starfall"):
         MediaModel().load_from_qurl(str(tmp_path / folder))
     db = get_database()
+    db.add_folder(covers.folder_uri(str(tmp_path / "Manga")), "manga")
+    db.add_folder(covers.folder_uri(str(tmp_path / "Videos")), "videos")
     db.set_collection_series(str(tmp_path / "Manga" / "Frieren"), True)
     db.set_collection_series(str(tmp_path / "Videos" / "Starfall"), True)
     db.set_progress(_id(db, tmp_path / "Manga" / "Frieren" / "Ch.1.cbz"), 9, 0, 10, True)
@@ -87,6 +89,7 @@ def test_favorites_and_recently_added_are_pictures_in_their_shape(tmp_path):
         image.save(str(folder / name))
     MediaModel().load_from_qurl(str(folder))
     db = get_database()
+    db.add_folder(covers.folder_uri(str(folder)), "photos")
     db.conn.execute("UPDATE media SET added_at = 100 WHERE name = 'wide.png'")
     db.conn.execute("UPDATE media SET added_at = 200, favorite = 1 WHERE name = 'tall.png'")
     db.conn.commit()
@@ -98,6 +101,7 @@ def test_an_episode_in_a_season_folder_continues_its_series(tmp_path):
     _touch(tmp_path / "Starfall" / "Season 1", "S01E01.mkv", "S01E02.mkv")
     MediaModel().load_from_qurl(str(tmp_path / "Starfall" / "Season 1"))
     db = get_database()
+    db.add_folder(covers.folder_uri(str(tmp_path / "Starfall")), "videos")
     db.set_collection_series(str(tmp_path / "Starfall"), True)
     db.set_playback(_id(db, tmp_path / "Starfall" / "Season 1" / "S01E02.mkv"), 600, 2700, False)
     items = home.continue_items(db)
@@ -119,3 +123,26 @@ def test_the_library_cards_count_each_tab(tmp_path):
     cards = home.library_summary(db)
     assert [(c["tab"], c["sub"]) for c in cards] == [("photos", "3 images")]
     assert len(cards[0]["collage"]) == 3 and not cards[0]["collage"][0].endswith("a.png")   # the explicit one last
+
+
+def test_a_removed_library_folder_leaves_boards_and_home(tmp_path):
+    folder = tmp_path / "Art"
+    folder.mkdir()
+    image = QImage(4, 4, QImage.Format_RGB32)
+    image.fill(QColor("red"))
+    image.save(str(folder / "a.png"))
+    db = get_database()
+    db.add_folder(covers.folder_uri(str(folder)), "photos")
+    MediaModel().load_from_qurl(str(folder))
+    a = _id(db, folder / "a.png")
+    board = boards.create(db, "Picked", "", "photos")
+    boards.pin(db, board, [a])                                   # put on the board by hand
+    db.conn.execute("UPDATE media SET favorite = 1")
+    db.conn.commit()
+    assert boards.members(db, _Resolver(db), board) == [a] and home.recent_files(db) and home.favorite_files(db)
+    db.remove_folder(covers.folder_uri(str(folder)))
+    assert boards.members(db, _Resolver(db), board) == []        # its files left the board; the board stays
+    assert boards.get(db, board) is not None
+    assert home.recent_files(db) == [] and home.favorite_files(db) == []
+    db.add_folder(covers.folder_uri(str(folder)), "photos")      # added again: they come back
+    assert boards.members(db, _Resolver(db), board) == [a]
