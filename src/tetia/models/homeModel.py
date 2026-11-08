@@ -72,6 +72,16 @@ class HomeModel(QObject):
             return
         self.pinsChanged.emit()
 
+    @Slot(int, bool)
+    def setFileFavorite(self, media_id: int, favorite: bool):
+        """The star on a picture's tile: favorite it or take it out of the favorites."""
+        try:
+            get_database().set_media_favorite(media_id, favorite)
+        except sqlite3.Error as e:
+            logger.error("Setting a favorite failed: %s", e)
+            return
+        self.pinsChanged.emit()          # (Home reads its rows again)
+
     @Slot(str, str)
     def unfavorite(self, kind: str, ref: str):
         """Take something out of the favorites: a file (its media id), a book (its path) or a folder (its path)."""

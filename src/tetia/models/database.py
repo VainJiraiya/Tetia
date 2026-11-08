@@ -474,10 +474,10 @@ class Database:
         return [dict(row) for row in rows]
 
     def recently_added(self, kinds, limit: int = 40) -> list[dict]:
-        """The files first seen most recently: [{id, path, name, kind, width, height}]."""
+        """The files first seen most recently: [{id, path, name, kind, width, height, favorite}]."""
         marks = ",".join("?" * len(kinds))
         rows = self.conn.execute(
-            f"SELECT id, path, name, kind, width, height FROM media WHERE missing = 0 AND kind IN ({marks}) "
+            f"SELECT id, path, name, kind, width, height, favorite FROM media WHERE missing = 0 AND kind IN ({marks}) "
             f"ORDER BY added_at DESC, id DESC LIMIT ?", (*kinds, int(limit))).fetchall()
         return [dict(row) for row in rows]
 

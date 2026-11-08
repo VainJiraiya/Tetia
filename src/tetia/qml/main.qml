@@ -1835,6 +1835,7 @@ Kirigami.ApplicationWindow {
         onUnpinRequested: function(kind, ref) { homeModel.setPinned(kind, ref, false) }
         actions: mediaActions
         onFavoriteRemoved: function(kind, ref) { homeModel.unfavorite(kind, String(ref)) }
+        onFavoriteSet: function(mediaId, favorite) { homeModel.setFileFavorite(mediaId, favorite) }
         onTrashRequested: function(ids) { root.requestTrash(ids) }
     }
 

@@ -94,6 +94,26 @@ def test_favorites_and_recently_added_are_pictures_in_their_shape(tmp_path):
     db.conn.commit()
     assert [(f["name"], f["aspect"]) for f in home.recent_files(db)] == [("tall.png", 0.5), ("wide.png", 2.0)]
     assert [f["name"] for f in home.favorite_files(db)] == ["tall.png"]
+    assert [f["favorite"] for f in home.recent_files(db)] == [True, False]      # the tile's star shows it
+
+
+def test_the_star_on_a_home_picture_favorites_it(tmp_path, qapp):
+    folder = tmp_path / "Pics"
+    folder.mkdir()
+    image = QImage(8, 8, QImage.Format_RGB32)
+    image.fill(QColor("green"))
+    image.save(str(folder / "a.png"))
+    db = get_database()
+    db.add_folder(covers.folder_uri(str(folder)), "photos")
+    MediaModel().load_from_qurl(str(folder))
+    a = _id(db, folder / "a.png")
+    model = HomeModel()
+    changed = []
+    model.pinsChanged.connect(lambda: changed.append(1))
+    model.setFileFavorite(a, True)
+    assert [f["id"] for f in model.favorites()] == [a] and model.recent()[0]["favorite"] and changed
+    model.setFileFavorite(a, False)
+    assert model.favorites() == [] and not model.recent()[0]["favorite"]
 
 
 def test_an_episode_in_a_season_folder_continues_its_series(tmp_path):

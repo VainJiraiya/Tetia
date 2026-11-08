@@ -181,9 +181,9 @@ def favorite_covers(db, limit: int = 40) -> list:
 
 
 def favorite_files(db, limit: int = 40) -> list:
-    """Starred pictures and videos, as the Favorites row shows them: [{id, path, name, kind, aspect}]."""
+    """Starred pictures and videos, as the Favorites row shows them: [{id, path, name, kind, aspect, favorite}]."""
     rows = db.conn.execute(
-        "SELECT id, path, name, kind, width, height FROM media WHERE favorite = 1 AND missing = 0 "
+        "SELECT id, path, name, kind, width, height, favorite FROM media WHERE favorite = 1 AND missing = 0 "
         "AND kind IN ('image', 'video') ORDER BY added_at DESC, id DESC LIMIT ?", (int(limit) * 4,)).fetchall()
     roots = _roots(db)
     return [_file(dict(r)) for r in rows if boards.in_library(r["path"], roots)][:limit]
@@ -197,7 +197,8 @@ def recent_files(db, limit: int = 150) -> list:
 def _file(row: dict) -> dict:
     width, height = row.get("width") or 0, row.get("height") or 0
     aspect = width / height if width > 0 and height > 0 else (16 / 9 if row["kind"] == "video" else 1.0)
-    return {"id": row["id"], "path": row["path"], "name": row["name"], "kind": row["kind"], "aspect": aspect}
+    return {"id": row["id"], "path": row["path"], "name": row["name"], "kind": row["kind"], "aspect": aspect,
+            "favorite": bool(row.get("favorite"))}
 
 
 # What each tab holds, for the Library cards

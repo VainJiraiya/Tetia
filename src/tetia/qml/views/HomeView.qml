@@ -30,6 +30,7 @@ Rectangle {
     signal pictureOpened(var files, int index)
     signal unpinRequested(string kind, string ref)
     signal favoriteRemoved(string kind, var ref)     // "file" (a media id or a book's path) or "folder" (a path)
+    signal favoriteSet(int mediaId, bool favorite)   // the star on a picture
     signal trashRequested(var ids)
     property var actions: null                      // MediaActions: show in the file manager, copy the path
 
@@ -105,6 +106,8 @@ Rectangle {
                         thumbSize: ThumbUri.tierFor(Math.ceil(Math.max(width, height) * Screen.devicePixelRatio))
                         fileName: modelData.file.name
                         isVideo: modelData.file.kind === "video"
+                        isFavorite: modelData.file.favorite === true
+                        onFavoriteToggled: home.favoriteSet(modelData.file.id, !isFavorite)
                         onClicked: function(mouse) {
                             if (mouse.button === Qt.RightButton)
                                 home.showMenu("picture", modelData.file, function() { home.pictureOpened(pictureRows.files, modelData.index) },
