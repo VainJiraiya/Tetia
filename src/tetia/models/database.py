@@ -130,6 +130,7 @@ class Database:
             (14, self._migrate_v14),
             (15, self._migrate_v15),
             (16, self._migrate_v16),
+            (17, self._migrate_v17),
         )
         for target, step in steps:
             if version < target:
@@ -388,6 +389,17 @@ class Database:
             );
         """)
 
+    def _migrate_v17(self):
+        # What the user pinned to Home: a board, a folder or series (by path) or a tag (by name)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS pin (
+                kind     TEXT NOT NULL CHECK (kind IN ('board', 'folder', 'tag')),
+                ref      TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (kind, ref)
+            );
+        """)
+
     def close(self):
         self.conn.close()
 
@@ -453,10 +465,26 @@ class Database:
                     started.add(row["path"])
         return done, started
 
-    def recent_reading(self, limit: int = 60) -> list[dict]:
-        """The books read most recently, newest first: [{path, page, total, finished}] (files still there)."""
+    def recent_watching(self, min_duration: float, limit: int = 60) -> list[dict]:
+        """Long videos stopped partway, most recent first: [{path, position, duration, updated}]."""
         rows = self.conn.execute(
-            "SELECT m.path, r.page, r.total, r.finished FROM reading_progress r JOIN media m ON m.id = r.media_id "
+            "SELECT m.path, p.position, p.duration, p.updated FROM playback p JOIN media m ON m.id = p.media_id "
+            "WHERE m.missing = 0 AND p.finished = 0 AND p.position > 0 AND p.duration >= ? "
+            "ORDER BY p.updated DESC LIMIT ?", (float(min_duration), int(limit))).fetchall()
+        return [dict(row) for row in rows]
+
+    def recently_added(self, kinds, limit: int = 40) -> list[dict]:
+        """The files first seen most recently: [{id, path, name, kind, width, height}]."""
+        marks = ",".join("?" * len(kinds))
+        rows = self.conn.execute(
+            f"SELECT id, path, name, kind, width, height FROM media WHERE missing = 0 AND kind IN ({marks}) "
+            f"ORDER BY added_at DESC, id DESC LIMIT ?", (*kinds, int(limit))).fetchall()
+        return [dict(row) for row in rows]
+
+    def recent_reading(self, limit: int = 60) -> list[dict]:
+        """The books read most recently, newest first: [{path, page, total, finished, updated}] (files still there)."""
+        rows = self.conn.execute(
+            "SELECT m.path, r.page, r.total, r.finished, r.updated FROM reading_progress r JOIN media m ON m.id = r.media_id "
             "WHERE m.missing = 0 ORDER BY r.updated DESC LIMIT ?", (int(limit),)).fetchall()
         return [dict(row) for row in rows]
 
