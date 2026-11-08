@@ -442,7 +442,7 @@ Flickable {
         // its picture as a cover
         Menu {
             title: "Cover"
-            icon.name: "image-x-generic"
+            icon.name: "viewimage"
             // Uses this item as the cover of the folder being browsed: a picture as it is, a video a frame of it,
             // a manga or book its own first page
             MenuItem {
@@ -692,7 +692,7 @@ Flickable {
         // its cover, and how it is shown
         Menu {
             title: "Cover"
-            icon.name: "image-x-generic"
+            icon.name: "viewimage"
             // a tile drawn as a file (a series, or a folder holding one file) can lend its picture to the folder
             // you are in, like a loose file's "Use as folder cover"
             MenuItem {

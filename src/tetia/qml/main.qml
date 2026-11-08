@@ -996,7 +996,9 @@ Kirigami.ApplicationWindow {
                 onTriggered: switchTab("photos")
             },
             Kirigami.Action {
-                icon.name: "video-x-generic-symbolic"
+                // Not video-x-generic-symbolic: Breeze has no 22 px one, and the fallback is not
+                // recoloured, so it drew darker than the other tabs
+                icon.name: "folder-videos-symbolic"
                 text: "Videos"
                 checked: folderModel.currentCategory === "videos"
                 onTriggered: switchTab("videos")
