@@ -6,17 +6,23 @@ Tetia keeps your manga, pictures and videos in one place on KDE Plasma: browse
 collections, tag and rate what is in them, and find anything with one search box.
 It is built with Python, Qt Quick and Kirigami.
 
-> **Status: early (0.3.2).** It is in daily use by its author, but expect rough
+> **Status: early (0.4.0).** It is in daily use by its author, but expect rough
 > edges. Developed and tested on NixOS with Plasma 6, PySide6 6.11 and Python 3.14;
 > other setups are untested.
 
 ## Features
 
-- **Collections** - add folders under *Photos*, *Videos*, *Manga* or *Books*. Each
-  folder is a tile with a cover (its first picture, or one you choose). Subfolders
-  nest, with a breadcrumb trail; a subfolder only shows if
-  something inside it matches the current tab.
-- **Browsing** - a thumbnail grid in natural order ("Chapter 2" before "Chapter 10").
+- **Home** - what you are in the middle of (manga, books and long videos partway),
+  a card per tab with what your library holds, the boards you pinned, your favorites,
+  and the files added lately. Nothing on it is picked for you.
+- **Library** - add folders under *Images*, *Videos*, *Manga* or *EBooks*. A tab shows
+  what is in them: folders, series and virtual folders as portrait covers (with a cover
+  you can choose), then each folder's loose files under its own title. Subfolders nest,
+  with a breadcrumb trail; a subfolder only shows if something inside it matches the
+  current tab.
+- **Browsing** - pictures and videos keep their own shape, in rows, columns
+  (masonry) or a grid of squares, remembered per folder; natural order ("Chapter 2"
+  before "Chapter 10").
   Thumbnails use the shared freedesktop cache, so Dolphin and Gwenview reuse them.
   Images open in a full-screen viewer. Comics (CBZ, CBR and friends), PDFs and
   EPUBs made of page pictures open in the built-in reader (below), and videos in the
@@ -38,6 +44,9 @@ It is built with Python, Qt Quick and Kirigami.
   progress bars and lengths. Seasons can be folders (`Season 1`) and episodes are
   numbered from their names (`S01E02`, `1x02`, `Ep 12`, `Dragon Ball 001`, even `9.5`).
   A series, manga or show, is one item: tag, rate and favorite it as a whole.
+- **Boards** - a saved tag search shown as a collection, plus files put on it by
+  hand: a file tagged later joins it by itself, and a file can be on any number of
+  boards. Nothing on disk moves.
 - **Virtual folders** - sort a library without touching the disk: select files or
   whole subfolders and put them in a named virtual folder inside the folder you are
   in. Virtual folders nest, and a thing lives in one place at a time, like in a real
@@ -47,12 +56,13 @@ It is built with Python, Qt Quick and Kirigami.
   panel with suggestions, and bulk tagging. Select items by clicking, with Ctrl or
   Shift, or by dragging a rectangle.
 - **Ratings and favorites** - rate items General, Suggestive, Mature or Explicit;
-  favorite items and whole collections and find them on the *Favorites* tab.
+  favorite items and whole collections and find them on *Home*.
 - **Search** - one box for tags and file names, for example
   `series:starfall character:mira -chibi type:photo rating:general`. From the top
   level it searches your whole library; inside a folder, that folder and its
   subfolders. It suggests as you type, shows your terms as chips, and indexes your
-  library in the background. The (i) button in the search bar explains the syntax.
+  library in the background. A tag sidebar narrows the results or leaves a tag out,
+  and a tag's page can look in one folder, its tab, or everywhere. The (i) button in the search bar explains the syntax.
 - **Keeps track of your files** - move or rename a file and it keeps its tags and
   favorites; a file that disappears is marked missing rather than forgotten.
   Trashing moves files to the system Trash.
@@ -92,7 +102,7 @@ works.
 **With the script** (any distribution; installs for your user only, no root):
 
 ```sh
-git clone --branch v0.3.2 https://github.com/VainJiraiya/Tetia.git
+git clone --branch v0.4.0 https://github.com/VainJiraiya/Tetia.git
 cd Tetia
 ./install.sh          # checks the requirements above and tells you what is missing
 ```

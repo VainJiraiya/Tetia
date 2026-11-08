@@ -1,5 +1,5 @@
 Name:           tetia
-Version:        0.3.2
+Version:        0.4.0
 Release:        1%{?dist}
 Summary:        A media library for manga, images and video
 
@@ -62,6 +62,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.VainJiraiya
 %{_metainfodir}/io.github.VainJiraiya.Tetia.metainfo.xml
 
 %changelog
+* Sun Nov 08 2026 Tetia contributors <noreply@github.com> - 0.4.0-1
+- Home tab, boards, pages laid out in rows with pictures in their own shape, booru-like search, series formats
+
 * Sat Nov 07 2026 Tetia contributors <noreply@github.com> - 0.3.2-1
 - Open folders at once and scan them in the background; vault lock, thumbnail, reader, player and purge fixes
 
