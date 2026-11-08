@@ -430,7 +430,9 @@ ListView {
         anchors.top: parent.top
         anchors.right: metadataButton.left
         anchors.topMargin: 8
-        icon.source: Qt.resolvedUrl("icons/background.svg")     // our own, one colour like its neighbours
+        // our own, one colour like its neighbours: the same sun drawn dark for the light ground (the style recolours
+        // theme icons, not a file's, so it comes in both colours)
+        icon.source: Qt.resolvedUrl(root.lightBackground ? "icons/background-dark.svg" : "icons/background.svg")
         icon.color: root.lightBackground ? "#232629" : "white"     // seen on the ground behind the picture
         display: AbstractButton.IconOnly
         hoverEnabled: true
