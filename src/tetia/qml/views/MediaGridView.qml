@@ -114,6 +114,8 @@ Flickable {
     property var subfolderBackend: null
     // BoardService, the tab whose boards "Add to board" offers, and the board this page shows (-1: none)
     property var boardBackend: null
+    // HomeModel: "Pin to Home" on boards, folders and series
+    property var homeBackend: null
     property string boardTab: ""
     property int boardId: -1
     // how pictures are laid out: rows (their own shape), columns or grid
@@ -560,6 +562,7 @@ Flickable {
         readonly property string part: isShow ? "episode" : "chapter"
         property string heroPath: ""     // the picture this tile shows
         property string format: ""       // a series' format ("" when not said)
+        property bool pinned: false      // pinned to Home
 
         MenuItem {
             text: "Edit tags"
@@ -687,6 +690,13 @@ Flickable {
         }
         MenuSeparator {}
         MenuItem {
+            text: subfolderMenu.pinned ? "Unpin from Home" : "Pin to Home"
+            icon.name: subfolderMenu.pinned ? "window-unpin" : "window-pin"
+            visible: grid.homeBackend !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.homeBackend.setPinned("folder", String(subfolderMenu.folderPath), !subfolderMenu.pinned)
+        }
+        MenuItem {
             text: subfolderMenu.isFavorite ? "Remove from favorites" : "Add to favorites"
             icon.name: subfolderMenu.isFavorite ? "non-starred-symbolic" : "starred-symbolic"
             enabled: grid.subfolderBackend !== null
@@ -812,6 +822,7 @@ Flickable {
         id: boardMenu
         property int boardId: -1
         property string boardName: ""
+        property bool pinned: false
         MenuItem {
             text: "Open"
             icon.name: "document-open"
@@ -828,6 +839,13 @@ Flickable {
             text: "Rename\u2026"
             icon.name: "edit-rename"
             onTriggered: grid.boardRenameRequested(boardMenu.boardId, boardMenu.boardName)
+        }
+        MenuItem {
+            text: boardMenu.pinned ? "Unpin from Home" : "Pin to Home"
+            icon.name: boardMenu.pinned ? "window-unpin" : "window-pin"
+            visible: grid.homeBackend !== null
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.homeBackend.setPinned("board", String(boardMenu.boardId), !boardMenu.pinned)
         }
         MenuSeparator {}
         MenuItem {
@@ -1078,6 +1096,7 @@ Flickable {
             if (mouse.button === Qt.RightButton) {
                 boardMenu.boardId = d.subfolderBoardId
                 boardMenu.boardName = d.subfolderName
+                boardMenu.pinned = grid.homeBackend ? grid.homeBackend.isPinned("board", String(d.subfolderBoardId)) : false
                 boardMenu.popup()
             } else if (!grid.selecting) {
                 grid.boardClicked(d.subfolderBoardId, d.subfolderName)
@@ -1099,6 +1118,7 @@ Flickable {
             subfolderMenu.singleId = d.subfolderSingleFileId
             subfolderMenu.heroPath = d.subfolderHero || ""
             subfolderMenu.format = d.subfolderFormat || ""
+            subfolderMenu.pinned = grid.homeBackend ? grid.homeBackend.isPinned("folder", String(d.subfolderPath)) : false
             subfolderMenu.hasCustomCover = grid.subfolderBackend ? grid.subfolderBackend.hasCustomCover(d.subfolderPath) : false
             subfolderMenu.popup()
         } else if (grid.selecting) {

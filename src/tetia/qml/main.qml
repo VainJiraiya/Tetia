@@ -757,7 +757,8 @@ Kirigami.ApplicationWindow {
 
     Component.onCompleted: {
         loadTileLevels()
-        pageStack.push(mediaGridComponent, { isRoot: true, filterCategory: folderModel.currentCategory })
+        folderModel.currentCategory = "favorites"           // Tetia opens on Home
+        pageStack.push(mediaGridComponent, { isRoot: true, filterCategory: "" })
         root.loadRoot()
         searchModel.indexLibrary()
     }
@@ -940,6 +941,13 @@ Kirigami.ApplicationWindow {
         visible: !(pageStack.currentItem && (pageStack.currentItem.isViewer === true || pageStack.currentItem.isReader === true
                                              || pageStack.currentItem.isPurge === true))
         actions: [
+            // Home (the internal key stays "favorites": the one tab that is not a kind of media)
+            Kirigami.Action {
+                icon.name: "go-home"
+                text: "Home"
+                checked: folderModel.currentCategory === "favorites"
+                onTriggered: switchTab("favorites")
+            },
             Kirigami.Action {
                 // Not image-x-generic(-symbolic): in Breeze that falls back to a coloured
                 // (green) file-type icon, unlike the single-colour icons of the other tabs
@@ -966,12 +974,6 @@ Kirigami.ApplicationWindow {
                 checked: folderModel.currentCategory === "books"
                 onTriggered: switchTab("books")
             },
-            Kirigami.Action {
-                icon.name: "favorite"
-                text: "Favorites"
-                checked: folderModel.currentCategory === "favorites"
-                onTriggered: switchTab("favorites")
-            }
         ]
     }
 
@@ -1156,7 +1158,7 @@ Kirigami.ApplicationWindow {
             root.loadRoot()
         }
         if (root.onFavoritesTab) {
-            favoritesView.refresh()
+            homeView.refresh()
         }
         if (afterTrash) {
             afterTrash(removed)
@@ -1343,7 +1345,7 @@ Kirigami.ApplicationWindow {
     }
 
     function tabTitle(category) {
-        return ({ photos: "Images", videos: "Videos", manga: "Manga", books: "EBooks", favorites: "Favorites" })[category] || ""
+        return ({ photos: "Images", videos: "Videos", manga: "Manga", books: "EBooks", favorites: "Home" })[category] || ""
     }
 
     // A tab's top level: what is in all its library folders together (their folders and series, then each
@@ -1738,31 +1740,56 @@ Kirigami.ApplicationWindow {
         })
     }
 
-    // The Favorites tab: every favorite, grouped by type. It sits over the page
-    // stack (the folder grid underneath is hidden on this tab) and is only
-    // shown while no page is pushed on top of it, e.g. the image viewer.
-    FavoritesView {
-        id: favoritesView
+    // Home (the tab that was Favorites): Continue, Pinned, Favorites and Recently added. It sits over the page
+    // stack (the page underneath is empty on this tab) and is only shown while no page is pushed on top of it.
+    HomeModel { id: homeModel }
+    HomeView {
+        id: homeView
+        objectName: "homeView"
         parent: root.contentItem
         z: 1
         anchors.fill: parent
         visible: root.onFavoritesTab && pageStack.depth === 1
+        backend: homeModel
         coverRevision: root.coverRevision
+        onContinueOpened: function(item) { root.openFromHome(item.kind, item.path, item.name) }
+        onPinnedOpened: function(item) { root.openFromHome(item.kind, item.ref, item.name) }
+        onCoverOpened: function(item) { root.openFromHome(item.kind, item.path, item.name) }
+        onPictureOpened: function(files, index) {
+            var picked = files[index]
+            if (picked.kind === "video") { root.openFile(covers_uri(picked.path)); return }
+            var pictures = files.filter(function(f) { return f.kind !== "video" })
+            root.rootShown = false
+            root.currentFolder = null
+            mediaModel.filterMode = MediaModel.All
+            mediaModel.load_media_ids(pictures.map(function(f) { return f.id }))
+            pageStack.push(imageViewerComponent, { initialIndex: pictures.indexOf(picked) })
+        }
+        onUnpinRequested: function(kind, ref) { homeModel.setPinned(kind, ref, false) }
+    }
 
-        onImageClicked: function(index) {
-            pageStack.push(imageViewerComponent, {
-                initialIndex: index,
-                viewerModel: favoritesView.imagesModel
-            })
-        }
-        onOpenExternally: function(fileUri) {
-            root.openFile(fileUri)
-        }
-        onCollectionClicked: function(folderUri) {
-            openMediaGrid(folderUri, folderModel.currentCategory)
-        }
-        onShowRequested: function(folderUri) {
-            pageStack.push(showComponent, { location: folderUri })
+    function covers_uri(path) {
+        return path.indexOf("file://") === 0 ? path : "file://" + encodeURI(path).replace(/#/g, "%23").replace(/\?/g, "%3F")
+    }
+
+    // Open something Home shows: a series where it stopped, a book, a video, a board, a folder or a tag
+    function openFromHome(kind, ref, name) {
+        if (kind === "series" || kind === "show") {
+            var uri = covers_uri(ref)
+            var chapter = subfolderModel.openSeries(uri, "resume")
+            if (chapter !== "") root.playEpisode(uri, chapter)
+            else openMediaGrid(uri, "")
+        } else if (kind === "book" || kind === "video") {
+            root.openFile(covers_uri(ref))
+        } else if (kind === "board") {
+            openBoard(parseInt(ref), name)
+        } else if (kind === "folder") {
+            openMediaGrid(covers_uri(ref), "")
+        } else if (kind === "tag") {
+            var info = tagModel.tagInfo(ref)
+            runTagPage([{ category: info.category || "genre", name: ref }],
+                       { filterCategory: "", isTagPage: true, tagEverywhere: true, tagWholeTab: false, browsedTags: [],
+                         virtualId: -1, folderPath: "", homePath: "", searchScope: "", savedSearch: { root: "" } }, true)
         }
     }
 
@@ -1981,6 +2008,13 @@ Kirigami.ApplicationWindow {
                             font.weight: Font.DemiBold
                         }
                     }
+                    Button {
+                        readonly property bool pinned: parent.only !== null && (homeView.pinnedItems, homeModel.isPinned("tag", parent.only.name))
+                        text: pinned ? "Unpin from Home" : "Pin to Home"
+                        icon.name: pinned ? "window-unpin" : "window-pin"
+                        flat: true
+                        onClicked: homeModel.setPinned("tag", parent.only.name, !pinned)
+                    }
                     Label {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
@@ -2150,6 +2184,7 @@ Kirigami.ApplicationWindow {
                     selectMode: root.isSelectMode && pageStack.currentItem === gridPage
                     subfolderBackend: subfolderModel
                     boardBackend: boardService
+                    homeBackend: homeModel
                     boardTab: gridPage.boardId >= 0 ? (boardService.info(gridPage.boardId).tab || "")
                               : (root.onFavoritesTab ? "" : folderModel.currentCategory)
                     boardId: gridPage.boardId

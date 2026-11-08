@@ -92,3 +92,14 @@ def test_favorites_and_recently_added_are_pictures_in_their_shape(tmp_path):
     db.conn.commit()
     assert [(f["name"], f["aspect"]) for f in home.recent_files(db)] == [("tall.png", 0.5), ("wide.png", 2.0)]
     assert [f["name"] for f in home.favorite_files(db)] == ["tall.png"]
+
+
+def test_an_episode_in_a_season_folder_continues_its_series(tmp_path):
+    _touch(tmp_path / "Starfall" / "Season 1", "S01E01.mkv", "S01E02.mkv")
+    MediaModel().load_from_qurl(str(tmp_path / "Starfall" / "Season 1"))
+    db = get_database()
+    db.set_collection_series(str(tmp_path / "Starfall"), True)
+    db.set_playback(_id(db, tmp_path / "Starfall" / "Season 1" / "S01E02.mkv"), 600, 2700, False)
+    items = home.continue_items(db)
+    assert [(i["kind"], i["name"]) for i in items] == [("show", "Starfall")]
+    assert items[0]["where"].startswith("S01E02 · ")

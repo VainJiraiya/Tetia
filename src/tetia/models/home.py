@@ -41,14 +41,25 @@ def _minutes_left(position, duration):
     return "%d h %d min left" % divmod(left, 60) if left >= 60 else "%d min left" % left
 
 
+def _series_of(db, path: str) -> str:
+    """The series folder a file belongs to: its folder, or for a show with season folders the one above ('' for
+    none)."""
+    folder = os.path.dirname(path)
+    for _ in range(2):
+        if db.get_collection_meta(covers.folder_key(folder))["is_series"]:
+            return folder
+        folder = os.path.dirname(folder)
+    return ""
+
+
 def continue_items(db, limit: int = 8) -> list:
     """Manga and books partway (a series where its next chapter is) and long videos partway (a series of them as
     one), most recent first: [{kind: series|book|video|show, path, name, cover, where, fraction}]."""
     found, seen = [], set()
     for row in db.recent_reading():
         path = row["path"]
-        folder = os.path.dirname(path)
-        if db.get_collection_meta(covers.folder_key(folder))["is_series"]:
+        folder = _series_of(db, path)
+        if folder:
             if folder in seen:
                 continue
             seen.add(folder)
@@ -66,8 +77,8 @@ def continue_items(db, limit: int = 8) -> list:
                           "fraction": (row["page"] + 1) / total if total else 0.0, "when": row["updated"] or ""})
     for row in db.recent_watching(CLIP_SECONDS):
         path = row["path"]
-        folder = os.path.dirname(path)
-        show = db.get_collection_meta(covers.folder_key(folder))["is_series"]
+        folder = _series_of(db, path)
+        show = bool(folder)
         key = folder if show else path
         if key in seen:
             continue
@@ -127,6 +138,25 @@ def pinned_items(db, resolver) -> list:
                 item.update(sub="Folder")
         out.append(item)
     return out
+
+
+def favorite_covers(db, limit: int = 40) -> list:
+    """Starred folders, series, comics and books, as covers: [{kind: folder|series|book, path, name, cover}]."""
+    out = []
+    for row in db.get_favorite_collections():
+        folder = covers.folder_key(row["path"])
+        if not os.path.isdir(folder):
+            continue
+        cover = covers.tile_picture(folder, covers.ANY_PICTURE_EXTENSIONS,
+                                    lambda f: db.get_collection_meta(covers.folder_key(f)), set())
+        out.append({"kind": "series" if row["is_series"] else "folder", "path": folder,
+                    "name": os.path.basename(folder.rstrip(os.sep)), "cover": cover or ""})
+    out.sort(key=lambda item: covers.natural_key(item["name"]))
+    for row in db.conn.execute(
+            "SELECT path, name FROM media WHERE favorite = 1 AND missing = 0 AND kind IN ('comic', 'ebook') "
+            "ORDER BY name COLLATE NOCASE"):
+        out.append({"kind": "book", "path": row["path"], "name": Path(row["name"]).stem, "cover": row["path"]})
+    return out[:limit]
 
 
 def favorite_files(db, limit: int = 40) -> list:
