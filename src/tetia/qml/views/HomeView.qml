@@ -53,8 +53,8 @@ Rectangle {
     function thumb(path) { return ThumbUri.source(path) }
 
     // Pictures in rows of one height filling the width (their own shape, as on the tabs), at most `rows` rows
-    function justify(files, width, height, rows) {
-        var out = [], row = [], sum = 0, gap = 6
+    function justify(files, width, height, rows, gap) {
+        var out = [], row = [], sum = 0
         for (var i = 0; i < files.length && out.length < rows; i++) {
             var aspect = Math.min(16 / 9, Math.max(0.75, files[i].aspect))
             row.push({ file: files[i], index: i, aspect: aspect })
@@ -81,16 +81,20 @@ Rectangle {
         }
     }
 
+    // Home's pictures: about as big as the covers beside them and as far apart, so the two sides read as one page
+    readonly property real pictureHeight: 230
+    readonly property real pictureGap: 16
+
     component PictureRows: Column {
         id: pictureRows
         property var files: []
         property int rows: 1
-        spacing: 6
+        spacing: home.pictureGap
         Repeater {
-            model: home.justify(pictureRows.files, pictureRows.width, 170, pictureRows.rows)
+            model: home.justify(pictureRows.files, pictureRows.width, home.pictureHeight, pictureRows.rows, home.pictureGap)
             delegate: Row {
                 required property var modelData
-                spacing: 6
+                spacing: home.pictureGap
                 Repeater {
                     model: modelData
                     delegate: PictureTile {
@@ -150,7 +154,8 @@ Rectangle {
                     Layout.fillWidth: true
                     files: home.recentFiles
                     // down to the end of the left column, or of the window
-                    rows: Math.max(2, Math.ceil((Math.max(column.implicitHeight, flick.height - 40) - wallRecent.y - 30) / 176))
+                    rows: Math.max(2, Math.ceil((Math.max(column.implicitHeight, flick.height - 40) - wallRecent.y - 30)
+                                                / (home.pictureHeight + home.pictureGap)))
                 }
             }
         }
@@ -348,7 +353,7 @@ Rectangle {
                 PictureRows {
                     Layout.fillWidth: true
                     files: home.recentFiles
-                    rows: Math.max(2, Math.floor((flick.height - recentSection.y - 30 - 20) / 176))
+                    rows: Math.max(2, Math.floor((flick.height - recentSection.y - 30 - 20) / (home.pictureHeight + home.pictureGap)))
                 }
             }
         }
