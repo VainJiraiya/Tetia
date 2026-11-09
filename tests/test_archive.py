@@ -81,27 +81,35 @@ def unescape(name):
 '''
 
 BSDTAR_BODY = '''
+import io, tarfile
 if args[0] == "-tf":
     print("\\n".join(listing(args[1]) + [d + "/" for d in ["dir_entry"]]))
-elif args[0] == "-xf":
-    dest = args[args.index("-C") + 1]
-    for name in args[args.index("--") + 1:]:
-        name = unescape(name)
-        target = os.path.join(dest, name)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        shutil.copy(os.path.join(args[1] + ".dir", name), target)
+elif args[0] == "-cf":
+    # the archive rewritten as a tar stream on standard output
+    archive_path = args[-1][1:]
+    with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as out:
+        for name in sorted(listing(archive_path)):
+            out.add(os.path.join(archive_path + ".dir", name), arcname=name)
+elif args[0] == "-xOf":
+    name = unescape(args[args.index("--") + 1])
+    with open(os.path.join(args[1] + ".dir", name), "rb") as f:
+        sys.stdout.buffer.write(f.read())
 '''
 
 UNRAR_BODY = '''
-if args[0] == "lb":
-    print("\\n".join(n.replace("/", "\\\\") for n in listing(args[1])))
-elif args[0] == "x":
-    names = [a for a in args[1:] if not a.startswith("-")]
-    archive_path, dest, members = names[0], names[-1], names[1:-1]
+if args[0] == "lt":
+    root = args[-1] + ".dir"
+    for name in sorted(listing(args[-1])):
+        print("        Name: " + name.replace("/", "\\\\"))
+        print("        Type: File")
+        print("        Size: %d" % os.path.getsize(os.path.join(root, name)))
+        print()
+elif args[0] == "p":
+    rest = args[args.index("--") + 1:]
+    archive_path, members = rest[0], rest[1:] or sorted(listing(rest[0]))
     for name in members:
-        target = os.path.join(dest, name)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        shutil.copy(os.path.join(archive_path + ".dir", name), target)
+        with open(os.path.join(archive_path + ".dir", name), "rb") as f:
+            sys.stdout.buffer.write(f.read())
 '''
 
 FAILING_7Z_BODY = '''
@@ -142,22 +150,28 @@ def test_a_rar_named_cbz_is_read_through_bsdtar(tmp_path, monkeypatch):
     with archive.open_archive(path) as comic:
         names = comic.image_names()
         assert names == ["Series [v1] (English)/page2.png", "Series [v1] (English)/page10.png"]     # natural order
-        assert comic.read(names[0], 10**7)[:4] == b"\x89PNG"
-        folder = comic._folder
-        assert os.path.isdir(folder) and oct(os.stat(folder).st_mode & 0o777) == "0o700"
-    assert not os.path.exists(folder)                                          # close() removed the pages
+        assert comic.read(names[0], 10**7)[:4] == b"\x89PNG"                    # one page: its own run
+        assert comic._pages
+    assert not comic._pages                                                    # close() let go of the pages
     commands = log.read_text()
-    assert "'-xf'" in commands and "'--'" in commands and "'-C'" in commands
+    assert "'-xOf'" in commands and "'--'" in commands and "'-C'" not in commands
     assert "page2.png" in commands and "\\\\[v1\\\\]" in commands                # glob characters were escaped for bsdtar
-    assert middle(bookcovers.make_cover(path, 128)) == BLUE
+    assert middle(bookcovers.make_cover(path, 128)) == BLUE                    # a whole book: one tar stream
+    assert "'-cf'" in log.read_text()
 
 
 def test_unrar_is_used_when_bsdtar_is_missing(tmp_path, monkeypatch):
     path = fake_rar(tmp_path, MEMBERS)
     log = make_tool(tmp_path, monkeypatch, "unrar", UNRAR_BODY)
     assert [t for t, _ in archive.find_tools("rar")] == ["unrar"]
+    with archive.open_archive(path) as comic:
+        names = comic.image_names()
+        assert names == ["Series [v1] (English)/page2.png", "Series [v1] (English)/page10.png"]
+        comic.prefetch(names)                                                  # cut apart by the listed sizes
+        for name in names:
+            assert comic._pages[name] == (tmp_path / "old.cbz.dir" / name).read_bytes()
     assert middle(bookcovers.make_cover(path, 128)) == BLUE
-    assert "'lb'" in log.read_text() and "'x'" in log.read_text()
+    assert "'lt'" in log.read_text() and "'p'" in log.read_text()
 
 
 def test_a_7zip_without_rar_support_is_skipped_for_the_next_tool(tmp_path, monkeypatch):
@@ -194,37 +208,54 @@ def test_a_real_7z_comic_is_read(tmp_path):
     assert archive.sniff(str(seven)) == "7z"
     with archive.open_archive(str(seven)) as comic:
         assert comic.image_names() == ["sub/p2.png", "sub/p10.png"]
-        comic.prefetch(comic.image_names())
-        assert comic.read("sub/p2.png", 10**7)[:4] == b"\x89PNG"
+        comic.prefetch(comic.image_names())                                     # one run, cut by the listed sizes
+        for name in ("sub/p2.png", "sub/p10.png"):
+            assert comic._pages[name] == (folder / name).read_bytes()
+        comic._pages.clear()
+        assert comic.read("sub/p10.png", 10**7) == (folder / "sub" / "p10.png").read_bytes()   # one page alone
     assert middle(bookcovers.make_cover(str(seven), 128)) == BLUE
 
 
-def test_a_member_cannot_climb_out_of_the_unpack_folder(tmp_path, monkeypatch):
-    path = fake_rar(tmp_path, {"ok.png": picture(50, 80)})
+def test_pages_are_never_written_to_disk(tmp_path, monkeypatch):
+    import tempfile
+    path = fake_rar(tmp_path, {f"{i}.png": picture(50, 80) for i in range(4)})
     log = make_tool(tmp_path, monkeypatch, "bsdtar", BSDTAR_BODY)
-    tool = archive.find_tools("rar")[0]
-    comic = archive.ToolArchive(path, tool)
-    comic._names += ["../../evil.png", "/etc/passwd.png"]
-    comic.prefetch(["../../evil.png", "/etc/passwd.png"])
-    assert "evil" not in log.read_text() and "passwd" not in log.read_text()   # never handed to the tool
-    with pytest.raises(archive.ArchiveError):
-        comic.read("../../evil.png", 10**6)
-    comic.close()
+    temp = tempfile.gettempdir()
+    before = set(os.listdir(temp))
+    with archive.open_archive(path) as comic:
+        comic.prefetch(comic.image_names())
+        assert comic.read("3.png", 10**6)[:4] == b"\x89PNG"
+    assert not [n for n in set(os.listdir(temp)) - before if n.startswith("tetia")]
+    assert "'-C'" not in log.read_text() and "'-xf'" not in log.read_text()     # no unpacking into a folder
 
 
-def test_only_the_asked_for_pages_are_unpacked(tmp_path, monkeypatch):
+def test_only_the_asked_for_pages_are_kept(tmp_path, monkeypatch):
     path = fake_rar(tmp_path, {f"{i}.png": picture(50, 80) for i in range(10)})
     log = make_tool(tmp_path, monkeypatch, "bsdtar", BSDTAR_BODY)
     with archive.open_archive(path) as comic:
         comic.prefetch(["0.png", "1.png"])
-        assert sorted(os.path.basename(p) for p in comic._unpacked.values()) == ["0.png", "1.png"]
-        comic.read("0.png", 10**6)                                              # already unpacked: no second run
-    assert log.read_text().count("'-xf'") == 1
+        assert sorted(comic._pages) == ["0.png", "1.png"]
+        comic.read("0.png", 10**6)                                              # already read: no second run
+    assert log.read_text().count("'-cf'") == 1 and "'-xOf'" not in log.read_text()
+
+
+def test_memory_is_capped_and_a_dropped_page_is_read_again(tmp_path, monkeypatch):
+    path = fake_rar(tmp_path, {f"{i}.png": picture(50, 80) for i in range(4)})
+    log = make_tool(tmp_path, monkeypatch, "bsdtar", BSDTAR_BODY)
+    page = len((tmp_path / "old.cbz.dir" / "0.png").read_bytes())
+    monkeypatch.setattr(archive, "MEMORY_BUDGET", page * 2 + 1)
+    with archive.open_archive(path) as comic:
+        comic.prefetch(comic.image_names())
+        assert len(comic._pages) <= 3 and comic._held <= page * 3
+        first = comic.image_names()[0]
+        comic._pages.pop(first, None)                                           # (dropped)
+        assert comic.read(first, 10**6)[:4] == b"\x89PNG"
+    assert "'-xOf'" in log.read_text()
 
 
 # ---- the picker keeps a tool-read comic unpacked while it is open --------------------------------
 
-def test_the_picker_unpacks_a_rar_once_and_cleans_up(tmp_path, monkeypatch, qapp):
+def test_the_picker_reads_a_rar_once_and_lets_go(tmp_path, monkeypatch, qapp):
     path = fake_rar(tmp_path, {f"{i:02d}.png": picture(200, 300, ink=0.4, color=c)
                                for i, c in enumerate(("#1e4fd0", "red", "#00aa00"))})
     log = make_tool(tmp_path, monkeypatch, "bsdtar", BSDTAR_BODY)
@@ -235,9 +266,9 @@ def test_the_picker_unpacks_a_rar_once_and_cleans_up(tmp_path, monkeypatch, qapp
     from PySide6.QtCore import QSize
     pages = [provider.requestImage(f"{token}/{i}", QSize(), QSize()) for i in range(3)]
     assert all(not p.isNull() for p in pages) and middle(pages[2])[1] > 120
-    assert log.read_text().count("'-xf'") == 1                                  # one unpacking for all three pages
-    folder = bookpages._kept[path][0]._folder
-    assert os.path.isdir(folder)
+    assert log.read_text().count("'-cf'") == 1                                  # one read for all three pages
+    comic = bookpages._kept[path][0]
+    assert len(comic._pages) == 3
     bookpages.unregister(token)
     bookpages.release(path)
-    assert not os.path.exists(folder) and path not in bookpages._kept
+    assert not comic._pages and path not in bookpages._kept

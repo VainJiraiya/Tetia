@@ -8,19 +8,18 @@ decided by the file's first bytes. Zip and tar are read with Python itself. RAR 
 need an external tool, the first of bsdtar (libarchive), 7-Zip or unrar that is installed;
 without one an ArchiveError says which to install, so nothing fails silently.
 
-Pages are read into memory. Only a tool-read archive touches the disk: the pages that were
-asked for are unpacked once into a private folder that is removed again by close().
+Pages are read into memory, and only there: a tool writes them to its standard output, never to a folder,
+so nothing of a private profile's comics lands outside its vault (the system's temp folder is an ordinary disk).
 """
-import atexit
 import logging
 import os
 import posixpath
 import shutil
 import subprocess
 import tarfile
-import tempfile
 import threading
 import zipfile
+from collections import OrderedDict
 from pathlib import Path
 
 from tetia.models.covers import natural_key
@@ -30,6 +29,8 @@ logger = logging.getLogger(__name__)
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bmp", ".jxl", ".heic")
 TOOL_TIMEOUT = 90            # seconds a tool may take to list or unpack
 MAX_LISTING = 5000           # an archive with more entries than this is not a comic
+MEMORY_BUDGET = 512 * 1024 * 1024    # pages of one open tool-read archive kept in memory (the oldest go first)
+MAX_PAGE = 128 * 1024 * 1024         # a member bigger than this is not kept from a whole-book read
 
 # What to install for each format. Not every 7-Zip can read RAR (the RAR decoder has a separate
 # licence and many builds leave it out), so for RAR the choice is bsdtar or unrar.
@@ -77,7 +78,7 @@ class Archive:
         raise NotImplementedError
 
     def prefetch(self, names: list):
-        """A hint that these members will be read next (a tool unpacks them in one go)."""
+        """A hint that these members will be read next (a tool reads them in one go)."""
 
     def close(self):
         pass
@@ -170,25 +171,55 @@ def _escape_glob(name: str) -> str:
     return "".join("\\" + c if c in "*?[]\\" else c for c in name)
 
 
-_temp_dirs = set()
-_temp_lock = threading.Lock()
+def _read_up_to(stream, size: int) -> bytes:
+    """`size` bytes from a pipe (fewer only if it ends)."""
+    chunks, left = [], size
+    while left > 0:
+        chunk = stream.read(min(left, 1 << 20))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        left -= len(chunk)
+    return b"".join(chunks)
 
 
-def _remove_temp_dirs():
-    for folder in list(_temp_dirs):
-        shutil.rmtree(folder, ignore_errors=True)
+class _Tool:
+    """A tool run whose output is read as it comes; killed when done with, or after TOOL_TIMEOUT."""
 
+    def __init__(self, command):
+        try:
+            self.proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL)
+        except OSError as e:
+            raise ArchiveError("The archive could not be read.") from e
+        self._timer = threading.Timer(TOOL_TIMEOUT, self.proc.kill)
+        self._timer.daemon = True
+        self._timer.start()
 
-atexit.register(_remove_temp_dirs)
+    def __enter__(self):
+        return self.proc.stdout
+
+    def __exit__(self, *exc):
+        self._timer.cancel()
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.stdout.close()
+        self.proc.wait()
 
 
 class ToolArchive(Archive):
+    """A RAR or 7z read through bsdtar, unrar or 7-Zip. The tool writes pages to its standard output: a whole
+    book in one run (prefetch), or one page at a time (read). bsdtar turns the archive into a tar stream, which
+    names each member; unrar and 7-Zip write the members one after the other, in the order they list them, so
+    their listed sizes tell where each one ends."""
+
     def __init__(self, path, tool):
         self._path = str(path)
         self._kind, self._exe = tool
-        self._folder = None
-        self._unpacked = {}          # member name -> file on disk
+        self._pages = OrderedDict()  # member name -> bytes, oldest first (never written anywhere)
+        self._held = 0
         self._lock = threading.Lock()
+        self._order = []             # unrar and 7-Zip: [(member name, size)] in the archive's order
         self._names = self._list()
 
     # -- listing
@@ -199,77 +230,140 @@ class ToolArchive(Archive):
             lines = result.stdout.decode("utf-8", "surrogateescape").splitlines()
             names = [n for n in lines if n and not n.endswith("/")]
         elif self._kind == "unrar":
-            result = _run([self._exe, "lb", self._path])
-            lines = result.stdout.decode("utf-8", "surrogateescape").splitlines()
-            names = [n.replace("\\", "/") for n in lines if n]
+            result = _run([self._exe, "lt", "--", self._path])
+            block = {}
+            for line in result.stdout.decode("utf-8", "surrogateescape").splitlines() + [""]:
+                key, sep, value = line.lstrip().partition(": ")
+                if sep and key in ("Name", "Type", "Size"):
+                    if key == "Name" and block:
+                        self._add_listed(block.get("Name"), block.get("Type") == "File", block.get("Size"))
+                        block = {}
+                    block[key] = value
+            if block:
+                self._add_listed(block.get("Name"), block.get("Type") == "File", block.get("Size"))
+            names = [name for name, _ in self._order]
         else:
             result = _run([self._exe, "l", "-ba", "-slt", self._path])
-            names, block = [], {}
+            block = {}
             for line in result.stdout.decode("utf-8", "surrogateescape").splitlines() + [""]:
                 if line.strip():
                     key, _, value = line.partition(" = ")
                     block[key] = value
                 else:
-                    if block.get("Path") and block.get("Folder", "-") != "+" and not block.get("Attributes", "").startswith("D"):
-                        names.append(block["Path"].replace("\\", "/"))
+                    if block.get("Path"):
+                        folder = block.get("Folder", "-") == "+" or block.get("Attributes", "").startswith("D")
+                        self._add_listed(block["Path"], not folder, block.get("Size"))
                     block = {}
+            names = [name for name, _ in self._order]
         if result.returncode not in (0, 1) and not names:      # 1 is a warning for most tools
             raise ArchiveError("The archive could not be read.")
         return names[:MAX_LISTING]
 
+    def _add_listed(self, name, is_file, size):
+        if name and is_file:
+            try:
+                self._order.append((name.replace("\\", "/"), int(size or 0)))
+            except ValueError:
+                self._order.append((name.replace("\\", "/"), 0))
+
     def names(self):
         return list(self._names)
 
-    # -- reading: unpack what is asked for once, into a private folder
+    # -- reading, into memory only
 
-    def _safe(self, name):
-        """A member name that cannot climb out of the folder it is unpacked into."""
-        parts = [p for p in name.replace("\\", "/").split("/") if p not in ("", ".")]
-        return bool(parts) and ".." not in parts and not name.startswith("/")
+    def _keep(self, name, data):
+        if name in self._pages:
+            self._held -= len(self._pages.pop(name))
+        self._pages[name] = data
+        self._held += len(data)
+        while self._held > MEMORY_BUDGET and len(self._pages) > 1:
+            _, dropped = self._pages.popitem(last=False)
+            self._held -= len(dropped)
 
     def prefetch(self, names):
-        wanted = [n for n in names if n in self._names and self._safe(n) and n not in self._unpacked]
-        if not wanted:
-            return
         with self._lock:
-            if self._folder is None:
-                self._folder = tempfile.mkdtemp(prefix="tetia-pages-")
-                os.chmod(self._folder, 0o700)
-                with _temp_lock:
-                    _temp_dirs.add(self._folder)
-            if self._kind == "bsdtar":
-                command = [self._exe, "-xf", self._path, "-C", self._folder, "--"] + [_escape_glob(n) for n in wanted]
-            elif self._kind == "unrar":
-                command = [self._exe, "x", "-y", "-inul", self._path] + wanted + [self._folder + os.sep]
-            else:
-                command = [self._exe, "x", "-y", "-bd", f"-o{self._folder}", self._path] + wanted
-            _run(command)
-            for name in wanted:
-                target = os.path.join(self._folder, *name.replace("\\", "/").split("/"))
-                if os.path.isfile(target):
-                    self._unpacked[name] = target
+            listed = set(self._names)
+            wanted = {n for n in names if n in listed and n not in self._pages}
+            if not wanted:
+                return
+            try:
+                if self._kind == "bsdtar":
+                    self._stream_tar(wanted)
+                else:
+                    self._stream_members(wanted)
+            except (ArchiveError, tarfile.TarError, OSError) as e:
+                logger.info("Reading a whole comic at once failed (%s); its pages are read one by one",
+                            type(e).__name__)
+
+    def _stream_tar(self, wanted):
+        """bsdtar rewrites the archive as a tar stream on its standard output, read here member by member; it is
+        stopped once every wanted page has come (a cover needs only the first ones)."""
+        with _Tool([self._exe, "-cf", "-", "--format", "pax", "@" + self._path]) as out:
+            with tarfile.open(fileobj=out, mode="r|") as stream:
+                for member in stream:
+                    if member.name in wanted and member.isfile() and member.size <= MAX_PAGE:
+                        self._keep(member.name, stream.extractfile(member).read())
+                        wanted.discard(member.name)
+                        if not wanted or self._held >= MEMORY_BUDGET:
+                            break
+
+    def _stream_members(self, wanted):
+        """unrar and 7-Zip write every member, one after the other in the listed order; the listed sizes cut them
+        apart. Stopped once every wanted page has come."""
+        command = ([self._exe, "p", "-inul", "-y", "--", self._path] if self._kind == "unrar"
+                   else [self._exe, "x", "-so", "-y", "--", self._path])
+        with _Tool(command) as out:
+            for name, size in self._order:
+                if name in wanted and size <= MAX_PAGE:
+                    data = _read_up_to(out, size)
+                    if len(data) < size:
+                        break                                   # the output ended early: keep nothing more
+                    self._keep(name, data)
+                    wanted.discard(name)
+                    if not wanted or self._held >= MEMORY_BUDGET:
+                        break
+                else:
+                    skipped = 0
+                    while skipped < size:
+                        chunk = out.read(min(size - skipped, 1 << 20))
+                        if not chunk:
+                            return
+                        skipped += len(chunk)
+
+    def _read_one(self, name, limit):
+        """One member, from its own tool run (names are taken literally, not as patterns)."""
+        if self._kind == "bsdtar":
+            command = [self._exe, "-xOf", self._path, "--", _escape_glob(name)]
+        elif self._kind == "unrar":
+            command = [self._exe, "p", "-inul", "-y", "--", self._path, name]
+        else:
+            command = [self._exe, "x", "-so", "-y", "-spd", "--", self._path, name]
+        with _Tool(command) as out:
+            data = _read_up_to(out, limit + 1)
+        if not data:
+            raise ArchiveError("A page could not be read.")
+        if len(data) > limit:
+            raise ArchiveError("A page is too large to read.")
+        return data
 
     def read(self, name, limit):
-        if name not in self._unpacked:
-            self.prefetch([name])
-        target = self._unpacked.get(name)
-        if not target:
+        if name not in self._names:
             raise ArchiveError("A page could not be read.")
-        try:
-            if os.path.getsize(target) > limit:
-                raise ArchiveError("A page is too large to read.")
-            return Path(target).read_bytes()
-        except OSError as e:
-            raise ArchiveError("A page could not be read.") from e
+        with self._lock:
+            data = self._pages.get(name)
+            if data is None:
+                data = self._read_one(name, limit)
+                self._keep(name, data)
+            else:
+                self._pages.move_to_end(name)
+        if len(data) > limit:
+            raise ArchiveError("A page is too large to read.")
+        return data
 
     def close(self):
         with self._lock:
-            if self._folder:
-                shutil.rmtree(self._folder, ignore_errors=True)
-                with _temp_lock:
-                    _temp_dirs.discard(self._folder)
-                self._folder = None
-                self._unpacked = {}
+            self._pages.clear()
+            self._held = 0
 
 
 def open_archive(path: str) -> Archive:
