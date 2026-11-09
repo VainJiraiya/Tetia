@@ -72,6 +72,8 @@ def main(argv=None) -> int:
 
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
+    from tetia import timing
+    timing.start(app)                                    # (only with TETIA_TIMING=1: where the time goes)
     try:
         from importlib.metadata import version
         app.setApplicationVersion(version("tetia"))      # shown in About (from the installed package)

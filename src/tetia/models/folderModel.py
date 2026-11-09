@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QUrl, Signal, Slot, Property
 from PySide6.QtQml import QmlElement
 
+from tetia import timing
 from tetia.models import covers, series
 from tetia.models.scanner import ALL_MEDIA_EXTENSIONS as _EVERYTHING, CATEGORY_EXTENSIONS
 from tetia.models.covers import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
@@ -152,6 +153,7 @@ class FolderModel(QAbstractListModel):
         return series.open_series(self.db, folder_path, which)
 
     @Slot(int, result=list)
+    @timing.measured("tab: continue reading")
     def continueReading(self, limit: int = 8) -> list:
         """What is partway in this tab, most recently read first: a series (where its next chapter is) or a single
         book (which page). [{kind ("series"|"book"), uri, name, cover (a local path), where, fraction}]."""
@@ -198,6 +200,7 @@ class FolderModel(QAbstractListModel):
         return found
 
     @Slot(result="QVariantMap")
+    @timing.measured("tab: library folders")
     def sourceGroups(self):
         """The tab's library folders for its top level: {"all": [{path, name}], "expand": [...], "tiles": [...]}.
         A folder that is a collection in itself (a series, or in the Manga, Books and Videos tabs a folder holding

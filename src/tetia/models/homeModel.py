@@ -10,6 +10,7 @@ from PySide6.QtQml import QmlElement
 
 import os
 
+from tetia import timing
 from tetia.models import covers, home
 from tetia.models.database import get_database
 from tetia.models.searchModel import _Resolver
@@ -26,7 +27,8 @@ class HomeModel(QObject):
 
     def _rows(self, what, fn):
         try:
-            return fn(get_database())
+            with timing.timed("home: " + what):
+                return fn(get_database())
         except sqlite3.Error as e:
             logger.error("Reading %s for Home failed: %s", what, e)
             return []

@@ -26,6 +26,7 @@ from PySide6.QtCore import (
 from PySide6.QtQml import QmlElement
 from shiboken6 import isValid
 
+from tetia import timing
 from tetia.models import covers, profiles, series, virtualfolders
 from tetia.models.database import Database, get_database
 from tetia.models.playbackStore import progress_fraction, prober
@@ -248,6 +249,7 @@ class MediaModel(QAbstractListModel):
         self._show_lists(scan_folder(self._db, folder_directory, self._compute_content_hash))
 
     @Slot(str)
+    @timing.measured("files: open a folder")
     def openFolder(self, qurl_string: str):
         """Show a folder at once from what the library already knows about it, and scan it in the background
         (reading and fingerprinting new files can take a long while on a slow drive). The page updates when the
@@ -264,6 +266,7 @@ class MediaModel(QAbstractListModel):
         self._start_scan(folder_directory)
 
     @Slot(list)
+    @timing.measured("files: open a tab's top")
     def openSources(self, locations: list):
         """A tab's top level: the files lying directly in each of these library folders, kept together by folder
         (each group under its folder's name), shown at once from the library and scanned in the background."""

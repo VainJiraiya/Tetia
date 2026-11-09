@@ -16,6 +16,7 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QUrl, Signal, Slot, Property
 from PySide6.QtQml import QmlElement
 
+from tetia import timing
 from tetia.models import boards, covers, reader, series, virtualfolders
 from tetia.models.database import get_database
 from tetia.models.searchModel import _Resolver
@@ -327,6 +328,7 @@ class SubfolderModel(QAbstractListModel):
         return _MODE_EXTENSIONS.get(self._filter_mode, _ALL)
 
     @Slot(str)
+    @timing.measured("folder tiles: one folder")
     def load(self, folder: str):
         """List the subfolders of `folder` (a path or file:// URI) that hold
         something matching the current filter, and the virtual folders made in it."""
@@ -337,6 +339,7 @@ class SubfolderModel(QAbstractListModel):
         self._reload()
 
     @Slot(list, list)
+    @timing.measured("folder tiles: a tab's top")
     def loadSources(self, folders: list, tiles: list):
         """A tab's top level: the subfolders (and virtual folders) of every library folder in `folders`, together,
         and the library folders in `tiles` (series, one-file folders) as tiles of their own."""
@@ -475,6 +478,7 @@ class SubfolderModel(QAbstractListModel):
         return found
 
     @Slot(list, list, result=list)
+    @timing.measured("tab: format chips")
     def formatCounts(self, folders: list, tiles: list) -> list:
         """The formats the series in these library folders (and library folders shown as tiles) were given, with
         how many of this tab's: [{key, name, count}] in the formats' order, only those in use (the chips over a
