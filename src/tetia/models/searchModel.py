@@ -15,8 +15,7 @@ from PySide6.QtQml import QmlElement
 
 from tetia.models import covers, profiles, tag_query
 from tetia.models.database import Database, get_database
-from tetia.models.scanner import scan_folder, ScanStopped, ALL_MEDIA_EXTENSIONS
-import hashlib
+from tetia.models.scanner import scan_folder, ScanStopped, ALL_MEDIA_EXTENSIONS, fingerprint
 import sqlite3
 
 QML_IMPORT_NAME = "Tetia"
@@ -25,25 +24,8 @@ QML_IMPORT_MAJOR_VERSION = 1
 logger = logging.getLogger(__name__)
 
 
-def content_hash(file_path: str) -> str:
-    """Same partial hash MediaModel uses (size + first and last 1 MB)."""
-    p = Path(file_path)
-    try:
-        size = p.stat().st_size
-    except OSError:
-        return ""
-    if size == 0:
-        return hashlib.sha1(b"empty").hexdigest()
-    data = str(size).encode()
-    try:
-        with open(p, "rb") as f:
-            data += f.read(1024 * 1024)
-            if size > 1024 * 1024:
-                f.seek(-1024 * 1024, 2)
-                data += f.read(1024 * 1024)
-    except OSError:
-        return ""
-    return hashlib.sha1(data).hexdigest()
+# Same fingerprint MediaModel uses, so a scan by either reads each new file once
+content_hash = fingerprint
 
 
 class _Resolver:

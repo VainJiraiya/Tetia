@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Tetia contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import hashlib
 import logging
 import os
 import sys
@@ -34,6 +33,7 @@ from tetia.models.scanner import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
     VIDEO_EXTENSIONS, ScanStopped, kind_from_ext, known_items, scan_folder,
 )
+from tetia.models.scanner import fingerprint as scanner_fingerprint
 
 # Sets the QML import module configuration so QML files can write "import Tetia 1.0"
 QML_IMPORT_NAME = "Tetia"
@@ -231,32 +231,9 @@ class MediaModel(QAbstractListModel):
 
     # --- Hashing ---
 
-    def _compute_content_hash(self, file_path: str) -> str:
-        """Compute a cheap partial hash: SHA-1 over size + first 1MB + last 1MB."""
-        p = Path(file_path)
-        try:
-            file_size = p.stat().st_size
-        except OSError:
-            return ""
-
-        if file_size == 0:
-            return hashlib.sha1(b"empty").hexdigest()
-
-        to_hash = str(file_size).encode()
-
-        try:
-            with open(p, "rb") as f:
-                # First 1 MB
-                to_hash += f.read(1024 * 1024)
-
-                # Last 1 MB
-                if file_size > 1024 * 1024:
-                    f.seek(-1024 * 1024, 2)
-                    to_hash += f.read(1024 * 1024)
-        except OSError:
-            return ""
-
-        return hashlib.sha1(to_hash).hexdigest()
+    # The fingerprint that recognises a renamed file (scanner.fingerprint: a scan given exactly this function reads
+    # each new file once, its picture size included). A test may put a slower one on an instance.
+    _compute_content_hash = staticmethod(scanner_fingerprint)
 
     # --- Slots & Public Methods ---
 
