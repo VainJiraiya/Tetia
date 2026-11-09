@@ -7,8 +7,9 @@ import QtQuick.Layouts
 import org.kde.kirigami 2.20 as Kirigami
 import Tetia 1.0
 
-// Downloads with gallery-dl (DownloadService): an address, the folder to save into (the one you are in, unless
-// you choose another), and the queue with what each download has saved so far. Opened from the header's button.
+// Downloads with gallery-dl and yt-dlp (DownloadService): an address, the folder to save into (the one you are in,
+// unless you choose another), and the queue with what each download has saved so far. With both tools installed,
+// which one is chosen by the address unless you pick it. Opened from the header's button.
 Popup {
     id: panel
 
@@ -72,17 +73,28 @@ Popup {
                 onClicked: destination.openFolderDialog()
             }
         }
-        Button {
-            id: start
-            objectName: "downloadStart"
-            Layout.alignment: Qt.AlignRight
-            text: "Download"
-            icon.name: "download"
-            enabled: panel.service !== null && address.text.trim() !== "" && panel.folder !== ""
-            onClicked: {
-                if (!enabled) return
-                if (panel.service.add(address.text.trim(), panel.folder) > 0) address.text = ""
-                else panel.problem("That download could not be started")
+        RowLayout {
+            Layout.fillWidth: true
+            // with both tools: chosen by the address (videos to yt-dlp), or the one picked here
+            ComboBox {
+                id: toolChoice
+                objectName: "downloadTool"
+                visible: panel.service !== null && panel.service.tools.length > 1
+                model: panel.service ? ["Automatic"].concat(panel.service.tools) : []
+            }
+            Item { Layout.fillWidth: true }
+            Button {
+                id: start
+                objectName: "downloadStart"
+                text: "Download"
+                icon.name: "download"
+                enabled: panel.service !== null && address.text.trim() !== "" && panel.folder !== ""
+                onClicked: {
+                    if (!enabled) return
+                    var tool = toolChoice.visible && toolChoice.currentIndex > 0 ? toolChoice.currentText : ""
+                    if (panel.service.addWith(address.text.trim(), panel.folder, tool) > 0) address.text = ""
+                    else panel.problem("That download could not be started")
+                }
             }
         }
 
@@ -109,6 +121,9 @@ Popup {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                         text: panel.siteOf(modelData.url)
+                        ToolTip.visible: siteHover.hovered
+                        ToolTip.text: modelData.url + "\n(" + modelData.tool + ")"
+                        HoverHandler { id: siteHover }
                     }
                     Label {
                         Layout.fillWidth: true

@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Tetia contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Downloads with gallery-dl, when it is installed (the gallery-dl command, or its Python module as a Flatpak
-bundles it): paste an address, choose a library folder, and the files land there with gallery-dl's metadata beside
-them, so the scan that follows brings them in with their tags (see gallerydl, tagimport).
+"""Downloads with gallery-dl (pictures, galleries, booru searches) and yt-dlp (videos), whichever are installed (as a
+command, or as a Python module, as a Flatpak bundles them): paste an address, choose a library folder, and the files
+land there with their metadata beside them, so the scan that follows brings them in with their tags (see gallerydl,
+tagimport). An address of a video site goes to yt-dlp, anything else to gallery-dl; with one of them, it takes all.
 
-gallery-dl reads its own configuration as always (logins, cookies, file names); Tetia passes only where to save and
-to write the metadata. Downloads run one at a time, in the order they were added: a hard drive only slows down when
+Both are run as separate programs and never imported: gallery-dl is GPL-2.0-only. Each reads its own configuration
+as always (logins, cookies, file names); Tetia passes only where to save and to write the metadata. Downloads run one at a time, in the order they were added: a hard drive only slows down when
 written in several places at once. gallery-dl prints each file it saved, so a download counts its files; it says
 nothing of how many will come. Locking a vault stops them first.
 """
@@ -35,18 +36,51 @@ logger = logging.getLogger(__name__)
 WAITING, DOWNLOADING, DONE, FAILED, CANCELLED = "waiting", "downloading", "done", "failed", "cancelled"
 
 
-def gallery_dl_command():
-    """How to run gallery-dl here: the command, or its Python module; None if neither is installed."""
-    exe = shutil.which("gallery-dl")
+GALLERY_DL, YT_DLP = "gallery-dl", "yt-dlp"
+
+# Where yt-dlp is the tool (videos); anything else goes to gallery-dl, which also takes the videos of the sites it
+# knows (X, Reddit, Instagram...)
+VIDEO_SITES = ("youtube.com", "youtu.be", "vimeo.com", "twitch.tv", "dailymotion.com", "tiktok.com", "bilibili.com",
+               "nicovideo.jp", "streamable.com", "rumble.com", "odysee.com", "bitchute.com", "peertube")
+
+
+def _command(program: str, module: str):
+    exe = shutil.which(program)
     if exe:
         return [exe]
-    if importlib.util.find_spec("gallery_dl") is not None:
-        return [sys.executable, "-m", "gallery_dl"]
+    if importlib.util.find_spec(module) is not None:     # (only looked up, never imported: run in its own process)
+        return [sys.executable, "-m", module]
     return None
 
 
-def command_for(base: list, url: str, folder: str) -> list:
-    """gallery-dl's arguments for one download: straight into `folder`, with its metadata beside each file."""
+def gallery_dl_command():
+    """How to run gallery-dl here: the command, or its Python module; None if neither is installed."""
+    return _command("gallery-dl", "gallery_dl")
+
+
+def yt_dlp_command():
+    return _command("yt-dlp", "yt_dlp")
+
+
+def tool_commands() -> dict:
+    return {GALLERY_DL: gallery_dl_command(), YT_DLP: yt_dlp_command()}
+
+
+def tool_for(url: str, tools: dict) -> str:
+    """The tool for an address: yt-dlp for a video site (or when gallery-dl is missing), else gallery-dl."""
+    host = url.split("://", 1)[-1].split("/", 1)[0].lower()
+    video = any(host == site or host.endswith("." + site) or site in host for site in VIDEO_SITES)
+    if tools.get(YT_DLP) and (video or not tools.get(GALLERY_DL)):
+        return YT_DLP
+    return GALLERY_DL if tools.get(GALLERY_DL) else ""
+
+
+def command_for(base: list, url: str, folder: str, tool: str = GALLERY_DL) -> list:
+    """A tool's arguments for one download: straight into `folder`, with its metadata beside each file, printing the
+    path of every file it saved (so they can be counted)."""
+    if tool == YT_DLP:
+        return base + ["--write-info-json", "--write-subs", "--no-simulate", "--print", "after_move:filepath",
+                       "--no-colors", "-P", folder, "-o", "%(title)s [%(id)s].%(ext)s", "--", url]
     return base + ["--write-metadata", "--no-colors", "-D", folder, "--", url]
 
 
@@ -74,11 +108,16 @@ class DownloadService(QObject):
 
     @Property(bool, constant=True)
     def available(self) -> bool:
-        return gallery_dl_command() is not None
+        return any(tool_commands().values())
+
+    @Property("QStringList", constant=True)
+    def tools(self) -> list:
+        """The download tools installed ("gallery-dl", "yt-dlp")."""
+        return [name for name, command in tool_commands().items() if command]
 
     @Property("QVariantList", notify=jobsChanged)
     def jobs(self) -> list:
-        """[{id, url, folder, state, files, message}], oldest first."""
+        """[{id, url, folder, tool, state, files, message}], oldest first."""
         with self._lock:
             return [dict(job) for job in self._jobs]
 
@@ -89,13 +128,21 @@ class DownloadService(QObject):
 
     @Slot(str, str, result=int)
     def add(self, url: str, folder: str) -> int:
-        """Queue a download of `url` into `folder` (a path or a file:// address); its id, or 0 if it can't be."""
+        return self.addWith(url, folder, "")
+
+    @Slot(str, str, str, result=int)
+    def addWith(self, url: str, folder: str, tool: str) -> int:
+        """Queue a download of `url` into `folder` (a path or a file:// address) with `tool` ("" chooses by the
+        address); its id, or 0 if it can't be."""
         url = (url or "").strip()
         path = QUrl(folder).toLocalFile() or folder
-        if not url or not path or not os.path.isdir(path) or self._closed or gallery_dl_command() is None:
+        tools = tool_commands()
+        tool = tool if tools.get(tool) else tool_for(url, tools)
+        if not url or not path or not os.path.isdir(path) or self._closed or not tool:
             return 0
         with self._lock:
-            job = {"id": self._next_id, "url": url, "folder": path, "state": WAITING, "files": 0, "message": ""}
+            job = {"id": self._next_id, "url": url, "folder": path, "tool": tool, "state": WAITING, "files": 0,
+                   "message": ""}
             self._next_id += 1
             self._jobs.append(job)
             if self._worker is None or not self._worker.is_alive():
@@ -159,16 +206,16 @@ class DownloadService(QObject):
             self._update.emit(job["id"], state, files, message)
 
     def _download(self, job: dict):
-        base = gallery_dl_command()
+        base = tool_commands().get(job["tool"])
         if base is None:
-            return FAILED, 0, "gallery-dl is not installed"
+            return FAILED, 0, "%s is not installed" % job["tool"]
         files, last_error = 0, ""
         try:
-            process = subprocess.Popen(command_for(base, job["url"], job["folder"]), stdin=subprocess.DEVNULL,
+            process = subprocess.Popen(command_for(base, job["url"], job["folder"], job["tool"]), stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                        errors="replace", cwd=job["folder"])
         except OSError as e:
-            return FAILED, 0, "gallery-dl could not be started (%s)" % type(e).__name__
+            return FAILED, 0, "%s could not be started (%s)" % (job["tool"], type(e).__name__)
         with self._lock:
             self._process = process
             if job["id"] in self._cancelled or self._closed:
@@ -192,7 +239,7 @@ class DownloadService(QObject):
         if cancelled:
             return CANCELLED, files, ""
         if process.returncode != 0:
-            return FAILED, files, _short(last_error) or "gallery-dl stopped (exit code %d)" % process.returncode
+            return FAILED, files, _short(last_error) or "%s stopped (exit code %d)" % (job["tool"], process.returncode)
         return DONE, files, ""
 
     def _scan(self, folder: str):
@@ -218,6 +265,11 @@ class DownloadService(QObject):
 
 
 def _short(line: str) -> str:
-    """gallery-dl's error line without its "[site][error]" prefix, short enough for a list."""
-    text = line.split("]", 2)[-1].strip() if line.startswith("[") else line
+    """A tool's error line without its prefix (gallery-dl's "[site][error]", yt-dlp's "ERROR: [site] id:"), short
+    enough for a list."""
+    text = line.strip()
+    if text.startswith("ERROR:"):
+        text = text[len("ERROR:"):].strip()
+    while text.startswith("["):
+        text = text.split("]", 1)[-1].strip()
     return text[:200]

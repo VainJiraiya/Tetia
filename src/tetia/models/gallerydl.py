@@ -12,6 +12,7 @@ What the file holds depends on the site; its "category" field names it. Read her
     E-Hentai            tags: ["artist:...", "parody:...", "character:...", "female:...", ...]
     Pixiv               user.name, tags, x_restrict (R-18)
     Twitter / X         author.name, hashtags
+    yt-dlp              <name>.info.json: uploader / channel, tags, categories (genre), age_limit (18: mature)
     anything else       tags (a list, or words separated by spaces), artist / author / user / uploader
 
 Artists and circles become creator tags, copyrights and parodies series tags, characters character tags, and the
@@ -38,8 +39,10 @@ _EHENTAI = {"artist": "creator", "group": "creator", "parody": "series", "charac
 
 
 def sidecars(name: str) -> list:
-    """The metadata file names gallery-dl may have written for a file called `name`, the usual one first."""
-    return [name + ".json", os.path.splitext(name)[0] + ".json"]
+    """The metadata file names gallery-dl (or yt-dlp) may have written for a file called `name`, the usual one
+    first."""
+    stem = os.path.splitext(name)[0]
+    return [name + ".json", stem + ".json", stem + ".info.json"]
 
 
 def _words(value) -> list:
@@ -66,6 +69,9 @@ def _rating(data: dict):
     restrict = data.get("x_restrict")                    # Pixiv: 0 all ages, 1 R-18, 2 R-18G
     if isinstance(restrict, int) and restrict > 0:
         return 3
+    age = data.get("age_limit")                          # yt-dlp: the site's age restriction
+    if isinstance(age, int) and age >= 18:
+        return 2
     return None
 
 
@@ -94,7 +100,8 @@ def parse(data) -> Imported:
                 tags.append(("content", word))
     for key in ("hashtags",):
         tags += [("content", w) for w in _words(data.get(key))]
-    for key in ("artist", "artists", "author", "user", "uploader"):
+    tags += [("genre", w) for w in (data.get("categories") or []) if isinstance(w, str) and w.strip()]
+    for key in ("artist", "artists", "author", "user", "uploader", "channel"):
         value = data.get(key)
         names = [_name(v) for v in value] if isinstance(value, list) else [_name(value)]
         tags += [("creator", n) for n in names if n]

@@ -495,7 +495,7 @@ Kirigami.ApplicationWindow {
                     checked: downloadPanel.visible
                     ToolTip.visible: hovered && !downloadPanel.visible
                     ToolTip.delay: 600
-                    ToolTip.text: "Download with gallery-dl"
+                    ToolTip.text: "Download with " + downloads.tools.join(" or ")
                     onClicked: {
                         if (downloadPanel.visible) { downloadPanel.close(); return }
                         var here = root.currentFolder || (root.sourceList.length > 0 ? root.sourceList[0].path : "")

@@ -111,3 +111,63 @@ def test_a_download_can_be_cancelled_and_locking_stops_them(tmp_path, monkeypatc
     started = time.monotonic()
     service.stop()                                                    # a vault being locked
     assert time.monotonic() - started < 10 and service.add("https://example.org/x", str(folder)) == 0
+
+
+YT_STUB = '''#!{python}
+import json, os, sys
+args = sys.argv[1:]
+folder = args[args.index("-P") + 1]
+url = args[-1]
+if "fail" in url:
+    sys.stderr.write("ERROR: [youtube] abc123: Video unavailable\\n")
+    sys.exit(1)
+path = os.path.join(folder, "A Video [abc123].mp4")
+with open(path, "wb") as f:
+    f.write(b"not really a video")
+with open(os.path.join(folder, "A Video [abc123].info.json"), "w") as f:
+    json.dump({{"extractor": "youtube", "uploader": "Some Channel", "channel": "Some Channel",
+               "tags": ["lofi", "study music"], "categories": ["Music"], "age_limit": 18}}, f)
+print(path, flush=True)
+'''
+
+
+def _yt_stub(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "yt-dlp"
+    script.write_text(YT_STUB.format(python=sys.executable))
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+
+
+def test_video_sites_go_to_yt_dlp_and_the_rest_to_gallery_dl():
+    both = {"gallery-dl": ["g"], "yt-dlp": ["y"]}
+    assert downloadService.tool_for("https://www.youtube.com/watch?v=x", both) == "yt-dlp"
+    assert downloadService.tool_for("https://youtu.be/x", both) == "yt-dlp"
+    assert downloadService.tool_for("https://danbooru.donmai.us/posts?tags=x", both) == "gallery-dl"
+    assert downloadService.tool_for("https://danbooru.donmai.us/posts", {"gallery-dl": None, "yt-dlp": ["y"]}) == "yt-dlp"
+    assert downloadService.tool_for("https://youtube.com/x", {"gallery-dl": ["g"], "yt-dlp": None}) == "gallery-dl"
+    assert downloadService.tool_for("https://x", {"gallery-dl": None, "yt-dlp": None}) == ""
+    assert downloadService._short("ERROR: [youtube] abc123: Video unavailable") == "abc123: Video unavailable"
+    assert downloadService._short("[danbooru][error] Unsupported URL") == "Unsupported URL"
+
+
+def test_a_video_download_lands_with_its_info_json_tags(tmp_path, monkeypatch, qapp):
+    _yt_stub(tmp_path, monkeypatch)
+    folder = tmp_path / "Videos"
+    folder.mkdir()
+    service = DownloadService()
+    assert "yt-dlp" in service.tools
+    service.add("https://www.youtube.com/watch?v=abc123", str(folder))
+    assert service.jobs[0]["tool"] == "yt-dlp"
+    assert _wait(service, lambda: service.jobs[0]["state"] == "done") and service.jobs[0]["files"] == 1
+    db = get_database()
+    media_id = db.get_media_by_path(os.path.realpath(str(folder / "A Video [abc123].mp4")))[0]
+    tags = {(r[0], r[1]) for r in db.conn.execute(
+        "SELECT c.name, t.name FROM media_tag mt JOIN tag t ON t.id = mt.tag_id JOIN tag_category c "
+        "ON c.id = t.category_id WHERE mt.media_id = ?", (media_id,))}
+    assert tags == {("creator", "some_channel"), ("content", "lofi"), ("content", "study_music"), ("genre", "music")}
+    assert db.conn.execute("SELECT rating FROM media WHERE id = ?", (media_id,)).fetchone()[0] == 2
+    service.addWith("https://www.youtube.com/watch?v=fail", str(folder), "yt-dlp")
+    assert _wait(service, lambda: service.jobs[-1]["state"] == "failed")
+    assert service.jobs[-1]["message"] == "abc123: Video unavailable"
