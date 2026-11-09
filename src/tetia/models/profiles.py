@@ -88,6 +88,14 @@ def thumbnail_base() -> Path:
     return profile_dir() / "thumbnails"
 
 
+def thumbnail_pack():
+    """Where a private profile keeps its thumbnails now: one file (see thumbPack). None for General, which keeps
+    the shared freedesktop folders other apps use. thumbnail_base() is still where an older Tetia left them."""
+    if _active == GENERAL_ID:
+        return None
+    return profile_dir() / "thumbnails.db"
+
+
 # ---- Registry --------------------------------------------------------------
 
 def private_profiles() -> list[dict]:

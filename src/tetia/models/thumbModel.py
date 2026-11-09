@@ -11,11 +11,11 @@ import threading
 import weakref
 from pathlib import Path
 from urllib.parse import quote
-from PySide6.QtCore import QSize, Qt, QUrl
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt, QUrl
 from PySide6.QtGui import QImage, QImageReader
 from PySide6.QtQuick import QQuickImageProvider
 
-from tetia.models import bookcovers, profiles
+from tetia.models import bookcovers, profiles, thumbPack
 
 # Characters left unescaped when building the thumbnail-cache URI. The MD5 of
 # this URI is the cache filename, so it has to match what Dolphin/KDE hashes
@@ -111,6 +111,34 @@ def _size_tier_dir(base: Path, pixel_size: QSize) -> Path:
         return base / "xx-large"
 
 
+def _tagged(img: QImage, uri: str, local_path: str):
+    """The thumbnail with the spec's tEXt metadata (what it was made from, and that file's mtime, so a reader can
+    tell it is stale); None if the file is gone."""
+    try:
+        st = Path(local_path).stat()
+    except OSError:
+        return None
+    out_img = img.copy()
+    out_img.setText("Thumb::URI", uri)
+    out_img.setText("Thumb::MTime", str(int(st.st_mtime)))
+    out_img.setText("Thumb::Size", str(st.st_size))
+    return out_img
+
+
+def _pack_thumbnail(pack, uri: str, uri_md5: str, img: QImage, local_path: str) -> bool:
+    """Keep a generated thumbnail in a private profile's pack (see thumbPack), as the PNG the folders would hold."""
+    out_img = _tagged(img, uri, local_path)
+    if out_img is None:
+        return False
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.WriteOnly)
+    if not out_img.save(buffer, "PNG"):
+        return False
+    buffer.close()
+    return pack.put(uri_md5, _size_tier_dir(Path(), img.size()).name, bytes(data))
+
+
 def _save_thumbnail(base: Path, uri: str, uri_md5: str, img: QImage, local_path: str) -> bool:
     """Write a generated thumbnail into the shared freedesktop thumbnail
     cache so other spec-compliant apps (Dolphin, Gwenview, GNOME apps, etc.)
@@ -127,9 +155,8 @@ def _save_thumbnail(base: Path, uri: str, uri_md5: str, img: QImage, local_path:
 
     dest = tier_dir / f"{uri_md5}.png"
 
-    try:
-        st = Path(local_path).stat()
-    except OSError:
+    out_img = _tagged(img, uri, local_path)
+    if out_img is None:
         # Source file vanished between read and save; don't cache garbage.
         return False
 
@@ -137,14 +164,6 @@ def _save_thumbnail(base: Path, uri: str, uri_md5: str, img: QImage, local_path:
     os.close(fd)
 
     try:
-        # Embed the spec-required tEXt metadata so other readers can verify
-        # this thumbnail still matches the current file (mtime check) and
-        # know what it was generated from.
-        out_img = img.copy()
-        out_img.setText("Thumb::URI", uri)
-        out_img.setText("Thumb::MTime", str(int(st.st_mtime)))
-        out_img.setText("Thumb::Size", str(st.st_size))
-
         if not out_img.save(tmp_path, "PNG"):
             return False
 
@@ -169,7 +188,11 @@ _TIERS = (("normal", 128), ("large", 256), ("x-large", 512), ("xx-large", 1024))
 def forget_thumbnails(local_path: str):
     """Delete every cached thumbnail of a file, so the next request makes a fresh one
     (used when its cover is changed by hand)."""
-    name = hashlib.md5(_local_path_to_thumb_uri(local_path).encode("utf-8")).hexdigest() + ".png"
+    uri_md5 = hashlib.md5(_local_path_to_thumb_uri(local_path).encode("utf-8")).hexdigest()
+    pack = thumbPack.pack()
+    if pack is not None:
+        pack.forget(uri_md5)
+    name = uri_md5 + ".png"
     base = profiles.thumbnail_base()
     for tier in [t for t, _ in _TIERS] + ["xx-large"]:
         try:
@@ -221,6 +244,9 @@ class ThumbnailProvider(QQuickImageProvider):
         super().__init__(QQuickImageProvider.Image)
         # General shares the system cache; a private profile only ever uses its own
         self.thumbnails_base = profiles.thumbnail_base()
+        # ...and keeps them in one file (thumbPack); its old thumbnail folders are read, and moved in, until empty
+        self._pack = thumbPack.pack()
+        self._legacy = self._pack is not None and any((self.thumbnails_base / t).is_dir() for t, _ in _TIERS)
         # comics, EPUBs and PDFs that could not be read, {path: mtime}: not tried again
         # while the file is unchanged, so scrolling past a damaged one stays cheap
         self._unreadable = {}
@@ -277,6 +303,30 @@ class ThumbnailProvider(QQuickImageProvider):
         if _is_video(local_path):
             return True
         return not (bookcovers.is_book(local_path) or QImageReader(local_path).canRead())
+
+    def _read_cached(self, cache_dir: Path, uri_md5: str, packed: dict) -> QImage:
+        """One tier's cached thumbnail (null if there is none): from the pack in a private profile, else from the
+        freedesktop folder. A thumbnail an older Tetia left as a file in a private profile is moved into the pack
+        the first time it is used."""
+        thumb_file = cache_dir / f"{uri_md5}.png"
+        if self._pack is None:
+            return QImage(str(thumb_file)) if thumb_file.exists() else QImage()
+        data = packed.get(cache_dir.name)
+        if data:
+            return QImage.fromData(data, "PNG")
+        if not self._legacy:
+            return QImage()
+        try:
+            data = thumb_file.read_bytes()
+        except OSError:
+            return QImage()
+        img = QImage.fromData(data, "PNG")
+        if not img.isNull() and self._pack.put(uri_md5, cache_dir.name, data):
+            try:
+                thumb_file.unlink()
+            except OSError:
+                pass
+        return img
 
     @staticmethod
     def _mtime(local_path: str):
@@ -341,7 +391,6 @@ class ThumbnailProvider(QQuickImageProvider):
 
         uri = _local_path_to_thumb_uri(local_path)
         uri_md5 = hashlib.md5(uri.encode("utf-8")).hexdigest()
-        cached_thumb_name = f"{uri_md5}.png"
 
         # The size the picture will be shown at, if the tile said ("sourceSize" in QML)
         hint = max(requested_size.width(), requested_size.height()) if requested_size.isValid() else 0
@@ -351,11 +400,9 @@ class ThumbnailProvider(QQuickImageProvider):
         # 1. Try the cache folders. With a hint, a hit that is too small is kept as a
         # fallback while the wanted size is made.
         fallback = QImage()
+        packed = self._pack.get(uri_md5) if self._pack is not None else {}
         for cache_dir, edge in folders:
-            thumb_file = cache_dir / cached_thumb_name
-            if not thumb_file.exists():
-                continue
-            img = QImage(str(thumb_file))
+            img = self._read_cached(cache_dir, uri_md5, packed)
             if img.isNull() or not self._fresh(img, local_path):
                 continue
             if hint <= 0 or (edge >= wanted_edge and self._big_enough(img, wanted_edge, local_path)):
@@ -379,7 +426,10 @@ class ThumbnailProvider(QQuickImageProvider):
         if not img.isNull() and max(img.width(), img.height()) >= max(fallback.width(), fallback.height()):
             size.setWidth(img.width())
             size.setHeight(img.height())
-            _save_thumbnail(self.thumbnails_base, uri, uri_md5, img, local_path)
+            if self._pack is not None:
+                _pack_thumbnail(self._pack, uri, uri_md5, img, local_path)
+            else:
+                _save_thumbnail(self.thumbnails_base, uri, uri_md5, img, local_path)
             return img
         if not fallback.isNull():
             size.setWidth(fallback.width())
