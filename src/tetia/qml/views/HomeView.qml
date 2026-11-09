@@ -229,6 +229,7 @@ Rectangle {
                                 anchors.margins: 8
                                 spacing: 12
                                 Kirigami.ShadowedImage {
+                                    color: "transparent"            // (its own background is white: the tile's shows instead)
                                     Layout.preferredWidth: parent.parent.wide ? 136 : 56
                                     Layout.preferredHeight: parent.parent.wide ? 77 : 84
                                     radius: 4

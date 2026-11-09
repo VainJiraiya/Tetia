@@ -58,6 +58,7 @@ Item {
     }
 
     Kirigami.ShadowedImage {
+        color: "transparent"            // (its own background is white: the tile's shows instead)
         anchors.fill: parent
         radius: 6
         source: tile.source

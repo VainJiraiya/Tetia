@@ -64,6 +64,7 @@ Item {
         opacity: tile.finished ? 0.55 : 1
 
         Kirigami.ShadowedImage {
+            color: "transparent"            // (its own background is white: the tile's shows instead)
             id: picture
             anchors.fill: parent
             radius: 6
@@ -79,6 +80,7 @@ Item {
             anchors.fill: parent
             visible: tile.collage
             Kirigami.ShadowedImage {
+                color: "transparent"            // (its own background is white: the tile's shows instead)
                 width: parent.width
                 height: Math.round(parent.height * 0.64) - 1
                 corners.topLeftRadius: 6
@@ -91,6 +93,7 @@ Item {
             Repeater {
                 model: 2
                 Kirigami.ShadowedImage {
+                    color: "transparent"            // (its own background is white: the tile's shows instead)
                     required property int index
                     x: index === 0 ? 0 : parent.width / 2 + 1
                     y: Math.round(parent.height * 0.64) + 1

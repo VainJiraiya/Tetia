@@ -779,6 +779,12 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // A library folder added or removed while Home shows (Library Folders opens over it): its cards follow
+    Connections {
+        target: folderModel
+        function onModelReset() { if (root.onFavoritesTab) homeView.refresh() }
+    }
+
     // A series was given a format (or lost it): the tab's format chips count again
     Connections {
         target: subfolderModel
@@ -2328,6 +2334,7 @@ Kirigami.ApplicationWindow {
                                     anchors.margins: 8
                                     spacing: 12
                                     Kirigami.ShadowedImage {
+                                        color: "transparent"            // (its own background is white: the tile's shows instead)
                                         Layout.preferredWidth: 56
                                         Layout.preferredHeight: 84
                                         radius: 4
