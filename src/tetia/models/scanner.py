@@ -237,8 +237,11 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
     # 1. One listing. A file's real path is the real folder's plus its name, except for a link (followed). An
     # unreadable folder raises here, before anything is written (it is not taken for an empty one).
     entries = []          # (name, extension, real path, size, mtime, inode)
+    sidecars = set()      # the .json files beside them (a downloader's metadata, see gallerydl)
     with os.scandir(folder_directory) as listing:
         for entry in listing:
+            if entry.name.endswith(".json"):
+                sidecars.add(entry.name)
             extension = os.path.splitext(entry.name)[1].lower()
             # Hidden files are left out: macOS leaves "._Name.mp4" resource-fork stubs next to copied files
             if entry.name.startswith(".") or extension not in ALL_MEDIA_EXTENSIONS:
@@ -297,9 +300,11 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
                 picture = image_size(real) if need_size else None
             if old_style and row is None:
                 old[real] = _old_fingerprint(real, size)
-            if importing and extension in COMIC_EXTENSIONS:
-                from tetia.models import comicinfo
-                info = comicinfo.read(real)
+            if importing:
+                from tetia.models import comicinfo, gallerydl
+                info = comicinfo.read(real) if extension in COMIC_EXTENSIONS else None
+                if not info and sidecars:
+                    info = gallerydl.read(str(folder_directory), name, sidecars)
                 if info:
                     infos[real] = info
         elif need_size:
