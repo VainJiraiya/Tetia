@@ -281,12 +281,19 @@ def _local_path_of(id_string: str) -> str:
 
 
 class ThumbnailProvider(QQuickImageProvider):
+    """Thumbnails for QML (image://thumbnail/...), on Qt's loader thread.
+
+    Not a QQuickAsyncImageProvider, though that would let a ready thumbnail skip ahead of one being made: Qt calls
+    a response's cancel() (a tile gone while its picture loads) under its reader lock, and a response written in
+    Python needs the GIL for that, so a main thread running Python while it destroys tiles deadlocks against it."""
+
     def __init__(self):
         super().__init__(QQuickImageProvider.Image)
         _providers.add(self)
         self._memory = OrderedDict()      # (id, tier) -> (image, the file's mtime, its path), oldest first
         self._memory_bytes = 0
         self._memory_lock = threading.Lock()
+        self._made = set()                # (timing only) what was made at a new size, to see if anything repeats
         # General shares the system cache; a private profile only ever uses its own
         self.thumbnails_base = profiles.thumbnail_base()
         # ...and keeps them in one file (thumbPack); its old thumbnail folders are read, and moved in, until empty
@@ -308,6 +315,18 @@ class ThumbnailProvider(QQuickImageProvider):
         with self._idle:
             self._closed = True
             self._idle.wait_for(lambda: self._active == 0, timeout=timeout)
+
+    def _begin(self) -> bool:
+        with self._idle:
+            if self._closed:
+                return False
+            self._active += 1
+            return True
+
+    def _end(self):
+        with self._idle:
+            self._active -= 1
+            self._idle.notify_all()
 
     def _lookup_dirs(self, hint: int) -> list:
         """Cache folders to try, best first, as (folder, edge). With no size hint:
@@ -436,56 +455,61 @@ class ThumbnailProvider(QQuickImageProvider):
         except ValueError:
             return True
 
-    def requestImage(self, id_string: str, size: QSize, requested_size: QSize):
-        # Qt's order: the image's size is an OUTPUT (set below) and the size QML asked for (sourceSize) comes last.
-        # This used to be declared the other way round, so the size QML asked for was never seen.
-        with self._idle:
-            if self._closed:
-                return QImage()
-            self._active += 1
-        started = time.perf_counter()
-        local_path = _local_path_of(id_string)
+    # ---- a request, in steps: what was asked, from memory or the cache, made, finished
+
+    def _parse(self, id_string: str, requested_size: QSize) -> dict:
         hint = max(requested_size.width(), requested_size.height()) if requested_size.isValid() else 0
-        key = (id_string, hint)
-        outcome = "memory"
+        return {"id": id_string, "strip": id_string.startswith(NO_STRIP), "path": _local_path_of(id_string),
+                "hint": hint, "key": (id_string, hint)}
+
+    def _finish(self, request: dict, image: QImage) -> QImage:
+        """The film strip cut off a video's thumbnail when asked ("nostrip/<file>": the strip is as wide as the
+        thumbnail's width allows, so tiles of one height showed strips of very different sizes; the cached
+        thumbnail keeps it, as the shared cache stays standard), and the result kept in memory."""
+        if request["strip"]:
+            image = without_film_strip(image)
+        self._remember(request["key"], image, request["path"])
+        return image
+
+    def _note(self, request: dict, outcome: str, began: float):
+        if timing.ENABLED:
+            path = request["path"]
+            kind = "video" if _is_video(path) else "book" if bookcovers.is_book(path) else "image"
+            timing.record("thumb %s: %s" % (kind, outcome), (time.perf_counter() - began) * 1000)
+
+    def requestImage(self, id_string: str, size: QSize, requested_size: QSize):
+        """Qt's order: the image's size is an OUTPUT (set below) and the size QML asked for (sourceSize) comes last."""
+        if not self._begin():
+            return QImage()
         try:
-            image = self._recall(key)
+            began = time.perf_counter()
+            request = self._parse(id_string, requested_size)
+            image, outcome = self._recall(request["key"]), "memory"
             if image is None:
-                # "nostrip/<file>": a video's thumbnail without the film strip ffmpegthumbnailer draws on its sides.
-                # The strip is as wide as the thumbnail's width allows (1/16 of it on a wide video, its long side / 32
-                # on a tall one), so tiles of one height showed strips of very different sizes; a tile asks for it
-                # cropped off. The cached file keeps it (the cache is shared with other apps and stays standard).
-                if id_string.startswith(NO_STRIP):
-                    image, outcome = self._request_image(id_string[len(NO_STRIP):], size, requested_size)
-                    image = without_film_strip(image)
-                else:
-                    image, outcome = self._request_image(id_string, size, requested_size)
-                self._remember(key, image, local_path)
+                image, outcome, fallback, stale = self._lookup(request)
+                if image is None:
+                    image, outcome = self._make(request, fallback, stale)
+                image = self._finish(request, image)
+            self._note(request, outcome, began)
             if not image.isNull():
                 size.setWidth(image.width())
                 size.setHeight(image.height())
             return image
         finally:
-            if timing.ENABLED:
-                kind = "video" if _is_video(local_path) else "book" if bookcovers.is_book(local_path) else "image"
-                timing.record("thumb %s: %s" % (kind, outcome), (time.perf_counter() - started) * 1000)
-            with self._idle:
-                self._active -= 1
-                self._idle.notify_all()
+            self._end()
 
-    def _request_image(self, id_string: str, size: QSize, requested_size: QSize):
-        """(the thumbnail, how it was found or made: see timing)."""
-        local_path = _local_path_of(id_string)
-        uri = _local_path_to_thumb_uri(local_path)
-        uri_md5 = hashlib.md5(uri.encode("utf-8")).hexdigest()
+    def _target(self, request: dict):
+        """(the file's thumbnail URI, its MD5, the tiers to look in, the edge wanted: 0 for "any")."""
+        uri = _local_path_to_thumb_uri(request["path"])
+        folders = self._lookup_dirs(request["hint"])
+        return uri, hashlib.md5(uri.encode("utf-8")).hexdigest(), folders, folders[0][1] if request["hint"] > 0 else 0
 
-        # The size the picture will be shown at, if the tile said ("sourceSize" in QML)
-        hint = max(requested_size.width(), requested_size.height()) if requested_size.isValid() else 0
-        folders = self._lookup_dirs(hint)
-        wanted_edge = folders[0][1] if hint > 0 else 0
-
-        # 1. Try the cache folders. With a hint, a hit that is too small is kept as a
-        # fallback while the wanted size is made.
+    def _lookup(self, request: dict):
+        """A cached thumbnail that will do: (image, where it was, None, False), or (None, "", the best one that
+        was too small, whether one was stale) when it has to be made."""
+        local_path, hint = request["path"], request["hint"]
+        uri, uri_md5, folders, wanted_edge = self._target(request)
+        # With a hint, a hit that is too small is kept as a fallback while the wanted size is made
         fallback = QImage()
         stale = False
         packed = self._pack.get(uri_md5) if self._pack is not None else {}
@@ -497,13 +521,23 @@ class ThumbnailProvider(QQuickImageProvider):
                 stale = True
                 continue
             if hint <= 0 or self._good_enough(img, edge, wanted_edge, local_path):
-                return img, where
+                return img, where, None, False
             if max(img.width(), img.height()) > max(fallback.width(), fallback.height()):
                 fallback = img
+        return None, "", fallback, stale
 
-        # 2. Generate (preserve aspect ratio). A hint asks for the whole tier size, so
-        # the file lands in the right freedesktop folder for other apps to reuse.
-        made = "remade (too small)" if not fallback.isNull() else "remade (stale)" if stale else "made"
+    def _make(self, request: dict, fallback: QImage, stale: bool):
+        """Make the thumbnail (preserving the aspect ratio) and keep it: (image, how it was made). A hint asks for
+        the whole tier size, so it lands in the right freedesktop folder for other apps to reuse."""
+        local_path, hint = request["path"], request["hint"]
+        uri, uri_md5, _, wanted_edge = self._target(request)
+        made = "made at a new size" if not fallback.isNull() else "remade (stale)" if stale else "made"
+        if made != "made" and timing.ENABLED:
+            with self._memory_lock:
+                again = request["key"] in self._made
+                self._made.add(request["key"])
+            if again:
+                made = "made AGAIN this session"
         target_size = QSize(wanted_edge, wanted_edge) if hint > 0 else QSize(256, 256)
         modified = self._mtime(local_path)
         is_book = bookcovers.is_book(local_path)
@@ -526,7 +560,4 @@ class ThumbnailProvider(QQuickImageProvider):
             return img, made
         if not fallback.isNull():
             return fallback, "too small, kept"
-
-        size.setWidth(target_size.width())
-        size.setHeight(target_size.height())
         return img, "failed"
