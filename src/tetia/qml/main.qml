@@ -806,6 +806,19 @@ Kirigami.ApplicationWindow {
         id: tagModel
     }
 
+    PrivateMoveService { id: privateMoves }
+    PrivateMoveDialog {
+        id: privateMoveDialog
+        service: privateMoves
+        onMoved: function(count, problems) {
+            root.isSelectMode = false
+            root.reloadPage()
+            var text = count === 1 ? "Moved 1 file into the private profile" : "Moved " + count + " files into the private profile"
+            if (problems.length > 0) text += "; " + problems.length + " stayed: " + problems[0]
+            showPassiveNotification(text, problems.length > 0 ? 12000 : 5000)
+        }
+    }
+
     DownloadService {
         id: downloads
         // (the folder's page updates by itself: an open folder is watched, and the files were scanned already)
@@ -2421,6 +2434,8 @@ Kirigami.ApplicationWindow {
                     subfolderBackend: subfolderModel
                     boardBackend: boardService
                     importService: tagImports
+                    canMovePrivate: privateMoves.targets().length > 0
+                    onPrivateMoveRequested: function(ids) { privateMoveDialog.start(ids) }
                     homeBackend: homeModel
                     actionsBackend: mediaActions
                     onTrashRequested: function(ids) { root.requestTrash(ids) }
@@ -2653,6 +2668,15 @@ Kirigami.ApplicationWindow {
                                     onObjectRemoved: function(i, item) { selectFormatMenu.removeItem(item) }
                                 }
                             }
+                        }
+                        Button {
+                            objectName: "selectPrivateButton"
+                            text: "Move to Private Profile\u2026"
+                            icon.name: "object-locked"
+                            visible: gridView.selectMode && privateMoves.targets().length > 0
+                            // only files: a folder tile is not moved from here
+                            enabled: selectBar.fileCount > 0 && selectBar.tileCount === 0
+                            onClicked: privateMoveDialog.start(gridView.selectedIds.slice())
                         }
                         Item { Layout.preferredWidth: Kirigami.Units.largeSpacing }
                         Button {

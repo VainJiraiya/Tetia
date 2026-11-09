@@ -72,6 +72,8 @@ Flickable {
     // A file's menu: the file on disk
     signal renameRequested(string uri, string name)
     signal trashRequested(var ids)
+    signal privateMoveRequested(var ids)      // Move to Private Profile (see PrivateMoveDialog)
+    property bool canMovePrivate: false       // a private profile exists to move files into
 
     // A cover changed by hand: this number is added to the pictures' URLs so they reload
     property int coverRevision: 0
@@ -549,6 +551,13 @@ Flickable {
             onTriggered: grid.renameRequested(grid.contextMenuData.uri, grid.contextMenuData.name)
         }
         MenuSeparator {}
+        MenuItem {
+            text: "Move to Private Profile\u2026"
+            icon.name: "object-locked"
+            visible: grid.canMovePrivate
+            height: visible ? implicitHeight : 0
+            onTriggered: grid.privateMoveRequested(grid.targetOf(grid.contextMenuData.mediaId, "").ids)
+        }
         MenuItem {
             text: "Move to Trash"
             icon.name: "user-trash"
