@@ -191,7 +191,7 @@ Kirigami.ApplicationWindow {
             // The sort button sits just left of the mode button. Its slot is also
             // reserved on the left (and when the button is hidden) so the title stays centred.
             readonly property real sortSlotWidth: 40
-            readonly property int toolButtonCount: 3     // purge, browse tags and sort sit left of the mode button
+            readonly property int toolButtonCount: 4     // downloads, purge, browse tags and sort sit left of the mode button
 
             TextMetrics {
                 id: doneMetrics
@@ -479,6 +479,59 @@ Kirigami.ApplicationWindow {
                 }
             }
 
+            // Downloads (gallery-dl, when it is installed): an address and a folder; the panel shows the queue
+            Item {
+                Layout.preferredWidth: headerRow.sortSlotWidth
+                Layout.preferredHeight: leftButton.height
+
+                ToolButton {
+                    id: downloadButton
+                    objectName: "downloadButton"
+                    anchors.centerIn: parent
+                    icon.name: "download"
+                    display: AbstractButton.IconOnly
+                    visible: downloads.available
+                    checkable: true
+                    checked: downloadPanel.visible
+                    ToolTip.visible: hovered && !downloadPanel.visible
+                    ToolTip.delay: 600
+                    ToolTip.text: "Download with gallery-dl"
+                    onClicked: {
+                        if (downloadPanel.visible) { downloadPanel.close(); return }
+                        var here = root.currentFolder || (root.sourceList.length > 0 ? root.sourceList[0].path : "")
+                        if (here) downloadPanel.folder = here
+                        downloadPanel.open()
+                    }
+                    // how many are waiting or running
+                    Rectangle {
+                        readonly property int pending: downloads.jobs.filter(function(j) {
+                            return j.state === "waiting" || j.state === "downloading" }).length
+                        visible: pending > 0
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        width: Math.max(height, pendingText.implicitWidth + 6)
+                        height: 14
+                        radius: 7
+                        color: Kirigami.Theme.highlightColor
+                        Text {
+                            id: pendingText
+                            anchors.centerIn: parent
+                            text: parent.pending
+                            color: Kirigami.Theme.highlightedTextColor
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                    }
+                    DownloadPanel {
+                        id: downloadPanel
+                        service: downloads
+                        y: downloadButton.height + 4
+                        x: downloadButton.width - width
+                        onProblem: function(text) { showPassiveNotification(text, 8000) }
+                    }
+                }
+            }
+
             // Purge button: only on a folder of photos. Swipe through its pictures to keep or trash them.
             Item {
                 Layout.preferredWidth: headerRow.sortSlotWidth
@@ -729,6 +782,15 @@ Kirigami.ApplicationWindow {
 
     TagModel {
         id: tagModel
+    }
+
+    DownloadService {
+        id: downloads
+        // (the folder's page updates by itself: an open folder is watched, and the files were scanned already)
+        onDownloaded: function(folder) {
+            var parts = String(folder).replace(/\/+$/, "").split("/")
+            showPassiveNotification("Downloaded into " + parts[parts.length - 1])
+        }
     }
 
     TagImportService {
