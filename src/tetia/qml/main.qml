@@ -479,9 +479,17 @@ Kirigami.ApplicationWindow {
                 }
             }
 
+            // The room of the tool buttons that are hidden here, kept on their left: the visible ones sit together by the
+            // mode button, and this side stays as wide as the left one, so the title stays centred
+            Item {
+                Layout.preferredWidth: headerRow.sortSlotWidth * (headerRow.toolButtonCount
+                    - [downloadButton, purgeButton, browseTagsButton, sortButton].filter(function(b) { return b.visible }).length)
+                Layout.preferredHeight: 1
+            }
+
             // Downloads (gallery-dl, when it is installed): an address and a folder; the panel shows the queue
             Item {
-                Layout.preferredWidth: headerRow.sortSlotWidth
+                Layout.preferredWidth: downloadButton.visible ? headerRow.sortSlotWidth : 0
                 Layout.preferredHeight: leftButton.height
 
                 ToolButton {
@@ -490,7 +498,9 @@ Kirigami.ApplicationWindow {
                     anchors.centerIn: parent
                     icon.name: "download"
                     display: AbstractButton.IconOnly
-                    visible: downloads.available
+                    // where downloads land: pictures and videos (not Home, Manga or EBooks)
+                    visible: downloads.available && !root.onFavoritesTab
+                             && (folderModel.currentCategory === "photos" || folderModel.currentCategory === "videos")
                     checkable: true
                     checked: downloadPanel.visible
                     ToolTip.visible: hovered && !downloadPanel.visible
@@ -534,10 +544,11 @@ Kirigami.ApplicationWindow {
 
             // Purge button: only on a folder of photos. Swipe through its pictures to keep or trash them.
             Item {
-                Layout.preferredWidth: headerRow.sortSlotWidth
+                Layout.preferredWidth: purgeButton.visible ? headerRow.sortSlotWidth : 0
                 Layout.preferredHeight: leftButton.height
 
                 ToolButton {
+                    id: purgeButton
                     objectName: "purgeButton"
                     anchors.centerIn: parent
                     icon.name: "edit-clear-all"
@@ -554,10 +565,11 @@ Kirigami.ApplicationWindow {
 
             // Browse tags: on every page of items (folders, virtual folders, search results)
             Item {
-                Layout.preferredWidth: headerRow.sortSlotWidth
+                Layout.preferredWidth: browseTagsButton.visible ? headerRow.sortSlotWidth : 0
                 Layout.preferredHeight: leftButton.height
 
                 ToolButton {
+                    id: browseTagsButton
                     objectName: "browseTagsButton"
                     anchors.centerIn: parent
                     icon.name: "tag"
@@ -576,7 +588,7 @@ Kirigami.ApplicationWindow {
             // Sort button: only on a folder's (or subfolder's) page, and on a tag's results. Search results
             // keep their ranking and the top-level tab lists folders, so neither has it.
             Item {
-                Layout.preferredWidth: headerRow.sortSlotWidth
+                Layout.preferredWidth: sortButton.visible ? headerRow.sortSlotWidth : 0
                 Layout.preferredHeight: leftButton.height
 
                 ToolButton {
