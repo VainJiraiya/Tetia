@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tetia"
-version = "0.4.1"
+version = "0.5.0"
 description = "A media library for manga, images and video"
 readme = "README.md"
 # `int | None` annotations are evaluated at import time, which needs Python 3.10

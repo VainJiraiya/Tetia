@@ -81,6 +81,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.5.0" date="2026-11-09">
+      <description>
+        <p>Tags from your files: a comic's ComicInfo.xml and the metadata gallery-dl and yt-dlp write beside a download become tags in their categories, without touching the ones you added. Downloads with gallery-dl and yt-dlp from the Images and Videos tabs, into a library folder or a new one and optionally onto a board. Move to Private Profile sends selected files into a private profile, unlocking its vault first, with their tags, favorites and ratings, and leaves nothing of them behind. Browse tags now counts everything in a page's folders.</p>
+      </description>
+    </release>
     <release version="0.4.1" date="2026-11-08">
       <description>
         <p>Faster on hard drives and in encrypted vaults: folders are read with fewer and smaller reads, unchanged files cost nothing on a re-scan, thumbnails already shown stay in memory, small comic covers are no longer made again, and switching to a big tab is several times quicker. A private profile keeps its thumbnails in one file inside the vault, and no longer lets video frames, comic pages or file names leave it.</p>

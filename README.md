@@ -6,7 +6,7 @@ Tetia keeps your manga, pictures and videos in one place on KDE Plasma: browse
 collections, tag and rate what is in them, and find anything with one search box.
 It is built with Python, Qt Quick and Kirigami.
 
-> **Status: early (0.4.1).** It is in daily use by its author, but expect rough
+> **Status: early (0.5.0).** It is in daily use by its author, but expect rough
 > edges. Developed and tested on NixOS with Plasma 6, PySide6 6.11 and Python 3.14;
 > other setups are untested.
 
@@ -55,6 +55,16 @@ It is built with Python, Qt Quick and Kirigami.
 - **Tags** - five categories (creator, series, character, genre, content), a tag
   panel with suggestions, and bulk tagging. Select items by clicking, with Ctrl or
   Shift, or by dragging a rectangle.
+- **Tags from your files** - a comic's ComicInfo.xml, and the metadata gallery-dl and
+  yt-dlp write beside a download (Danbooru, Gelbooru, e621, E-Hentai, Pixiv, X,
+  YouTube...), become tags in their categories, with the content rating. New files
+  are read as they arrive; "Re-import tags" reads a file or folder again. Imported
+  tags never replace the ones you added.
+- **Downloads** - with gallery-dl (pictures, galleries, booru searches) or yt-dlp
+  (videos) installed, paste an address on the Images or Videos tab: the files land in
+  a library folder (or a new one), already tagged, optionally on a board, with a
+  range of results and a highest video resolution. Logins and API keys stay in each
+  tool's own configuration.
 - **Ratings and favorites** - rate items General, Suggestive, Mature or Explicit;
   favorite items and whole collections and find them on *Home*.
 - **Search** - one box for tags and file names, for example
@@ -69,10 +79,12 @@ It is built with Python, Qt Quick and Kirigami.
 - **Private profiles** - a separate library, tags, covers and thumbnails that never
   touch your normal profile or the shared thumbnail cache. Encrypted in a KDE Plasma
   Vault if you have one (see below), or kept in a separate, unencrypted folder.
+  "Move to Private Profile" sends selected files there with their tags, favorites and
+  ratings, unlocking the vault first, and leaves nothing of them behind.
 
 Not there yet: a reader for text e-books, an editor for tag
-aliases and implications (search already honours them), importing tags from
-ComicInfo.xml, and any platform other than Linux.
+aliases and implications (search already honours them), and any platform other
+than Linux.
 
 ## Requirements
 
@@ -86,12 +98,13 @@ needs a few things that pip cannot install; get them from your distribution:
 | Playing videos | **libmpv** (`mpv-libs`, `libmpv2`, `libmpv-dev`) |
 | Video thumbnails in the grid | **ffmpegthumbnailer** |
 | Video covers | **ffmpeg** (provides `ffmpeg` and `ffprobe`) |
+| Downloads (optional) | **gallery-dl** and/or **yt-dlp** |
 | SQLite | version 3.35 or newer (almost always already the case) |
 
 Without libmpv videos open in your default application instead of the built-in
 player. Without ffmpegthumbnailer videos show a placeholder instead of a thumbnail,
-and without ffmpeg you cannot use a video frame as a folder cover. Everything else
-works.
+and without ffmpeg you cannot use a video frame as a folder cover. Without gallery-dl
+or yt-dlp there is no download button. Everything else works.
 
 > pip's PySide6 bundles its own copy of Qt, which usually cannot see the Kirigami
 > your distribution installed. Prefer your distribution's PySide6 package
@@ -102,7 +115,7 @@ works.
 **With the script** (any distribution; installs for your user only, no root):
 
 ```sh
-git clone --branch v0.4.1 https://github.com/VainJiraiya/Tetia.git
+git clone --branch v0.5.0 https://github.com/VainJiraiya/Tetia.git
 cd Tetia
 ./install.sh          # checks the requirements above and tells you what is missing
 ```

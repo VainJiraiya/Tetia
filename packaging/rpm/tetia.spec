@@ -1,5 +1,5 @@
 Name:           tetia
-Version:        0.4.1
+Version:        0.5.0
 Release:        1%{?dist}
 Summary:        A media library for manga, images and video
 
@@ -62,6 +62,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.VainJiraiya
 %{_metainfodir}/io.github.VainJiraiya.Tetia.metainfo.xml
 
 %changelog
+* Mon Nov 09 2026 Tetia contributors <noreply@github.com> - 0.5.0-1
+- Tags from ComicInfo.xml and downloader metadata, downloads with gallery-dl and yt-dlp, Move to Private Profile
+
 * Sun Nov 08 2026 Tetia contributors <noreply@github.com> - 0.4.1-1
 - Faster on hard drives and in vaults; private profiles keep thumbnails, comic pages and log output inside the vault
 
