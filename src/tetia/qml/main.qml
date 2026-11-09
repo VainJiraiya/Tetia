@@ -1405,7 +1405,14 @@ Kirigami.ApplicationWindow {
 
     // A tab's top level: what is in all its library folders together (their folders and series, then each
     // one's loose files under its name), or one of them alone (a chip, or a tab with a single folder)
+    // A tab's top level. The files and the folder tiles are reloaded (and their filter set) in one batch, so the
+    // grid is reset and laid out once, not once for every model that changes
     function loadRoot() {
+        gridModel.beginBatch()
+        try { loadRootNow() } finally { gridModel.endBatch() }
+    }
+
+    function loadRootNow() {
         var page = pageStack.get(0)
         var category = folderModel.currentCategory
         var groups = folderModel.sourceGroups()
@@ -1788,8 +1795,13 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    // Makes mediaModel hold this folder, filtered for the category.
+    // Makes mediaModel hold this folder, filtered for the category (in one batch, as loadRoot)
     function loadFolder(folderPath, category) {
+        gridModel.beginBatch()
+        try { loadFolderNow(folderPath, category) } finally { gridModel.endBatch() }
+    }
+
+    function loadFolderNow(folderPath, category) {
         root.rootShown = false
         root.currentBoard = -1
         subfolderModel.formatFilter = ""

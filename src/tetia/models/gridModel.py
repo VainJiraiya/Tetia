@@ -54,25 +54,54 @@ class GridModel(QAbstractListModel):
         self._media = None
         self._subs = None
         self._folder_count = 0
+        # A batch (a tab switch reloads the files and the folder tiles): one reset for both, so the page is laid
+        # out once, not once per model
+        self._batch = 0
+        self._batch_reset = False
 
     # ---- sources ----------------------------------------------------------
 
     def _connect(self, source):
-        source.modelAboutToBeReset.connect(self.beginResetModel)
+        source.modelAboutToBeReset.connect(self._source_about_to_reset)
         source.modelReset.connect(self._after_reset)
         source.dataChanged.connect(self._on_data_changed)
 
     def _disconnect(self, source):
         try:
-            source.modelAboutToBeReset.disconnect(self.beginResetModel)
+            source.modelAboutToBeReset.disconnect(self._source_about_to_reset)
             source.modelReset.disconnect(self._after_reset)
             source.dataChanged.disconnect(self._on_data_changed)
         except RuntimeError:
             pass   # the source is already gone (app shutting down)
 
+    def _source_about_to_reset(self):
+        if self._batch:
+            if not self._batch_reset:
+                self._batch_reset = True
+                self.beginResetModel()
+            return
+        self.beginResetModel()
+
     def _after_reset(self):
+        if self._batch:
+            return                                   # (ended once, with the batch)
         self._sync_folder_count()
         self.endResetModel()
+
+    @Slot()
+    def beginBatch(self):
+        """Hold the resets of both sources until endBatch, which makes them one."""
+        self._batch += 1
+
+    @Slot()
+    def endBatch(self):
+        if self._batch == 0:
+            return
+        self._batch -= 1
+        if self._batch == 0 and self._batch_reset:
+            self._batch_reset = False
+            self._sync_folder_count()
+            self.endResetModel()
 
     def _sync_folder_count(self):
         count = self._subs.rowCount() if self._subs is not None else 0
@@ -81,6 +110,8 @@ class GridModel(QAbstractListModel):
             self.folderCountChanged.emit()
 
     def _on_data_changed(self, top_left, bottom_right, roles=None):
+        if self._batch_reset:
+            return                                   # (inside the batch's reset: everything is read again after it)
         offset = 0 if top_left.model() is self._subs else self._folder_count
         self.dataChanged.emit(self.index(top_left.row() + offset),
                               self.index(bottom_right.row() + offset))
@@ -210,11 +241,36 @@ class GridModel(QAbstractListModel):
             titles[self._folder_count + row] = "Loose in %s \u00B7 %s" % (name, f"{count:,}")
         return titles
 
+    _NAMES = None          # (every role's name, the file roles, the folder roles), worked out once
+
+    def _role_lists(self):
+        if GridModel._NAMES is None:
+            names = {role: name.decode() for role, name in self.roleNames().items()}
+            folder = [(name, _SUB_ROLES[role][1]) for role, name in names.items()
+                      if role in _SUB_ROLES and role != _IS_FOLDER]
+            files = [(name, role) for role, name in names.items() if role not in _SUB_ROLES and role != _IS_FOLDER]
+            GridModel._NAMES = (list(names.values()), files, folder)
+        return GridModel._NAMES
+
     @Slot(int, result="QVariantMap")
     def get(self, row: int):
-        """Every role of one row by name, in one call (a tile reads its data with this)."""
+        """Every role of one row by name, in one call (a tile reads its data with this). Only the roles of its
+        kind are asked for (a file's of a file, a folder's of a folder; the rest are None), from its own model,
+        through one index: a page shows a few hundred tiles, and each used to ask all 33 roles through this model."""
         if not 0 <= row < self.rowCount():
             return {}
-        index = self.index(row)
-        return {name.decode(): self.data(index, role) for role, name in self.roleNames().items()}
+        every, files, folder = self._role_lists()
+        out = dict.fromkeys(every)
+        is_folder = row < self._folder_count
+        out["isFolder"] = is_folder
+        if is_folder:
+            if self._subs is not None:
+                index = self._subs.index(row)
+                for name, role in folder:
+                    out[name] = self._subs.data(index, role)
+        elif self._media is not None:
+            index = self._media.index(row - self._folder_count)
+            for name, role in files:
+                out[name] = self._media.data(index, role)
+        return out
 

@@ -46,8 +46,9 @@ _PICTURE_EXTENSIONS = covers.ANY_PICTURE_EXTENSIONS
 
 
 def _scan(directory: str):
-    """(files, subdirs) of a directory as sorted lists of names; empty on error.
-    Hidden entries are skipped."""
+    """(files, subdirs) of a directory as lists of names, the folders sorted (the files are only counted and looked
+    through, so they are left in the directory's order: sorting thousands of names cost more than listing them);
+    empty on error. Hidden entries are skipped."""
     files, dirs = [], []
     try:
         with os.scandir(directory) as entries:
@@ -63,7 +64,6 @@ def _scan(directory: str):
                     continue
     except OSError:
         pass
-    files.sort(key=covers.natural_key)
     dirs.sort(key=covers.natural_key)
     return files, dirs
 

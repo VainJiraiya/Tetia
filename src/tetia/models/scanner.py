@@ -8,6 +8,7 @@ import hashlib
 import os
 import threading
 from pathlib import Path
+from urllib.parse import quote_from_bytes
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice
 from PySide6.QtGui import QImageIOHandler, QImageReader
@@ -135,11 +136,17 @@ class ScanStopped(Exception):
     """The scan was asked to stop (before it changed anything)."""
 
 
-def _item(media_id, path: Path, size, mtime, kind, favorite, rating, width, height) -> dict:
+def _uri_prefix(folder_directory: Path) -> str:
+    """The file:// address of a folder, to put a file's quoted name after: the same address Path.as_uri gives the
+    file, without its cost (it was most of the time spent listing a folder of thousands of files)."""
+    return "file://" + quote_from_bytes(os.fsencode(str(folder_directory).rstrip("/")))
+
+
+def _item(media_id, prefix: str, name: str, size, mtime, kind, favorite, rating, width, height) -> dict:
     return {
         "media_id": media_id,
-        "uniform_resource_identifier": path.as_uri(),
-        "file_name": path.name,
+        "uniform_resource_identifier": prefix + "/" + quote_from_bytes(os.fsencode(name)),
+        "file_name": name,
         "size": size,
         "mtime": mtime,
         "is_video": kind == "video",
@@ -170,7 +177,8 @@ def known_items(db, folder_directory: Path):
     rows = [r for r in rows if "/" not in r["path"][len(prefix):] and not r["name"].startswith(".")]
     rows.sort(key=lambda r: covers.natural_key(r["name"]))
     # addressed through the folder as it was asked for (a link stays a link), as a scan addresses them
-    return _split(_item(r["id"], folder_directory / r["name"], r["size"], r["mtime"], r["kind"], r["favorite"],
+    uri_prefix = _uri_prefix(folder_directory)
+    return _split(_item(r["id"], uri_prefix, r["name"], r["size"], r["mtime"], r["kind"], r["favorite"],
                         r["rating"], r["width"], r["height"]) for r in rows)
 
 
@@ -224,6 +232,7 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
     scan_directory = folder_directory.resolve()
     real_folder = str(scan_directory)
     standard = hash_fn is fingerprint
+    uri_prefix = _uri_prefix(folder_directory)
 
     # 1. One listing. A file's real path is the real folder's plus its name, except for a link (followed). An
     # unreadable folder raises here, before anything is written (it is not taken for an empty one).
@@ -243,6 +252,27 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
             except OSError:
                 continue                           # gone while being listed
 
+    # What the library has for this folder, in one query (a link's target elsewhere is looked up alone): a file
+    # whose size and mtime match its row is unchanged, and costs no more than a comparison
+    prefix = real_folder.rstrip("/") + "/"
+    rows = {r["path"]: r for r in db.conn.execute(
+        "SELECT id, path, name, kind, size, mtime, content_hash, favorite, rating, width, height, missing "
+        "FROM media WHERE path >= ? AND path < ?", (prefix, prefix[:-1] + chr(ord("/") + 1)))
+        if "/" not in r["path"][len(prefix):]}
+
+    def row_of(real):
+        if real in rows or real.startswith(prefix):
+            return rows.get(real)
+        return db.conn.execute(
+            "SELECT id, path, name, kind, size, mtime, content_hash, favorite, rating, width, height, missing "
+            "FROM media WHERE path = ?", (real,)).fetchone()
+
+    def unchanged(row, size, mtime):
+        return row is not None and row["size"] == size and row["mtime"] == mtime and row["content_hash"]
+
+    def picture_of(row):
+        return (row["width"], row["height"]) if row is not None and row["width"] is not None else None
+
     # 2. Read new and changed files BEFORE the transaction opens (reading takes a while on a slow drive, and the
     # write lock must not be held that long: the indexer thread and the UI scan share the database), in the order
     # they lie on the disk.
@@ -252,8 +282,9 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
         if should_stop is not None and should_stop():
             raise ScanStopped()
         is_image = extension in IMAGE_EXTENSIONS
-        stored = db.get_stored_hash(real, size, mtime)
-        stored_size = db.get_stored_size(real, size, mtime) if is_image else None
+        row = row_of(real)
+        stored = row["content_hash"] if unchanged(row, size, mtime) else None
+        stored_size = picture_of(row) if (stored and is_image) else None
         need_size = is_image and not stored_size
         picture = None
         if not stored:
@@ -262,7 +293,7 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
             else:
                 memo[real] = hash_fn(real)
                 picture = image_size(real) if need_size else None
-            if old_style and db.get_media_by_path(real) is None:
+            if old_style and row is None:
                 old[real] = _old_fingerprint(real, size)
         elif need_size:
             picture = image_size(real)
@@ -290,16 +321,27 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
             is_book = extension in EBOOK_EXTENSIONS
             scanned_paths.add(real)
             kind = kind_from_ext(extension)
+            row = row_of(real)
+
+            # A file just as the library has it: nothing to write
+            if (unchanged(row, size, mtime) and not row["missing"] and row["name"] == name and row["kind"] == kind
+                    and not sizes.get(real, (None, False))[1]):
+                item_metadata = _item(row["id"], uri_prefix, name, size, mtime, kind, row["favorite"], row["rating"],
+                                      *(picture_of(row) or (0, 0)))
+                (temporary_images_list if is_image else temporary_videos_list if is_video
+                 else temporary_comics_list if is_comic else temporary_books_list).append(item_metadata)
+                continue
 
             # Don't rehash files whose size and mtime are unchanged
-            content_hash = db.get_stored_hash(real, size, mtime) or memo.get(real) or hash_fn(real)
+            content_hash = (row["content_hash"] if unchanged(row, size, mtime) else None) or memo.get(real) \
+                or hash_fn(real)
 
             # A path with no row yet may be a renamed file: look for a row with
             # the same fingerprint whose file is gone, and take over its id/favorite/rating.
             # Only same-folder renames are reconciled (moves between folders are
             # treated as new files).
             moved = None
-            if db.get_media_by_path(real) is None:
+            if row is None:
                 candidate = db.find_missing_by_hash(content_hash, scanned_paths, claimed_ids)
                 if candidate is None and old.get(real):
                     candidate = db.find_missing_by_hash(old[real], scanned_paths, claimed_ids)
@@ -326,7 +368,7 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
             elif is_video:
                 picture = db.get_media_size(media_id)        # learned by the background probe, if it ran
 
-            item_metadata = _item(media_id, folder_directory / name, size, mtime, kind, favorite, rating,
+            item_metadata = _item(media_id, uri_prefix, name, size, mtime, kind, favorite, rating,
                                   *(picture or (0, 0)))
 
             # Sorts item into whichever list matches its extension

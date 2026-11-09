@@ -104,3 +104,42 @@ def test_a_group_title_starts_its_own_rows():
     assert kinds == [("header", 0, 0, "Loose in Art"), ("picture", 0, 2, ""),
                      ("header", 2, 0, "Loose in Camera"), ("picture", 2, 2, "")]
     assert tileLayout.hit(rows, 0, rows[0].y, 1000, rows[0].bottom) == []      # a title is not a tile
+
+
+def test_a_batch_makes_one_reset_of_both_models(tmp_path, qapp):
+    """A tab switch reloads the files and the folder tiles: the grid is reset (and laid out) once."""
+    (tmp_path / "Art" / "Sketches").mkdir(parents=True)
+    for folder, name in ((tmp_path / "Art", "a.png"), (tmp_path / "Art" / "Sketches", "b.png")):
+        image = QImage(4, 3, QImage.Format_RGB32)
+        image.fill(QColor("red"))
+        image.save(str(folder / name))
+    media, subs, grid = MediaModel(), SubfolderModel(), GridModel()
+    grid.media, grid.subfolders = media, subs
+    resets = []
+    grid.modelReset.connect(lambda: resets.append(1))
+    grid.beginBatch()
+    media.load_from_qurl(str(tmp_path / "Art"))
+    subs.load(str(tmp_path / "Art"))
+    media.filterMode = MediaModel.FilterMode.ImagesOnly
+    assert resets == []                                   # held while the batch lasts
+    grid.endBatch()
+    assert resets == [1] and grid.rowCount() == 2 and grid.folderCount == 1
+    media.filterMode = MediaModel.FilterMode.All          # outside a batch, as before
+    assert resets == [1, 1]
+
+
+def test_get_gives_what_each_role_gives(tmp_path, qapp):
+    (tmp_path / "Art" / "Sketches").mkdir(parents=True)
+    for folder, name in ((tmp_path / "Art", "a.png"), (tmp_path / "Art" / "Sketches", "b.png")):
+        image = QImage(4, 3, QImage.Format_RGB32)
+        image.fill(QColor("red"))
+        image.save(str(folder / name))
+    media, subs, grid = MediaModel(), SubfolderModel(), GridModel()
+    grid.media, grid.subfolders = media, subs
+    media.load_from_qurl(str(tmp_path / "Art"))
+    subs.load(str(tmp_path / "Art"))
+    assert grid.rowCount() == 2
+    for row in range(grid.rowCount()):
+        index = grid.index(row)
+        expected = {name.decode(): grid.data(index, role) for role, name in grid.roleNames().items()}
+        assert grid.get(row) == expected
