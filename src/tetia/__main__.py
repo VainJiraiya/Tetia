@@ -51,6 +51,11 @@ def main(argv=None) -> int:
     # profile switcher passes --profile.
     from tetia.models import profiles
     profiles.activate(profiles.pop_profile_argument(argv))
+    if profiles.is_private():
+        # the log goes to the system log, outside the vault: no paths, tags or searches in it
+        from PySide6.QtCore import QUrl
+        from tetia import privatelog
+        privatelog.install(QUrl.fromLocalFile(str(qml_main_file().parent)).toString())
 
     # QApplication, not QGuiApplication: the file dialogs need widgets
     from PySide6.QtQml import QQmlApplicationEngine
