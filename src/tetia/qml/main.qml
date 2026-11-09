@@ -1853,6 +1853,7 @@ Kirigami.ApplicationWindow {
         coverRevision: root.coverRevision
         onContinueOpened: function(item) { root.openFromHome(item.kind, item.path, item.name) }
         onLibraryOpened: function(tab) { root.switchTab(tab) }
+        onAddFoldersRequested: libraryDialog.open()
         onPinnedOpened: function(item) { root.openFromHome(item.kind, item.ref, item.name) }
         onCoverOpened: function(item) { root.openFromHome(item.kind, item.path, item.name) }
         onPictureOpened: function(files, index) {
@@ -2290,6 +2291,29 @@ Kirigami.ApplicationWindow {
                 MediaGridView {
                     id: gridView
                     objectName: "mediaGrid"
+
+                    // A tab with no library folder yet: what to do first (as before the rework)
+                    ColumnLayout {
+                        objectName: "emptyTab"
+                        parent: gridPage                       // centred on the page (the grid is as tall as its tiles)
+                        anchors.centerIn: parent
+                        z: 2
+                        visible: gridPage.isRoot && !root.onFavoritesTab && root.sourceList.length === 0
+                        spacing: 16
+                        Label {
+                            text: "Ready to start building your collection?"
+                            font.pixelSize: 18
+                            color: Kirigami.Theme.textColor
+                            Layout.alignment: Qt.AlignHCenter
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                        Button {
+                            text: "Add Folder"
+                            icon.name: "folder-add"
+                            Layout.alignment: Qt.AlignHCenter
+                            onClicked: filePicker.openFolderDialog()
+                        }
+                    }
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     model: gridModel

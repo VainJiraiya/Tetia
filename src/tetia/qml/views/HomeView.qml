@@ -25,6 +25,7 @@ Rectangle {
     // what to open: the host knows how
     signal continueOpened(var item)
     signal libraryOpened(string tab)
+    signal addFoldersRequested()                     // the empty Home's button (Library Folders)
     signal pinnedOpened(var item)
     signal coverOpened(var item)
     signal pictureOpened(var files, int index)
@@ -127,6 +128,30 @@ Rectangle {
     readonly property bool wide: flick.width >= 1200
     readonly property real leftWidth: wide ? Math.min(720, (flick.width - 48) * 0.5) : flick.width - 48
 
+    // Nothing to show yet (no library folder anywhere): what to do first, like an empty tab
+    readonly property bool empty: continueItems.length === 0 && libraryItems.length === 0 && pinnedItems.length === 0
+                                  && favoriteCovers.length === 0 && favoriteFiles.length === 0 && recentFiles.length === 0
+    ColumnLayout {
+        objectName: "emptyHome"
+        anchors.centerIn: parent
+        z: 2
+        visible: home.empty
+        spacing: 16
+        Label {
+            text: "Ready to start building your collection?"
+            font.pixelSize: 18
+            color: Kirigami.Theme.textColor
+            Layout.alignment: Qt.AlignHCenter
+            horizontalAlignment: Text.AlignHCenter
+        }
+        Button {
+            text: "Add Folders\u2026"
+            icon.name: "folder-add"
+            Layout.alignment: Qt.AlignHCenter
+            onClicked: home.addFoldersRequested()
+        }
+    }
+
     Flickable {
         id: flick
         anchors.fill: parent
@@ -172,13 +197,6 @@ Rectangle {
             width: home.leftWidth
             spacing: 26
 
-            Label {
-                Layout.fillWidth: true
-                visible: home.libraryItems.length === 0 && home.recentFiles.length === 0
-                wrapMode: Text.WordWrap
-                opacity: 0.7
-                text: "Home fills up as you use Tetia: what you are reading or watching, the boards you pin (“Pin to Home” in a board's menu), your favorites and what was added lately."
-            }
 
             Section {
                 title: "Continue"
