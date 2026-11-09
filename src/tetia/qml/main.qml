@@ -686,6 +686,7 @@ Kirigami.ApplicationWindow {
     SubfolderModel {
         id: subfolderModel
         filterMode: mediaModel.filterMode
+        background: true            // tiles are listed, and their covers and counts read, off the window's thread
     }
 
     // What the media grid shows: subfolder tiles first, then the files
