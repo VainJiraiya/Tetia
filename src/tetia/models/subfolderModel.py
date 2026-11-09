@@ -11,17 +11,14 @@ grid's current filter -- so the Manga tab never offers a "Finale movies" folder.
 import logging
 import os
 import sqlite3
-import threading
-import weakref
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QUrl, Signal, Slot, Property
 from PySide6.QtQml import QmlElement
 
 from tetia import timing
-from tetia.models import boards, covers, profiles, reader, series, virtualfolders
-from tetia.models.database import Database, get_database
+from tetia.models import boards, covers, reader, series, virtualfolders
+from tetia.models.database import get_database
 from tetia.models.searchModel import _Resolver
 from tetia.models.mediaModel import (
     COMIC_EXTENSIONS, EBOOK_EXTENSIONS, IMAGE_EXTENSIONS, MANGA_TAB_EXTENSIONS,
@@ -120,23 +117,10 @@ class SubfolderModel(QAbstractListModel):
     filterModeChanged = Signal()
     formatFilterChanged = Signal()
     formatsSet = Signal()             # a series was given a format, or lost it (the format chips count again)
-    backgroundChanged = Signal()
-    _listed = Signal(int, object, object)     # (load number, tiles, their collection meta) from the worker
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._main_db = get_database()
-        # In the background (the app's own model): the tiles are listed, and what each one reads from the disk (its
-        # cover, counts, chapters, progress) worked out, on a worker with a connection of its own, so the window
-        # never waits for a hard drive. Off (tests): all at once, as before.
-        self._background = False
-        self._worker = None
-        self._loads = 0                   # the latest load asked for; a worker's older result is dropped
-        self._closed = False
-        self._local = threading.local()   # the worker's own connection and meta, while it works
-        self._listed.connect(self._apply_listed, Qt.QueuedConnection)
-        stop = weakref.WeakMethod(self._stop_worker)
-        profiles.add_release_hook(lambda: stop() and stop()(), order=0)
+        self._db = get_database()
         self._parent_dir = ""
         self._series_paths: list[str] = []   # search results: these series as tiles, no folder open
         self._source_dirs: list[str] = []    # a tab's top level: the folders whose subfolders are shown together
@@ -146,18 +130,8 @@ class SubfolderModel(QAbstractListModel):
         self._dirs: list[dict] = []   # {"path", "name", "count"}
         self._format_filter = ""      # "": every tile; a format: only the series of that format
         self._boards_tab = ""         # a tab's top level: its boards come first among the tiles
-        self._meta_main: dict = {}
+        self._meta: dict = {}
         covers.notifier.changed.connect(self._on_collection_changed)
-
-    # The connection and collection meta to use: the worker's own while it lists, else the model's
-    @property
-    def _db(self):
-        return getattr(self._local, "db", None) or self._main_db
-
-    @property
-    def _meta(self):
-        meta = getattr(self._local, "meta", None)
-        return self._meta_main if meta is None else meta
 
     # ---- model ------------------------------------------------------------
 
@@ -441,93 +415,6 @@ class SubfolderModel(QAbstractListModel):
         return {"path": path, "name": os.path.basename(path), "count": count}
 
     def _reload(self):
-        if not self._background:
-            found, meta = self._list()
-            self.beginResetModel()
-            self._dirs = found
-            self._meta_main = meta
-            self.endResetModel()
-            return
-        # The page's old tiles go at once (never clickable on the new page); the new ones come from the worker
-        self._loads += 1
-        load = self._loads
-        if self._dirs:
-            self.beginResetModel()
-            self._dirs = []
-            self._meta_main = {}
-            self.endResetModel()
-        if self._closed:
-            return
-        if self._worker is None:
-            self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="folder-tiles")
-        self._worker.submit(self._list_in_background, load)
-
-    def _list_in_background(self, load: int):
-        if self._closed or load != self._loads:
-            return                                   # a newer load was asked for meanwhile
-        db = None
-        found = meta = None
-        try:
-            with timing.timed("folder tiles: listed in the background"):
-                db = Database()
-                self._local.db = db
-                found, meta = self._list()
-                self._local.meta = meta
-                for entry in found:
-                    if self._closed or load != self._loads:
-                        return
-                    self._warm(entry)
-        except Exception:
-            logger.exception("Listing the folder tiles failed")
-            found = None
-        finally:
-            self._local.db = None
-            self._local.meta = None
-            if db is not None:
-                db.close()
-        if found is not None and not self._closed:
-            self._listed.emit(load, found, meta)
-
-    def _warm(self, entry: dict):
-        """Work out what a tile reads from the disk, so drawing it does not (on the worker)."""
-        if entry.get("board") is not None:
-            return
-        if SubfolderModel._CACHED is None:
-            R = self.Roles
-            SubfolderModel._CACHED = {R.HeroPathRole, R.ItemCountRole, R.SingleFileRole, R.IsShowRole, R.SingleFileIdRole}
-        cache = entry.setdefault("_cache", {})
-        for role in SubfolderModel._CACHED:
-            cache[role] = self._entry_data(entry, role)
-        self._entry_data(entry, self.Roles.FolderCountRole)           # (keeps entry["folders"])
-        if self._is_series(entry):
-            entry["progress"] = series.progress(self._db, entry["path"])
-
-    def _apply_listed(self, load: int, found, meta):
-        if load != self._loads or self._closed:
-            return
-        self.beginResetModel()
-        self._dirs = found
-        self._meta_main = meta
-        self.endResetModel()
-
-    def _stop_worker(self):
-        """Before a vault is locked: no new listing, and the one under way is waited for."""
-        self._closed = True
-        if self._worker is not None:
-            self._worker.shutdown(wait=True, cancel_futures=True)
-
-    @Property(bool, notify=backgroundChanged)
-    def background(self) -> bool:
-        return self._background
-
-    @background.setter
-    def background(self, value: bool):
-        if bool(value) != self._background:
-            self._background = bool(value)
-            self.backgroundChanged.emit()
-
-    def _list(self):
-        """(the tiles, their collection meta) for what is open now."""
         extensions = self._extensions()
         found = []
         try:
@@ -557,7 +444,10 @@ class SubfolderModel(QAbstractListModel):
             found = [e for e in found if e.get("virtual") is None and e.get("board") is None
                      and meta.get(covers.folder_key(e["path"]), {}).get("is_series")
                      and meta.get(covers.folder_key(e["path"]), {}).get("format") == self._format_filter]
-        return found, meta
+        self.beginResetModel()
+        self._dirs = found
+        self._meta = meta
+        self.endResetModel()
 
     @staticmethod
     def _source_of(key: str, dirs, tiles) -> str | None:
