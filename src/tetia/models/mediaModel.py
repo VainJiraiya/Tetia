@@ -436,7 +436,8 @@ class MediaModel(QAbstractListModel):
         fresh = self._without_placed(*lists)
         shown = (self._all_images, self._all_videos, self._all_comics, self._all_books)
         if self._signature(fresh) != self._signature(shown):
-            self._show_lists(lists)
+            with timing.timed("files: a scan's changes shown"):
+                self._show_lists(lists)
             return
         # Nothing came or went: only what the scan learned on the way (an image's size), without a reset
         known = {item["media_id"]: item for items in fresh for item in items}

@@ -202,7 +202,8 @@ class SubfolderModel(QAbstractListModel):
         if role in SubfolderModel._CACHED:
             cache = entry.setdefault("_cache", {})
             if role not in cache:
-                cache[role] = self._entry_data(entry, role)
+                with timing.timed("folder tiles: drawn (cover, counts)"):
+                    cache[role] = self._entry_data(entry, role)
             return cache[role]
         return self._entry_data(entry, role)
 
