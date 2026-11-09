@@ -131,6 +131,7 @@ class Database:
             (15, self._migrate_v15),
             (16, self._migrate_v16),
             (17, self._migrate_v17),
+            (18, self._migrate_v18),
         )
         for target, step in steps:
             if version < target:
@@ -399,6 +400,14 @@ class Database:
                 PRIMARY KEY (kind, ref)
             );
         """)
+
+    def _migrate_v18(self):
+        # Where a series' tag came from, like a file's (media_tag.source): one read from its files (ComicInfo.xml,
+        # a downloader's metadata) is replaced by the next import; one given by hand never is
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(folder_tag)")}
+        if "source" not in columns:
+            self.conn.execute("ALTER TABLE folder_tag ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' "
+                              "CHECK (source IN ('manual','import'))")
 
     def close(self):
         self.conn.close()
@@ -1030,9 +1039,11 @@ class Database:
             ORDER BY tc.sort_order, t.name""", {"m": int(media_id)})
         return [{"id": r["id"], "name": r["name"], "category": r["category"]} for r in rows.fetchall()]
 
-    def insert_folder_tags(self, folders, tag_id: int):
-        self._write(self.conn.executemany, "INSERT OR IGNORE INTO folder_tag (folder, tag_id) VALUES (?, ?)",
-                    [(f, int(tag_id)) for f in folders])
+    def insert_folder_tags(self, folders, tag_id: int, source: str = "manual"):
+        self._write(self.conn.executemany,
+                    "INSERT INTO folder_tag (folder, tag_id, source) VALUES (?, ?, ?) "
+                    "ON CONFLICT(folder, tag_id) DO UPDATE SET source = 'manual' WHERE excluded.source = 'manual'",
+                    [(f, int(tag_id), source) for f in folders])
 
     def remove_folder_tags(self, folders, tag_id: int):
         """Take a tag off folders; a tag left with nothing using it goes too."""
@@ -1169,9 +1180,12 @@ class Database:
     def insert_media_tags(self, media_ids, tag_id: int, source: str = "manual"):
         """Link one tag to many items in ONE transaction (one commit)."""
         rows = [(m, tag_id, source) for m in media_ids]
+        # A tag given by hand that an import gave first becomes the user's (a later import never takes it away);
+        # an import never takes over one given by hand
         self._write(
             self.conn.executemany,
-            "INSERT OR IGNORE INTO media_tag (media_id, tag_id, source) VALUES (?, ?, ?)",
+            "INSERT INTO media_tag (media_id, tag_id, source) VALUES (?, ?, ?) "
+            "ON CONFLICT(media_id, tag_id) DO UPDATE SET source = 'manual' WHERE excluded.source = 'manual'",
             rows
         )
 
