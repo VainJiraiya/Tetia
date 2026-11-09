@@ -143,3 +143,17 @@ def test_get_gives_what_each_role_gives(tmp_path, qapp):
         index = grid.index(row)
         expected = {name.decode(): grid.data(index, role) for role, name in grid.roleNames().items()}
         assert grid.get(row) == expected
+
+
+def test_a_library_folder_holding_one_file_still_shows_what_is_in_it(tmp_path, qapp):
+    """It is where the tab's things come from, not one of them: only a series library folder is a tile."""
+    (tmp_path / "videos").mkdir()
+    (tmp_path / "videos" / "only.mp4").write_bytes(b"x")
+    folders = FolderModel()
+    folders.addFolder(covers.folder_uri(str(tmp_path / "videos")), "videos")
+    folders.currentCategory = "videos"
+    groups = folders.sourceGroups()
+    assert groups["tiles"] == [] and len(groups["expand"]) == 1
+    folders.setSeries(covers.folder_uri(str(tmp_path / "videos")), True)            # a series: one tile
+    groups = folders.sourceGroups()
+    assert len(groups["tiles"]) == 1 and groups["expand"] == []
