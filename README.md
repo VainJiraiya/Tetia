@@ -6,7 +6,7 @@ Tetia keeps your manga, pictures and videos in one place on KDE Plasma: browse
 collections, tag and rate what is in them, and find anything with one search box.
 It is built with Python, Qt Quick and Kirigami.
 
-> **Status: early (0.4.0).** It is in daily use by its author, but expect rough
+> **Status: early (0.4.1).** It is in daily use by its author, but expect rough
 > edges. Developed and tested on NixOS with Plasma 6, PySide6 6.11 and Python 3.14;
 > other setups are untested.
 
@@ -102,7 +102,7 @@ works.
 **With the script** (any distribution; installs for your user only, no root):
 
 ```sh
-git clone --branch v0.4.0 https://github.com/VainJiraiya/Tetia.git
+git clone --branch v0.4.1 https://github.com/VainJiraiya/Tetia.git
 cd Tetia
 ./install.sh          # checks the requirements above and tells you what is missing
 ```
@@ -150,6 +150,12 @@ the profile or close Tetia.
 This is entirely optional and never required. Without it the profile dialog offers
 a local private profile instead, which is separate from your normal one but **not**
 encrypted, and tells you how to get encryption.
+
+A vault on a spinning hard drive works, but the first visit to each folder and the
+first thumbnail of each file are slow there: encryption adds work to every file read,
+and a hard drive pays for each one with a seek. After that, thumbnails and pages come
+from memory and from Tetia's own caches. For a large private library, an SSD makes
+the first visits far quicker.
 
 ## Contributing
 

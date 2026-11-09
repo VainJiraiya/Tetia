@@ -81,6 +81,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.4.1" date="2026-11-08">
+      <description>
+        <p>Faster on hard drives and in encrypted vaults: folders are read with fewer and smaller reads, unchanged files cost nothing on a re-scan, thumbnails already shown stay in memory, small comic covers are no longer made again, and switching to a big tab is several times quicker. A private profile keeps its thumbnails in one file inside the vault, and no longer lets video frames, comic pages or file names leave it.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-11-08">
       <description>
         <p>A new Home tab with what you are in the middle of, your library, pinned boards, favorites and what was added lately. Boards gather a saved tag search into a collection. Pages show folders and series as covers and pictures and videos in their own shape, in rows, columns or a grid. Search gains a tag sidebar to narrow and exclude, and a tag's page can look everywhere. Series can be given a format (manga, webtoon and more) that sets how the reader opens them, and the Manga and EBooks tabs filter by it.</p>
