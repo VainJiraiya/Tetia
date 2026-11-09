@@ -88,7 +88,10 @@ def command_for(base: list, url: str, folder: str, tool: str = GALLERY_DL, first
         return base + ["--write-info-json", "--write-subs", "--no-simulate", "--print", "after_move:filepath",
                        "--no-colors", "-P", folder, "-o", "%(title)s [%(id)s].%(ext)s"] + extra + ["--", url]
     extra = ["--range", span] if span else []
-    return base + ["--write-metadata", "--no-colors", "-D", folder] + extra + ["--", url]
+    # extractor.tags: the boorus that only give one string of tags (Gelbooru, Moebooru...) fetch each post's page
+    # for their categories (tags_artist, tags_character, tags_copyright, tags_general), so the import can sort them
+    # (one more request a post; a site's own setting in the user's configuration still wins)
+    return base + ["--write-metadata", "--no-colors", "-o", "extractor.tags=true", "-D", folder] + extra + ["--", url]
 
 
 def clean_folder_name(name: str) -> str:

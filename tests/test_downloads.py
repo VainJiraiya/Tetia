@@ -176,6 +176,7 @@ def test_a_video_download_lands_with_its_info_json_tags(tmp_path, monkeypatch, q
 def test_the_options_become_the_tools_arguments():
     g = downloadService.command_for(["gallery-dl"], "u", "/f", "gallery-dl", first=1, last=200)
     assert g[g.index("--range") + 1] == "1-200" and g[-2:] == ["--", "u"]
+    assert g[g.index("-o") + 1] == "extractor.tags=true"             # the boorus' tag categories
     y = downloadService.command_for(["yt-dlp"], "u", "/f", "yt-dlp", last=20, height=1080)
     assert y[y.index("--playlist-items") + 1] == ":20" and y[y.index("-S") + 1] == "res:1080"
     plain = downloadService.command_for(["yt-dlp"], "u", "/f", "yt-dlp")
