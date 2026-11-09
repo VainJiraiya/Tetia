@@ -1133,6 +1133,9 @@ Kirigami.ApplicationWindow {
             onFinished: function(message) {
                 var popped = pageStack.pop()
                 if (popped) popped.destroy()
+                // the page purged from shows what is left: a folder's watcher would catch it, but a board, a search
+                // or a virtual folder is not a folder on disk (the trash ran while purge was on top)
+                root.reloadPage()
                 if (message !== "") showPassiveNotification(message)
             }
         }
