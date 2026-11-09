@@ -149,6 +149,45 @@ class SubfolderModel(QAbstractListModel):
             return ""
         return series.single_file(entry["path"], self._extensions())
 
+    @Slot(result="QVariantMap")
+    def browseScope(self) -> dict:
+        """What a page of folders holds, for browsing its tags: {ids: the files below its folders (of this tab's
+        kinds), series: the series below them (file:// keys)}. A series counts as one item with its own tags, so its
+        chapters are left out of the files. Empty ({}) for a page that is not of folders (search results, a virtual
+        folder): those count what they show."""
+        if self._source_dirs or self._source_tiles:
+            roots = list(self._source_dirs) + list(self._source_tiles)
+        elif self._parent_dir and self._virtual_id < 0:
+            roots = [self._parent_dir]
+        else:
+            return {}
+        db, extensions = self._db, self._extensions()
+        series_paths, ids = [], []
+        try:
+            for root in roots:
+                for key in (covers.folder_key(root), os.path.realpath(covers.folder_key(root))):
+                    prefix = key.rstrip(os.sep) + os.sep
+                    upper = prefix[:-1] + chr(ord(os.sep) + 1)
+                    series_paths += [r[0] for r in db.conn.execute(
+                        "SELECT path FROM collection WHERE is_series = 1 AND (path = ? OR (path >= ? AND path < ?))",
+                        (key.rstrip(os.sep), prefix, upper))]
+            series_paths = sorted(set(series_paths))
+            inside = tuple(os.path.realpath(p).rstrip(os.sep) + os.sep for p in series_paths)
+            seen = set()
+            for root in roots:
+                prefix = os.path.realpath(covers.folder_key(root)).rstrip(os.sep) + os.sep
+                upper = prefix[:-1] + chr(ord(os.sep) + 1)
+                for media_id, path in db.conn.execute(
+                        "SELECT id, path FROM media WHERE missing = 0 AND path >= ? AND path < ?", (prefix, upper)):
+                    if media_id in seen or Path(path).suffix.lower() not in extensions or path.startswith(inside):
+                        continue
+                    seen.add(media_id)
+                    ids.append(media_id)
+        except sqlite3.Error as e:
+            logger.error("Failed to look through a page's folders: %s", e)
+            return {}
+        return {"ids": ids, "series": [covers.folder_uri(p) for p in series_paths]}
+
     @Slot(result=list)
     def folderKeys(self) -> list:
         """The series shown as tiles now, as file:// addresses: the only folders that carry tags."""

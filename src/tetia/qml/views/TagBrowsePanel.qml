@@ -41,12 +41,18 @@ Rectangle {
     height: parent ? parent.height : implicitHeight
     color: Kirigami.Theme.alternateBackgroundColor
 
+    property bool wholeFolders: false     // the tags of everything below the page's folders (not only what is shown)
+
     function refresh() {
         if (!mediaBackend || !tagBackend) {
             groups = []
             return
         }
-        groups = tagBackend.browse(mediaBackend.visibleIds(), subfolderBackend ? subfolderBackend.folderKeys() : [])
+        // a page of folders: everything below them (a folder tile's files too, not only what is in view)
+        var scope = subfolderBackend ? subfolderBackend.browseScope() : ({})
+        wholeFolders = scope.ids !== undefined
+        if (wholeFolders) groups = tagBackend.browse(scope.ids, scope.series)
+        else groups = tagBackend.browse(mediaBackend.visibleIds(), subfolderBackend ? subfolderBackend.folderKeys() : [])
     }
 
     // The same colours and titles as the tag editor (TagPanel.qml), so a category looks the same in both
@@ -371,7 +377,8 @@ Rectangle {
             wrapMode: Text.WordWrap
             opacity: 0.55
             font: Kirigami.Theme.smallFont
-            text: "Only the items on this page count. Tags on a single item are hidden."
+            text: (root.wholeFolders ? "Everything in these folders counts" : "Only the items on this page count")
+                  + ". Tags on a single item are hidden."
         }
     }
 }
