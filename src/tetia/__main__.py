@@ -22,7 +22,7 @@ def _register_qml_types():
     """Import every model so its @QmlElement decorator registers it with QML
     (module "Tetia"). Must run after the profile has been chosen."""
     from tetia.models import (  # noqa: F401
-        boardService, coverPicker, favoritesModel, file_picker, folderModel, gridModel, mediaActions,
+        boardService, coverPicker, downloadService, favoritesModel, file_picker, folderModel, gridModel, mediaActions,
         mediaModel, metadataModel, player, playbackStore, profileModel, purgeSession, readerSession, searchModel, homeModel, showModel, subfolderModel, tagImportService, tagModel, tileRows, uiSettings, virtualFolderService, wheelZoom,
     )
 
