@@ -117,6 +117,8 @@ Flickable {
     property var subfolderBackend: null
     // BoardService, the tab whose boards "Add to board" offers, and the board this page shows (-1: none)
     property var boardBackend: null
+    // Re-import tags (TagImportService)
+    property var importService: null
     // HomeModel: "Pin to Home" on boards (folders, series and files go on Home through the favorites)
     property var homeBackend: null
     // MediaActions: show in the file manager, copy the path
@@ -433,6 +435,14 @@ Flickable {
             }
         }
         MenuItem {
+            text: "Re-import tags"
+            icon.name: "view-refresh"
+            visible: grid.importService !== null && grid.importService.enabled
+            height: visible ? implicitHeight : 0
+            enabled: grid.importService !== null && !grid.importService.busy
+            onTriggered: grid.importService.reimport([grid.contextMenuData.uri])
+        }
+        MenuItem {
             text: "Metadata"
             icon.name: "help-about-symbolic"
             onTriggered: grid.metadataRequested(grid.contextMenuData.mediaId)
@@ -677,6 +687,14 @@ Flickable {
                 }
                 grid.selectionChanged()
             }
+        }
+        MenuItem {
+            text: "Re-import tags"
+            icon.name: "view-refresh"
+            visible: grid.importService !== null && grid.importService.enabled
+            height: visible ? implicitHeight : 0
+            enabled: grid.importService !== null && !grid.importService.busy
+            onTriggered: grid.importService.reimport([subfolderMenu.folderPath])
         }
         // what kind of series this is: how the reader opens it (manga right to left, a webtoon as a strip...).
         // (A menu item that opens its own menu: a submenu cannot be hidden on the tiles it does not apply to.)

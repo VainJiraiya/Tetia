@@ -328,6 +328,13 @@ Kirigami.ApplicationWindow {
                             enabled: !root.onFavoritesTab
                             onTriggered: libraryDialog.open()
                         }
+                        MenuItem {
+                            // tags from ComicInfo.xml and gallery-dl's metadata, read when files are new or changed
+                            text: "Import Tags from Files"
+                            checkable: true
+                            checked: tagImports.enabled
+                            onTriggered: tagImports.enabled = checked
+                        }
                         Menu {
                             title: "Tile Size"
                             enabled: root.tileTarget !== ""
@@ -722,6 +729,13 @@ Kirigami.ApplicationWindow {
 
     TagModel {
         id: tagModel
+    }
+
+    TagImportService {
+        id: tagImports
+        onFinished: function(count) {
+            showPassiveNotification(count === 1 ? "Tags imported again from 1 file" : "Tags imported again from " + count + " files")
+        }
     }
 
     ProfileModel {
@@ -2291,6 +2305,7 @@ Kirigami.ApplicationWindow {
                     selectMode: root.isSelectMode && pageStack.currentItem === gridPage
                     subfolderBackend: subfolderModel
                     boardBackend: boardService
+                    importService: tagImports
                     homeBackend: homeModel
                     actionsBackend: mediaActions
                     onTrashRequested: function(ids) { root.requestTrash(ids) }
