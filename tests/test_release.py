@@ -87,3 +87,27 @@ def test_thumbnails_stop_when_the_profile_is_released(tmp_path, monkeypatch):
     began = time.monotonic()
     image = provider.requestImage(str(tmp_path / "pics" / "p001.png"), QSize(), QSize(256, 256))
     assert image.isNull() and time.monotonic() - began < 0.2
+
+
+def test_a_release_hook_skips_a_player_whose_qt_object_is_gone(qapp):
+    """A closed player's Qt object is deleted before its Python side: its hook must not touch it (RuntimeError)."""
+    import weakref
+    import shiboken6
+    from PySide6.QtCore import QObject, QTimer
+    from tetia.models.player import _call_if_alive
+
+    class Thing(QObject):
+        def __init__(self):
+            super().__init__()
+            self.timer = QTimer(self)
+            self.calls = 0
+
+        def stop(self):
+            self.timer.stop()
+            self.calls += 1
+    thing = Thing()
+    stopper = weakref.WeakMethod(thing.stop)
+    _call_if_alive(stopper)
+    assert thing.calls == 1
+    shiboken6.delete(thing)
+    _call_if_alive(stopper)                                         # no RuntimeError

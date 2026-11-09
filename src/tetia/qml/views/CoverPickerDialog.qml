@@ -14,7 +14,7 @@ Dialog {
     property var picker: null
     property int selected: -1
 
-    signal applied()
+    signal coverApplied()       // (not "applied": Dialog has its own, for an Apply button)
     signal failed()
 
     parent: Overlay.overlay
@@ -32,7 +32,7 @@ Dialog {
         if (root.selected < 0 || !root.picker) return
         if (root.picker.choose(root.selected)) {
             root.close()
-            root.applied()
+            root.coverApplied()
         } else {
             root.failed()
         }
@@ -169,7 +169,7 @@ Dialog {
             onClicked: {
                 if (root.picker.useAutomatic()) {
                     root.close()
-                    root.applied()
+                    root.coverApplied()
                 }
             }
         }

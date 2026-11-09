@@ -82,7 +82,7 @@ Kirigami.ApplicationWindow {
     CoverPickerDialog {
         id: coverDialog
         picker: coverPicker
-        onApplied: showPassiveNotification("Cover updated")
+        onCoverApplied: showPassiveNotification("Cover updated")
         onFailed: showPassiveNotification("That page could not be used as the cover")
     }
     function pickCoverOfMedia(mediaId) { if (coverPicker.open(mediaId)) coverDialog.open() }
@@ -205,12 +205,36 @@ Kirigami.ApplicationWindow {
                 Layout.preferredWidth: headerRow.sideSlotWidth + headerRow.sortSlotWidth * headerRow.toolButtonCount
                 Layout.preferredHeight: leftButton.height
 
+                // Always shows which profile you are in, if it isn't General: right beside the menu button
+                Row {
+                    id: profileIndicator
+                    anchors.left: leftButton.right
+                    anchors.leftMargin: Kirigami.Units.smallSpacing
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 4
+                    visible: profileModel.isPrivate
+
+                    Kirigami.Icon {
+                        source: profileModel.activeKind === "vault" ? "lock" : "security-low"
+                        width: 16
+                        height: 16
+                    }
+                    Label {
+                        visible: titleSlot.width > 560
+                        width: Math.min(implicitWidth, 150)
+                        text: profileModel.activeName
+                        elide: Text.ElideRight
+                        font.pixelSize: 12
+                        opacity: 0.8
+                    }
+                }
+
                 // On a tag's results: one button that switches where the tag is looked for, between the library
                 // folder it was clicked in and the whole tab. It names the place a click would switch to.
                 Button {
                     id: scopeButton
                     objectName: "scopeButton"
-                    anchors.left: leftButton.right
+                    anchors.left: profileIndicator.visible ? profileIndicator.right : leftButton.right
                     anchors.leftMargin: Kirigami.Units.smallSpacing
                     anchors.verticalCenter: parent.verticalCenter
                     visible: pageStack.currentItem !== null && pageStack.currentItem.isTagPage === true
@@ -240,7 +264,7 @@ Kirigami.ApplicationWindow {
                             visible: !!scopeButton.page && scopeButton.page.filterCategory !== ""
                             height: visible ? implicitHeight : 0
                             checkable: true
-                            checked: !!scopeButton.page && scopeButton.page.tagWholeTab && !scopeButton.page.tagEverywhere
+                            checked: !!scopeButton.page && scopeButton.page.tagWholeTab === true && !scopeButton.page.tagEverywhere
                             onTriggered: root.setTagScope(scopeButton.page, "tab")
                         }
                         MenuItem {
@@ -253,20 +277,20 @@ Kirigami.ApplicationWindow {
                 }
 
                 // In the image viewer: the picture's tags, starting beside the back button and reaching toward the
-                // title. Only as many as fit before the title (or the profile mark), then "+N" with the rest.
+                // title. Only as many as fit before the title, then "+N" with the rest.
                 TagChipRow {
                     id: viewerTagRow
                     objectName: "viewerTags"
-                    anchors.left: leftButton.right
+                    anchors.left: profileIndicator.visible ? profileIndicator.right : leftButton.right
                     anchors.leftMargin: Kirigami.Units.largeSpacing
                     anchors.verticalCenter: parent.verticalCenter
                     visible: root.viewerTags.length > 0
                     tags: root.viewerTags
-                    // up to the title's left edge, or the start of the title area when the profile mark sits there
-                    readonly property real limit: profileIndicator.visible
-                        ? titleSlot.x - leftSlot.x - Kirigami.Units.smallSpacing
-                        : titleSlot.x - leftSlot.x + (titleSlot.width - Math.min(titleText.contentWidth, titleSlot.width)) / 2 - Kirigami.Units.largeSpacing
-                    available: Math.max(0, limit - leftButton.x - leftButton.width - Kirigami.Units.largeSpacing)
+                    // up to the title's left edge, from beside the menu button (or the profile mark beside it)
+                    readonly property real limit: titleSlot.x - leftSlot.x + (titleSlot.width - Math.min(titleText.contentWidth, titleSlot.width)) / 2 - Kirigami.Units.largeSpacing
+                    readonly property real start: profileIndicator.visible ? profileIndicator.x + profileIndicator.width
+                                                                           : leftButton.x + leftButton.width
+                    available: Math.max(0, limit - start - Kirigami.Units.largeSpacing)
                     onTagClicked: function(category, name) { root.browseTagFromViewer(category, name) }
                 }
 
@@ -397,29 +421,6 @@ Kirigami.ApplicationWindow {
 
                 readonly property var crumbs: pageStack.currentItem && pageStack.currentItem.crumbs
                                               ? pageStack.currentItem.crumbs : []
-
-                // Always shows which profile you are in, if it isn't General
-                Row {
-                    id: profileIndicator
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 4
-                    visible: profileModel.isPrivate
-
-                    Kirigami.Icon {
-                        source: profileModel.activeKind === "vault" ? "lock" : "security-low"
-                        width: 16
-                        height: 16
-                    }
-                    Label {
-                        visible: titleSlot.width > 560
-                        width: Math.min(implicitWidth, 150)
-                        text: profileModel.activeName
-                        elide: Text.ElideRight
-                        font.pixelSize: 12
-                        opacity: 0.8
-                    }
-                }
 
                 Label {
                     id: titleText

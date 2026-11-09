@@ -13,6 +13,8 @@ import os
 import re
 import weakref
 
+import shiboken6
+
 from PySide6.QtCore import Property, QObject, QRunnable, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QOpenGLContext
 from PySide6.QtQml import QmlElement
@@ -34,6 +36,14 @@ _UPDATE_CB = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
 
 END_MARGIN = 2.0   # a start this close to a file's end (seconds) means the remembered spot no longer fits it
 
+
+
+def _call_if_alive(stopper):
+    """Call a weakly held method, unless its object is gone, or only its Python side is left (a closed player's
+    Qt object is deleted first; touching its timer then raises RuntimeError)."""
+    method = stopper()
+    if method is not None and shiboken6.isValid(method.__self__):
+        method()
 
 class _Param(ctypes.Structure):
     _fields_ = [("type", ctypes.c_int), ("data", ctypes.c_void_p)]
@@ -123,7 +133,7 @@ class Player(QObject):
         self._timer.timeout.connect(self._poll)
         # a file held open would keep a vault from locking (a weak reference: a closed player is not kept alive)
         stopper = weakref.WeakMethod(self.stop)
-        profiles.add_release_hook(lambda: stopper() and stopper()(), order=0)
+        profiles.add_release_hook(lambda: _call_if_alive(stopper), order=0)
 
     # ---- the engine ------------------------------------------------------------------------------
 
