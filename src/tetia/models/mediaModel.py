@@ -258,11 +258,13 @@ class MediaModel(QAbstractListModel):
         if folder_directory is None:
             return
         try:
-            known = known_items(self._db, folder_directory)
+            with timing.timed("files: what the library knows"):
+                known = known_items(self._db, folder_directory)
         except sqlite3.Error as e:
             logger.error("Failed to read what is known of %s: %s", folder_directory, e)
             known = ([], [], [], [])
-        self._show_lists(known)
+        with timing.timed("files: shown (rows built)"):
+            self._show_lists(known)
         self._start_scan(folder_directory)
 
     @Slot(list)
@@ -286,11 +288,13 @@ class MediaModel(QAbstractListModel):
         if self._sources and not self._released:
             self._file_system_watcher.addPaths(self._sources)
         try:
-            known = self._merge([known_items(self._db, f) for f in folders])
+            with timing.timed("files: what the library knows"):
+                known = self._merge([known_items(self._db, f) for f in folders])
         except sqlite3.Error as e:
             logger.error("Failed to read what is known of the library folders: %s", e)
             known = ([], [], [], [])
-        self._show_lists(known)
+        with timing.timed("files: shown (rows built)"):
+            self._show_lists(known)
         self.sourcesChanged.emit()
         if folders:
             self._start_scan(folders)
