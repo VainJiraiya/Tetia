@@ -277,6 +277,8 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
     # write lock must not be held that long: the indexer thread and the UI scan share the database), in the order
     # they lie on the disk.
     memo, sizes, old = {}, {}, {}
+    infos = {}                     # new or changed comics: what their ComicInfo.xml says (see tagimport)
+    importing = standard and db.get_setting("import.tags", "on") != "off"
     old_style = standard and _gone_with_old_fingerprints(db, real_folder, {e[2] for e in entries})
     for name, extension, real, size, mtime, _ in sorted(entries, key=lambda e: e[5]):
         if should_stop is not None and should_stop():
@@ -295,6 +297,11 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
                 picture = image_size(real) if need_size else None
             if old_style and row is None:
                 old[real] = _old_fingerprint(real, size)
+            if importing and extension in COMIC_EXTENSIONS:
+                from tetia.models import comicinfo
+                info = comicinfo.read(real)
+                if info:
+                    infos[real] = info
         elif need_size:
             picture = image_size(real)
         if is_image:
@@ -306,6 +313,7 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
     temporary_books_list = []
     scanned_paths = set()
     claimed_ids = set()
+    ids = {}
 
     # 3. One transaction for the whole scan; database helpers used here never commit.
     # IMMEDIATE takes the write lock now and waits for it (the busy timeout). A plain
@@ -362,6 +370,7 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
                     kind, size, mtime, content_hash
                 )
 
+            ids[real] = media_id
             picture, fresh = sizes.get(real, (None, False))
             if picture is not None and fresh:
                 db.set_media_size(media_id, *picture)
@@ -389,6 +398,16 @@ def scan_folder_unlocked(db, folder_directory: Path, hash_fn, should_stop=None):
     except Exception:
         db.conn.rollback()
         raise
+
+    # Tags the new comics carry, then what all the chapters of the series share (after the scan's own transaction)
+    if infos:
+        from tetia.models import tagimport
+        for real, info in infos.items():
+            if real in ids:
+                tagimport.apply_to_file(db, ids[real], info)
+        common = tagimport.shared(list(infos.values()))
+        tagimport.update_series_from_chapters(db, str(folder_directory), tagimport.Imported(
+            rating=common.rating, description=common.description, format=common.format))
 
     return (temporary_images_list, temporary_videos_list,
             temporary_comics_list, temporary_books_list)

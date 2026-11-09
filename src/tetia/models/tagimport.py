@@ -10,6 +10,7 @@ and one the user gives that an import gave first becomes theirs. A content ratin
 format are only filled in where none was set; an import never overrides a choice.
 """
 import logging
+import os
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -65,18 +66,19 @@ def apply_to_file(db, media_id: int, imported: Imported):
         logger.error("Importing tags failed: %s", e)
 
 
-def apply_to_series(db, folder: str, imported: Imported):
-    """The same for a series (a folder shown as one item): its imported tags replaced, and its rating, description
-    and format filled in where none was set."""
+def apply_to_series(db, folder: str, imported: Imported, tag_ids=None):
+    """The same for a series (a folder shown as one item): its imported tags replaced (by these tag ids, when
+    given), and its rating, description and format filled in where none was set."""
     key = covers.folder_key(folder)
+    tagged = os.path.realpath(key)                      # (series tags are kept by the folder's real path)
 
     def _do():
         old = [r[0] for r in db.conn.execute(
-            "SELECT tag_id FROM folder_tag WHERE folder = ? AND source = 'import'", (key,))]
-        db.conn.execute("DELETE FROM folder_tag WHERE folder = ? AND source = 'import'", (key,))
-        for tag_id in _tag_ids(db, imported):
+            "SELECT tag_id FROM folder_tag WHERE folder = ? AND source = 'import'", (tagged,))]
+        db.conn.execute("DELETE FROM folder_tag WHERE folder = ? AND source = 'import'", (tagged,))
+        for tag_id in tag_ids if tag_ids is not None else _tag_ids(db, imported):
             db.conn.execute("INSERT OR IGNORE INTO folder_tag (folder, tag_id, source) VALUES (?, ?, 'import')",
-                            (key, tag_id))
+                            (tagged, tag_id))
         meta = db.get_collection_meta(key)
         if imported.rating is not None and 0 <= imported.rating <= 3 and meta["rating"] is None:
             db.set_collection_rating(key, int(imported.rating))
@@ -109,3 +111,24 @@ def shared(per_item: list) -> Imported:
         return values.pop() if len(values) == 1 else empty
     return Imported(tags=tags, rating=agreed("rating", None), description=agreed("description", ""),
                     format=agreed("format", ""))
+
+
+def update_series_from_chapters(db, folder: str, details: Imported = None):
+    """A series' imported tags are what every chapter's import gave (the series, its writer...), worked out from
+    the library rather than from what one scan read, so a new chapter alone never replaces them. `details`
+    (rating, description, format) fill in what the series lacks."""
+    from tetia.models import series
+    key = covers.folder_key(folder)
+    if not db.get_collection_meta(key)["is_series"]:
+        return
+    per_chapter = []
+    for path in series.chapters(key):
+        found = db.get_media_by_path(os.path.realpath(path))
+        if found is None:
+            continue
+        ids = {r[0] for r in db.conn.execute(
+            "SELECT tag_id FROM media_tag WHERE media_id = ? AND source = 'import'", (found[0],))}
+        if ids:
+            per_chapter.append(ids)
+    shared_ids = sorted(set.intersection(*per_chapter)) if per_chapter else []
+    apply_to_series(db, key, details or Imported(), tag_ids=shared_ids)

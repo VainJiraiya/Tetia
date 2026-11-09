@@ -182,6 +182,9 @@ def set_series(db, folder: str, is_series: bool):
     except sqlite3.Error as e:
         logger.error("Failed to set series for %s: %s", key, e)
         return
+    if is_series:
+        from tetia.models import tagimport
+        tagimport.update_series_from_chapters(db, key)      # what all its chapters' files say is the series'
     covers.notifier.changed.emit(key)
 
 
