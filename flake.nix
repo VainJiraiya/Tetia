@@ -126,6 +126,10 @@
             pkgs.mpv-unwrapped                   # libmpv: the video player engine (loaded with ctypes)
             pkgs.ffmpegthumbnailer               # Video thumbnails (thumbModel.py runs it)
 
+            # -- Downloads (optional: the header's download button shows when one is installed) --
+            pkgs.gallery-dl                      # Pictures, galleries, booru searches (run as a program, never imported: GPL-2.0-only)
+            pkgs.yt-dlp                          # Videos
+
             # -- Build Tools ---------------------------------------------
             pkgs.cmake
             pkgs.ninja
