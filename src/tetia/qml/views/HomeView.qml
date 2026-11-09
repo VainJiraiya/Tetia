@@ -36,14 +36,16 @@ Rectangle {
 
     color: Kirigami.Theme.backgroundColor
 
+    // A row is replaced only when what it shows changed: a new list recreates every tile in it, and each tile asks
+    // for its picture again (slow from a vault on a hard drive), so coming back to Home redrew everything
+    function changed(old, fresh) { return JSON.stringify(old) !== JSON.stringify(fresh) }
     function refresh() {
         if (!backend) return
-        continueItems = backend.continueItems()
-        libraryItems = backend.library()
-        pinnedItems = backend.pinned()
-        favoriteCovers = backend.favoriteCovers()
-        favoriteFiles = backend.favorites()
-        recentFiles = backend.recent()
+        var rows = { continueItems: backend.continueItems(), libraryItems: backend.library(),
+                     pinnedItems: backend.pinned(), favoriteCovers: backend.favoriteCovers(),
+                     favoriteFiles: backend.favorites(), recentFiles: backend.recent() }
+        for (var name in rows)
+            if (changed(home[name], rows[name])) home[name] = rows[name]
     }
     onVisibleChanged: if (visible) refresh()
     Connections {

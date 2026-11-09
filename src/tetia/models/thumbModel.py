@@ -9,13 +9,16 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import weakref
+from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import quote
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt, QUrl
 from PySide6.QtGui import QImage, QImageReader
 from PySide6.QtQuick import QQuickImageProvider
 
+from tetia import timing
 from tetia.models import bookcovers, profiles, thumbPack
 
 logger = logging.getLogger(__name__)
@@ -117,7 +120,8 @@ def _size_tier_dir(base: Path, pixel_size: QSize) -> Path:
 
 def _tagged(img: QImage, uri: str, local_path: str):
     """The thumbnail with the spec's tEXt metadata (what it was made from, and that file's mtime, so a reader can
-    tell it is stale); None if the file is gone."""
+    tell it is stale); None if the file is gone. A thumbnail already marked with its picture's own size
+    (Thumb::Image::Width/Height: as big as that picture allows) keeps the mark."""
     try:
         st = Path(local_path).stat()
     except OSError:
@@ -127,6 +131,15 @@ def _tagged(img: QImage, uri: str, local_path: str):
     out_img.setText("Thumb::MTime", str(int(st.st_mtime)))
     out_img.setText("Thumb::Size", str(st.st_size))
     return out_img
+
+
+def _source_edge(img: QImage) -> int:
+    """The longer side of the picture a thumbnail was made from, when it says (Thumb::Image::Width/Height); 0
+    when it does not."""
+    try:
+        return max(int(img.text("Thumb::Image::Width")), int(img.text("Thumb::Image::Height")))
+    except ValueError:
+        return 0
 
 
 def _pack_thumbnail(pack, uri: str, uri_md5: str, img: QImage, local_path: str) -> bool:
@@ -192,6 +205,8 @@ _TIERS = (("normal", 128), ("large", 256), ("x-large", 512), ("xx-large", 1024))
 def forget_thumbnails(local_path: str):
     """Delete every cached thumbnail of a file, so the next request makes a fresh one
     (used when its cover is changed by hand)."""
+    for provider in list(_providers):
+        provider.forget_memory(local_path)
     uri_md5 = hashlib.md5(_local_path_to_thumb_uri(local_path).encode("utf-8")).hexdigest()
     pack = thumbPack.pack()
     if pack is not None:
@@ -243,9 +258,35 @@ def without_film_strip(image: QImage) -> QImage:
     return image.copy(left, 0, width - left - right, height)
 
 
+# The providers there are, so forget_thumbnails can clear what they keep in memory
+_providers = weakref.WeakSet()
+
+# Thumbnails kept in memory, decoded: Qt's own image cache keeps only a few that are off screen, so going back to a
+# tab or to Home asked the disk for every picture again (seconds, in a vault on a hard drive)
+MEMORY_BUDGET = 192 * 1024 * 1024
+
+
+def _local_path_of(id_string: str) -> str:
+    """The file a thumbnail is asked for: id_string is a file:// address or a plain path, perhaps with the "?v=<n>"
+    QML adds after a cover is changed by hand (not part of the file's name)."""
+    id_string = re.sub(r"\?v=\d+$", "", id_string)
+    if id_string.startswith(NO_STRIP):
+        id_string = id_string[len(NO_STRIP):]
+    q = QUrl(id_string)
+    if q.scheme() == "file":
+        return q.toLocalFile()
+    if q.scheme():  # some other scheme, unlikely but be safe
+        return q.toLocalFile() or id_string
+    return id_string
+
+
 class ThumbnailProvider(QQuickImageProvider):
     def __init__(self):
         super().__init__(QQuickImageProvider.Image)
+        _providers.add(self)
+        self._memory = OrderedDict()      # (id, tier) -> (image, the file's mtime, its path), oldest first
+        self._memory_bytes = 0
+        self._memory_lock = threading.Lock()
         # General shares the system cache; a private profile only ever uses its own
         self.thumbnails_base = profiles.thumbnail_base()
         # ...and keeps them in one file (thumbPack); its old thumbnail folders are read, and moved in, until empty
@@ -280,6 +321,41 @@ class ThumbnailProvider(QQuickImageProvider):
         order = [want] + list(range(want + 1, len(_TIERS))) + list(range(want - 1, -1, -1))
         return [(self.thumbnails_base / _TIERS[i][0], _TIERS[i][1]) for i in order]
 
+    # ---- in memory
+
+    def _remember(self, key, image: QImage, local_path: str):
+        if image.isNull():
+            return
+        with self._memory_lock:
+            old = self._memory.pop(key, None)
+            if old is not None:
+                self._memory_bytes -= old[0].sizeInBytes()
+            self._memory[key] = (image, self._mtime(local_path), local_path)
+            self._memory_bytes += image.sizeInBytes()
+            while self._memory_bytes > MEMORY_BUDGET and len(self._memory) > 1:
+                _, (dropped, _, _) = self._memory.popitem(last=False)
+                self._memory_bytes -= dropped.sizeInBytes()
+
+    def _recall(self, key):
+        """A thumbnail kept in memory, if its file has not changed since (a stat, which the kernel answers from
+        memory once the file was seen)."""
+        with self._memory_lock:
+            entry = self._memory.get(key)
+        if entry is None:
+            return None
+        image, mtime, local_path = entry
+        if self._mtime(local_path) != mtime:
+            return None
+        with self._memory_lock:
+            if key in self._memory:
+                self._memory.move_to_end(key)
+        return image
+
+    def forget_memory(self, local_path: str):
+        with self._memory_lock:
+            for key in [k for k, v in self._memory.items() if v[2] == local_path]:
+                self._memory_bytes -= self._memory.pop(key)[0].sizeInBytes()
+
     @staticmethod
     def _generate(local_path: str, target_size: QSize) -> QImage:
         """Make a thumbnail of an image, a video, a comic, an EPUB or a PDF (null for anything else)."""
@@ -308,29 +384,38 @@ class ThumbnailProvider(QQuickImageProvider):
             return True
         return not (bookcovers.is_book(local_path) or QImageReader(local_path).canRead())
 
-    def _read_cached(self, cache_dir: Path, uri_md5: str, packed: dict) -> QImage:
-        """One tier's cached thumbnail (null if there is none): from the pack in a private profile, else from the
-        freedesktop folder. A thumbnail an older Tetia left as a file in a private profile is moved into the pack
-        the first time it is used."""
+    def _read_cached(self, cache_dir: Path, uri_md5: str, packed: dict):
+        """One tier's cached thumbnail (null if there is none) and where it was: "pack" in a private profile,
+        "folder" for the freedesktop folders. A thumbnail an older Tetia left as a file in a private profile is
+        moved into the pack the first time it is used ("moved in")."""
         thumb_file = cache_dir / f"{uri_md5}.png"
         if self._pack is None:
-            return QImage(str(thumb_file)) if thumb_file.exists() else QImage()
+            return (QImage(str(thumb_file)) if thumb_file.exists() else QImage()), "folder"
         data = packed.get(cache_dir.name)
         if data:
-            return QImage.fromData(data, "PNG")
+            return QImage.fromData(data, "PNG"), "pack"
         if not self._legacy:
-            return QImage()
+            return QImage(), "pack"
         try:
             data = thumb_file.read_bytes()
         except OSError:
-            return QImage()
+            return QImage(), "pack"
         img = QImage.fromData(data, "PNG")
         if not img.isNull() and self._pack.put(uri_md5, cache_dir.name, data):
             try:
                 thumb_file.unlink()
             except OSError:
                 pass
-        return img
+        return img, "moved in"
+
+    def _good_enough(self, img: QImage, edge: int, wanted_edge: int, local_path: str) -> bool:
+        """Whether a cached thumbnail will do for a tile wanting `wanted_edge` pixels: one from a big enough tier
+        (see _big_enough), or one marked as big as its picture allows (a book's small cover page: covers are never
+        scaled up, so it used to be made again from the archive on every request)."""
+        source = _source_edge(img)
+        if source and max(img.width(), img.height()) >= 0.9 * min(wanted_edge, source):
+            return True
+        return edge >= wanted_edge and self._big_enough(img, wanted_edge, local_path)
 
     @staticmethod
     def _mtime(local_path: str):
@@ -358,38 +443,39 @@ class ThumbnailProvider(QQuickImageProvider):
             if self._closed:
                 return QImage()
             self._active += 1
+        started = time.perf_counter()
+        local_path = _local_path_of(id_string)
+        hint = max(requested_size.width(), requested_size.height()) if requested_size.isValid() else 0
+        key = (id_string, hint)
+        outcome = "memory"
         try:
-            # "nostrip/<file>": a video's thumbnail without the film strip ffmpegthumbnailer draws on its sides. The
-            # strip is as wide as the thumbnail's width allows (1/16 of it on a wide video, its long side / 32 on a
-            # tall one), so tiles of one height showed strips of very different sizes; a tile asks for it cropped
-            # off. The cached file keeps it (the cache is shared with other apps and stays standard).
-            if id_string.startswith(NO_STRIP):
-                image = self._request_image(id_string[len(NO_STRIP):], size, requested_size)
-                image = without_film_strip(image)
-                if not image.isNull():
-                    size.setWidth(image.width())
-                    size.setHeight(image.height())
-                return image
-            return self._request_image(id_string, size, requested_size)
+            image = self._recall(key)
+            if image is None:
+                # "nostrip/<file>": a video's thumbnail without the film strip ffmpegthumbnailer draws on its sides.
+                # The strip is as wide as the thumbnail's width allows (1/16 of it on a wide video, its long side / 32
+                # on a tall one), so tiles of one height showed strips of very different sizes; a tile asks for it
+                # cropped off. The cached file keeps it (the cache is shared with other apps and stays standard).
+                if id_string.startswith(NO_STRIP):
+                    image, outcome = self._request_image(id_string[len(NO_STRIP):], size, requested_size)
+                    image = without_film_strip(image)
+                else:
+                    image, outcome = self._request_image(id_string, size, requested_size)
+                self._remember(key, image, local_path)
+            if not image.isNull():
+                size.setWidth(image.width())
+                size.setHeight(image.height())
+            return image
         finally:
+            if timing.ENABLED:
+                kind = "video" if _is_video(local_path) else "book" if bookcovers.is_book(local_path) else "image"
+                timing.record("thumb %s: %s" % (kind, outcome), (time.perf_counter() - started) * 1000)
             with self._idle:
                 self._active -= 1
                 self._idle.notify_all()
 
     def _request_image(self, id_string: str, size: QSize, requested_size: QSize):
-        # QML adds "?v=<n>" after a cover is changed by hand, so its image cache reloads
-        # the picture; the number is not part of the file's name
-        id_string = re.sub(r"\?v=\d+$", "", id_string)
-        # id_string may arrive either as a plain local path or as a file:// URI
-        # depending on how QML built the "image://provider/..." source string.
-        q = QUrl(id_string)
-        if q.scheme() == "file":
-            local_path = q.toLocalFile()
-        elif q.scheme():  # some other scheme, unlikely but be safe
-            local_path = q.toLocalFile() or id_string
-        else:
-            local_path = id_string
-
+        """(the thumbnail, how it was found or made: see timing)."""
+        local_path = _local_path_of(id_string)
         uri = _local_path_to_thumb_uri(local_path)
         uri_md5 = hashlib.md5(uri.encode("utf-8")).hexdigest()
 
@@ -401,42 +487,46 @@ class ThumbnailProvider(QQuickImageProvider):
         # 1. Try the cache folders. With a hint, a hit that is too small is kept as a
         # fallback while the wanted size is made.
         fallback = QImage()
+        stale = False
         packed = self._pack.get(uri_md5) if self._pack is not None else {}
         for cache_dir, edge in folders:
-            img = self._read_cached(cache_dir, uri_md5, packed)
-            if img.isNull() or not self._fresh(img, local_path):
+            img, where = self._read_cached(cache_dir, uri_md5, packed)
+            if img.isNull():
                 continue
-            if hint <= 0 or (edge >= wanted_edge and self._big_enough(img, wanted_edge, local_path)):
-                size.setWidth(img.width())
-                size.setHeight(img.height())
-                return img
+            if not self._fresh(img, local_path):
+                stale = True
+                continue
+            if hint <= 0 or self._good_enough(img, edge, wanted_edge, local_path):
+                return img, where
             if max(img.width(), img.height()) > max(fallback.width(), fallback.height()):
                 fallback = img
 
         # 2. Generate (preserve aspect ratio). A hint asks for the whole tier size, so
         # the file lands in the right freedesktop folder for other apps to reuse.
+        made = "remade (too small)" if not fallback.isNull() else "remade (stale)" if stale else "made"
         target_size = QSize(wanted_edge, wanted_edge) if hint > 0 else QSize(256, 256)
         modified = self._mtime(local_path)
-        if bookcovers.is_book(local_path) and self._unreadable.get(local_path) == modified:
+        is_book = bookcovers.is_book(local_path)
+        if is_book and self._unreadable.get(local_path) == modified:
             img = QImage()
         else:
             img = self._generate(local_path, target_size)
-            if img.isNull() and bookcovers.is_book(local_path):
+            if img.isNull() and is_book:
                 self._unreadable[local_path] = modified
 
         if not img.isNull() and max(img.width(), img.height()) >= max(fallback.width(), fallback.height()):
-            size.setWidth(img.width())
-            size.setHeight(img.height())
+            if is_book and hint > 0 and max(img.width(), img.height()) < 0.9 * wanted_edge:
+                # a cover is never scaled up: this is as big as its page allows, so it will do from now on
+                img.setText("Thumb::Image::Width", str(img.width()))
+                img.setText("Thumb::Image::Height", str(img.height()))
             if self._pack is not None:
                 _pack_thumbnail(self._pack, uri, uri_md5, img, local_path)
             else:
                 _save_thumbnail(self.thumbnails_base, uri, uri_md5, img, local_path)
-            return img
+            return img, made
         if not fallback.isNull():
-            size.setWidth(fallback.width())
-            size.setHeight(fallback.height())
-            return fallback
+            return fallback, "too small, kept"
 
         size.setWidth(target_size.width())
         size.setHeight(target_size.height())
-        return img
+        return img, "failed"
