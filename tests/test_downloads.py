@@ -171,3 +171,55 @@ def test_a_video_download_lands_with_its_info_json_tags(tmp_path, monkeypatch, q
     service.addWith("https://www.youtube.com/watch?v=fail", str(folder), "yt-dlp")
     assert _wait(service, lambda: service.jobs[-1]["state"] == "failed")
     assert service.jobs[-1]["message"] == "abc123: Video unavailable"
+
+
+def test_the_options_become_the_tools_arguments():
+    g = downloadService.command_for(["gallery-dl"], "u", "/f", "gallery-dl", first=1, last=200)
+    assert g[g.index("--range") + 1] == "1-200" and g[-2:] == ["--", "u"]
+    y = downloadService.command_for(["yt-dlp"], "u", "/f", "yt-dlp", last=20, height=1080)
+    assert y[y.index("--playlist-items") + 1] == ":20" and y[y.index("-S") + 1] == "res:1080"
+    plain = downloadService.command_for(["yt-dlp"], "u", "/f", "yt-dlp")
+    assert "--playlist-items" not in plain and "-S" not in plain
+    assert downloadService.clean_folder_name(" Frieren / art ") == "Frieren - art"
+    assert downloadService.clean_folder_name("..") == "" and downloadService.clean_folder_name(".hidden") == ""
+
+
+def test_a_download_into_a_new_folder_and_onto_a_new_board(tmp_path, monkeypatch, qapp):
+    from tetia.models import boards, covers
+    from tetia.models.searchModel import _Resolver
+    _stub(tmp_path, monkeypatch)
+    folder = tmp_path / "Art"
+    folder.mkdir()
+    get_database().add_folder(covers.folder_uri(str(folder)), "photos")   # (a board shows what is in the library)
+    service = DownloadService()
+    filled = []
+    service.boardFilled.connect(lambda b: filled.append(b))
+    service.download("https://example.org/posts", str(folder), "", {"subfolder": "Sky pictures", "boardName": "Skies",
+                                                                    "tab": "photos", "last": 50})
+    assert _wait(service, lambda: service.jobs[0]["state"] == "done")
+    assert (folder / "Sky pictures" / "pic0.png").exists()
+    db = get_database()
+    assert len(filled) == 1
+    board = boards.get(db, filled[0])
+    assert board["name"] == "Skies" and board["tab"] == "photos"
+    assert len(boards.members(db, _Resolver(db), filled[0])) == 2
+    service.download("https://example.org/again", str(folder), "", {"subfolder": "Sky pictures", "board": filled[0]})
+    assert _wait(service, lambda: service.jobs[-1]["state"] == "done")
+    assert len(filled) == 2 and filled[1] == filled[0]                 # the existing board, not a new one
+
+
+def test_the_tools_configs_are_named_not_read(tmp_path, monkeypatch, qapp):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    opened = []
+    monkeypatch.setattr(downloadService.QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()))
+    monkeypatch.setattr(downloadService, "gallery_dl_command", lambda: None)
+    service = DownloadService()
+    assert not service.hasConfig("gallery-dl") and service.gallerySites() == []
+    service.openConfig("yt-dlp")
+    assert service.hasConfig("yt-dlp") and opened == [str(tmp_path / "config" / "yt-dlp" / "config")]
+    gdl = tmp_path / "config" / "gallery-dl" / "config.json"
+    gdl.parent.mkdir(parents=True)
+    gdl.write_text('{"extractor": {"gelbooru": {"api-key": "secret"}, "pixiv": {}, "base-directory": "~/x"}}')
+    assert service.gallerySites() == ["gelbooru", "pixiv"]
+    service.maxHeight = 1080
+    assert DownloadService().maxHeight == 1080

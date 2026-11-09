@@ -22,10 +22,11 @@ import weakref
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtQml import QmlElement
 
-from tetia.models import profiles
-from tetia.models.database import Database
+from tetia.models import boards, profiles
+from tetia.models.database import Database, get_database
 from tetia.models.scanner import fingerprint, scan_folder
 
 QML_IMPORT_NAME = "Tetia"
@@ -75,19 +76,33 @@ def tool_for(url: str, tools: dict) -> str:
     return GALLERY_DL if tools.get(GALLERY_DL) else ""
 
 
-def command_for(base: list, url: str, folder: str, tool: str = GALLERY_DL) -> list:
+def command_for(base: list, url: str, folder: str, tool: str = GALLERY_DL, first: int = 0, last: int = 0,
+                height: int = 0) -> list:
     """A tool's arguments for one download: straight into `folder`, with its metadata beside each file, printing the
-    path of every file it saved (so they can be counted)."""
+    path of every file it saved (so they can be counted). `first`/`last` (1-based, 0: open) keep only those results
+    of a search, gallery or playlist; `height` caps a video's resolution (yt-dlp; 0: the best there is)."""
+    span = "%s-%s" % (first or "", last or "") if (first or last) else ""
     if tool == YT_DLP:
+        extra = ["--playlist-items", span.replace("-", ":")] if span else []
+        extra += ["-S", "res:%d" % height] if height > 0 else []
         return base + ["--write-info-json", "--write-subs", "--no-simulate", "--print", "after_move:filepath",
-                       "--no-colors", "-P", folder, "-o", "%(title)s [%(id)s].%(ext)s", "--", url]
-    return base + ["--write-metadata", "--no-colors", "-D", folder, "--", url]
+                       "--no-colors", "-P", folder, "-o", "%(title)s [%(id)s].%(ext)s"] + extra + ["--", url]
+    extra = ["--range", span] if span else []
+    return base + ["--write-metadata", "--no-colors", "-D", folder] + extra + ["--", url]
+
+
+def clean_folder_name(name: str) -> str:
+    """A name usable as one new folder ("" if not): no path separators, not "." or "..", no leading dot."""
+    name = (name or "").strip().replace("/", "-").replace("\\", "-")
+    return "" if name in ("", ".", "..") or name.startswith(".") else name[:120]
 
 
 @QmlElement
 class DownloadService(QObject):
     jobsChanged = Signal()
     downloaded = Signal(str)            # a folder that new files came into (its page reloads)
+    boardFilled = Signal(int)           # a board that downloaded files were put on
+    maxHeightChanged = Signal()
     _update = Signal(int, str, int, str)  # (job id, state, files, message) from the worker
 
     def __init__(self, parent=None):
@@ -132,17 +147,41 @@ class DownloadService(QObject):
 
     @Slot(str, str, str, result=int)
     def addWith(self, url: str, folder: str, tool: str) -> int:
+        return self.download(url, folder, tool, {})
+
+    @Slot(str, str, str, "QVariantMap", result=int)
+    def download(self, url: str, folder: str, tool: str, options) -> int:
         """Queue a download of `url` into `folder` (a path or a file:// address) with `tool` ("" chooses by the
-        address); its id, or 0 if it can't be."""
+        address); its id, or 0 if it can't be. `options` (all optional):
+            subfolder   a new folder of that name inside `folder`, to save into instead
+            board       a board's id to put the files on, or boardName: a new board of that name (in `tab`)
+            first/last  only those results (1-based); height: the highest video resolution (yt-dlp)"""
+        options = dict(options or {})
         url = (url or "").strip()
         path = QUrl(folder).toLocalFile() or folder
         tools = tool_commands()
         tool = tool if tools.get(tool) else tool_for(url, tools)
         if not url or not path or not os.path.isdir(path) or self._closed or not tool:
             return 0
+        sub = clean_folder_name(str(options.get("subfolder") or ""))
+        if sub:
+            path = os.path.join(path, sub)
+            try:
+                os.makedirs(path, exist_ok=True)
+            except OSError:
+                return 0
+
+        def number(key):
+            try:
+                return max(0, int(options.get(key) or 0))
+            except (TypeError, ValueError):
+                return 0
+        height = number("height") if "height" in options else self.maxHeight
         with self._lock:
             job = {"id": self._next_id, "url": url, "folder": path, "tool": tool, "state": WAITING, "files": 0,
-                   "message": ""}
+                   "message": "", "first": number("first"), "last": number("last"), "height": height,
+                   "board": number("board"), "boardName": str(options.get("boardName") or "").strip(),
+                   "tab": str(options.get("tab") or "")}
             self._next_id += 1
             self._jobs.append(job)
             if self._worker is None or not self._worker.is_alive():
@@ -151,6 +190,62 @@ class DownloadService(QObject):
             self._wake.notify_all()
         self.jobsChanged.emit()
         return job["id"]
+
+    @Property(int, notify=maxHeightChanged)
+    def maxHeight(self) -> int:
+        """The highest video resolution yt-dlp fetches by default (0: the best there is); remembered."""
+        try:
+            return int(get_database().get_setting("download.height", "0") or 0)
+        except ValueError:
+            return 0
+
+    @maxHeight.setter
+    def maxHeight(self, value: int):
+        if int(value) != self.maxHeight:
+            get_database().set_setting("download.height", str(int(value)))
+            self.maxHeightChanged.emit()
+
+    # ---- the tools' own configuration (logins, API keys, file names): opened, never read for its values
+
+    @staticmethod
+    def _config_file(tool: str) -> str:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+        return os.path.join(base, "gallery-dl", "config.json") if tool == GALLERY_DL else os.path.join(base, "yt-dlp", "config")
+
+    @Slot(str, result=bool)
+    def hasConfig(self, tool: str) -> bool:
+        return os.path.isfile(self._config_file(tool))
+
+    @Slot(result="QStringList")
+    def gallerySites(self) -> list:
+        """The sites gallery-dl's configuration has a section for (their names only, never what is in them)."""
+        import json
+        try:
+            with open(self._config_file(GALLERY_DL), "rb") as f:
+                extractor = json.loads(f.read()).get("extractor", {})
+        except (OSError, ValueError, AttributeError):
+            return []
+        return sorted(k for k, v in extractor.items() if isinstance(v, dict) and not k.startswith("#")) \
+            if isinstance(extractor, dict) else []
+
+    @Slot(str)
+    def openConfig(self, tool: str):
+        """Open a tool's configuration in the text editor, made first if there is none (gallery-dl's own starting
+        file; an empty one, with a pointer to the options, for yt-dlp)."""
+        path = self._config_file(tool)
+        if not os.path.isfile(path):
+            try:
+                if tool == GALLERY_DL and gallery_dl_command():
+                    subprocess.run(gallery_dl_command() + ["--config-create"], stdin=subprocess.DEVNULL,
+                                   capture_output=True, timeout=30)
+                if not os.path.isfile(path):
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, "w") as f:
+                        f.write("{}\n" if tool == GALLERY_DL else
+                                "# yt-dlp options, one per line (see yt-dlp --help), for example:\n# --cookies-from-browser firefox\n")
+            except (OSError, subprocess.SubprocessError):
+                return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     @Slot(int)
     def cancel(self, job_id: int):
@@ -200,22 +295,26 @@ class DownloadService(QObject):
             if job is None:
                 return
             self._update.emit(job["id"], DOWNLOADING, 0, "")
-            state, files, message = self._download(job)
-            if files:
-                self._scan(job["folder"])             # in with their tags, before the page is told
+            state, files, message, saved = self._download(job)
+            board = 0
+            if saved:
+                board = self._scan(job, saved)        # in with their tags (and on their board), before the page is told
             self._update.emit(job["id"], state, files, message)
+            if board:
+                self.boardFilled.emit(board)
 
     def _download(self, job: dict):
         base = tool_commands().get(job["tool"])
         if base is None:
-            return FAILED, 0, "%s is not installed" % job["tool"]
-        files, last_error = 0, ""
+            return FAILED, 0, "%s is not installed" % job["tool"], []
+        files, last_error, saved = 0, "", []
         try:
-            process = subprocess.Popen(command_for(base, job["url"], job["folder"], job["tool"]), stdin=subprocess.DEVNULL,
+            process = subprocess.Popen(command_for(base, job["url"], job["folder"], job["tool"], job["first"],
+                                                   job["last"], job["height"]), stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                        errors="replace", cwd=job["folder"])
         except OSError as e:
-            return FAILED, 0, "%s could not be started (%s)" % (job["tool"], type(e).__name__)
+            return FAILED, 0, "%s could not be started (%s)" % (job["tool"], type(e).__name__), []
         with self._lock:
             self._process = process
             if job["id"] in self._cancelled or self._closed:
@@ -225,7 +324,10 @@ class DownloadService(QObject):
         reader.start()
         for line in process.stdout:
             line = line.strip()
-            if line and not line.startswith("#"):     # "# path": already there, skipped
+            if line.startswith("# "):                 # "# path": already there, skipped (still the board's)
+                saved.append(line[2:].strip())
+            elif line:
+                saved.append(line)
                 files += 1
                 self._update.emit(job["id"], DOWNLOADING, files, "")
         process.wait()
@@ -237,21 +339,36 @@ class DownloadService(QObject):
             if "error" in line.lower():
                 last_error = line.strip()
         if cancelled:
-            return CANCELLED, files, ""
+            return CANCELLED, files, "", saved
         if process.returncode != 0:
-            return FAILED, files, _short(last_error) or "%s stopped (exit code %d)" % (job["tool"], process.returncode)
-        return DONE, files, ""
+            return (FAILED, files, _short(last_error) or "%s stopped (exit code %d)" % (job["tool"], process.returncode),
+                    saved)
+        return DONE, files, "", saved
 
-    def _scan(self, folder: str):
+    def _scan(self, job: dict, saved: list) -> int:
+        """Scan the folder the files came into, then put them on the board asked for (made now if new): its id,
+        or 0."""
         db = None
+        board = 0
         try:
             db = Database()
-            scan_folder(db, Path(folder), fingerprint)
+            scan_folder(db, Path(job["folder"]), fingerprint)
+            if job["board"] or job["boardName"]:
+                ids = []
+                for path in saved:
+                    found = db.get_media_by_path(os.path.realpath(path))
+                    if found is not None and found[0] not in ids:
+                        ids.append(found[0])
+                if ids:
+                    board = job["board"] if job["board"] and boards.get(db, job["board"]) else \
+                        boards.create(db, job["boardName"] or "Downloads", "", job["tab"])
+                    boards.pin(db, board, ids)
         except Exception:
             logger.exception("Scanning a download failed")
         finally:
             if db is not None:
                 db.close()
+        return board
 
     def stop(self):
         """Before a vault is locked: nothing new starts, the download under way is stopped and waited for."""

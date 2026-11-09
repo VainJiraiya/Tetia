@@ -498,11 +498,13 @@ Kirigami.ApplicationWindow {
                     anchors.centerIn: parent
                     icon.name: "download"
                     display: AbstractButton.IconOnly
-                    // where downloads land: pictures and videos (not Home, Manga or EBooks)
-                    visible: downloads.available && !root.onFavoritesTab
+                    // where downloads land: the top level of Images and Videos only (not inside a folder, the viewer or the
+                    // player, nor on Home, Manga or EBooks)
+                    visible: downloads.available && pageStack.depth === 1 && !root.onFavoritesTab
                              && (folderModel.currentCategory === "photos" || folderModel.currentCategory === "videos")
                     checkable: true
                     checked: downloadPanel.visible
+                    onVisibleChanged: if (!visible) downloadPanel.close()     // (a page opened on top)
                     ToolTip.visible: hovered && !downloadPanel.visible
                     ToolTip.delay: 600
                     ToolTip.text: "Download with " + downloads.tools.join(" or ")
@@ -535,6 +537,8 @@ Kirigami.ApplicationWindow {
                     DownloadPanel {
                         id: downloadPanel
                         service: downloads
+                        boards: boardService
+                        tab: folderModel.currentCategory
                         y: downloadButton.height + 4
                         x: downloadButton.width - width
                         onProblem: function(text) { showPassiveNotification(text, 8000) }
@@ -799,6 +803,9 @@ Kirigami.ApplicationWindow {
     DownloadService {
         id: downloads
         // (the folder's page updates by itself: an open folder is watched, and the files were scanned already)
+        onBoardFilled: function(boardId) {
+            if (pageStack.depth === 1) root.loadRoot()          // (its tile on the tab's top level)
+        }
         onDownloaded: function(folder) {
             var parts = String(folder).replace(/\/+$/, "").split("/")
             showPassiveNotification("Downloaded into " + parts[parts.length - 1])
