@@ -4,7 +4,10 @@
 """A private profile keeps its thumbnails in one file (a vault on a hard drive reads one file far faster than
 thousands); General keeps the shared freedesktop folders."""
 import hashlib
+import shutil
 import sqlite3
+import subprocess
+import tempfile
 
 import pytest
 from PySide6.QtCore import QSize
@@ -96,3 +99,17 @@ def test_general_keeps_the_shared_folders(tmp_path, qapp):
     _request(provider, source)
     assert (provider.thumbnails_base / "normal" / (_md5(source) + ".png")).exists()
     assert not (profiles.profile_dir() / "thumbnails.db").exists()
+
+
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffmpegthumbnailer")), reason="needs ffmpeg")
+def test_a_video_frame_never_passes_through_a_temporary_file(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=2:size=160x90:rate=10",
+                    str(video)], check=True)
+    made = []
+    real = tempfile.mkstemp
+    monkeypatch.setattr(tempfile, "mkstemp", lambda *a, **k: made.append(1) or real(*a, **k))
+    frame = thumbModel._extract_video_frame(str(video), QSize(128, 128))
+    assert not frame.isNull() and frame.width() == 128
+    assert made == []                                       # straight from ffmpegthumbnailer's output
+    assert thumbModel._extract_video_frame(str(tmp_path / "missing.mp4"), QSize(128, 128)).isNull()

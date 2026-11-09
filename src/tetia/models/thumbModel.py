@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -16,6 +17,8 @@ from PySide6.QtGui import QImage, QImageReader
 from PySide6.QtQuick import QQuickImageProvider
 
 from tetia.models import bookcovers, profiles, thumbPack
+
+logger = logging.getLogger(__name__)
 
 # Characters left unescaped when building the thumbnail-cache URI. The MD5 of
 # this URI is the cache filename, so it has to match what Dolphin/KDE hashes
@@ -61,39 +64,40 @@ def _extract_video_frame(local_path: str, target_size: QSize) -> QImage:
     being a blank/fade-in frame.
     """
     if shutil.which("ffmpegthumbnailer") is None:
-        print("[VIDEO THUMB] ffmpegthumbnailer not found on PATH")
+        _warn_once("ffmpegthumbnailer is not installed: videos have no thumbnails")
         return QImage()
 
     width = target_size.width() if target_size.isValid() else 256
-    fd, tmp_path = tempfile.mkstemp(suffix=".png")
-    os.close(fd)
-
+    # The frame comes back on standard output ("-o -"), never through a file: a temporary file would sit in the
+    # system's temp folder, outside a private profile's vault. Its error text names the video, so it is not shown.
     try:
         result = subprocess.run(
             [
                 "ffmpegthumbnailer",
                 "-i", local_path,
-                "-o", tmp_path,
+                "-o", "-",
+                "-c", "png",
                 "-s", str(width),
                 "-f",  # film-strip overlay, matches KDE's own default look
             ],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, timeout=20,
         )
-        if result.returncode != 0:
-            print(f"[VIDEO THUMB] ffmpegthumbnailer failed for {local_path}: {result.stderr.strip()}")
-            return QImage()
-
-        img = QImage(tmp_path)
-        return img  # null QImage if it wrote nothing usable
     except (subprocess.SubprocessError, OSError) as exc:
-        print(f"[VIDEO THUMB] extraction error for {local_path}: {exc}")
+        logger.warning("A video thumbnail could not be made (%s)", type(exc).__name__)
         return QImage()
-    finally:
-        if os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+    if result.returncode != 0 or not result.stdout:
+        logger.warning("ffmpegthumbnailer could not read a video (exit code %d)", result.returncode)
+        return QImage()
+    return QImage.fromData(result.stdout, "PNG")  # null QImage if it wrote nothing usable
+
+
+_warned = set()
+
+
+def _warn_once(message: str):
+    if message not in _warned:
+        _warned.add(message)
+        logger.warning(message)
 
 
 def _size_tier_dir(base: Path, pixel_size: QSize) -> Path:
@@ -385,9 +389,6 @@ class ThumbnailProvider(QQuickImageProvider):
             local_path = q.toLocalFile() or id_string
         else:
             local_path = id_string
-
-        if not os.path.exists(local_path):
-            print(f"[THUMB] path does not exist: id={id_string!r} -> {local_path!r}")
 
         uri = _local_path_to_thumb_uri(local_path)
         uri_md5 = hashlib.md5(uri.encode("utf-8")).hexdigest()
